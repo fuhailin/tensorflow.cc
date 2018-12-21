@@ -70,6 +70,7 @@ void VanillaRNNCellFpropWithEigen(
   LOG(INFO) << __FUNCTION__ << "---------------------------------------------------------sequence number:" << std::endl << t;
   LOG(INFO) << __FUNCTION__ << "----------------------------x:" << std::endl << x;
   LOG(INFO) << __FUNCTION__ << "----------------------------y:" << std::endl << y;
+  LOG(INFO) << __FUNCTION__ << "----------------------------h_prev:" << std::endl << h_prev;
 #endif
   int y_index = 0;
   int insize = y.dimension(0);
@@ -406,13 +407,13 @@ class VanillaRNNOp : public OpKernel {
 
 
     // set shape of outputs
-    TensorShape p_cell_shape({insize, 1});
-    Tensor* p_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_output("p", p_cell_shape, &p_tensor));
+    TensorShape p_shape({seq_length, insize, 1});
+    Tensor* p_out;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("p", p_shape, &p_out));
 
-    TensorShape hid_shape({hidsize, 1});
-    Tensor* h_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_output("h", hid_shape, &h_tensor));
+    TensorShape hid_shape({seq_length, hidsize, 1});
+    Tensor* h_out;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("h", hid_shape, &h_out));
 
     TensorShape loss_shape({});
     Tensor* loss_tensor;
@@ -422,20 +423,28 @@ class VanillaRNNOp : public OpKernel {
     const Device& device = ctx->eigen_device<Device>();
     SliceHelper<Device, T> slicer(ctx);
 
-    *h_tensor = *h_prev_tensor;
-
+    const Tensor *tmp_h_prev = h_prev_tensor;
+     
     for (int64 t = 0; t < seq_length; ++t) {
       const Tensor x_t_tensor = slicer.InputSlice(*x_tensor, t, "x");
       
-      const Tensor *tmp = h_tensor;
       Tensor loss(DT_FLOAT, TensorShape({}));
+
+      Tensor p_tensor = slicer.OutputSlice(p_out, t, "p_out");
+      Tensor h_tensor = slicer.OutputSlice(h_out, t, "h_out");
+
+      if(t > 0) {
+        Tensor h_t_1_tensor = slicer.OutputSlice(h_out, t - 1, "h_out");
+
+        tmp_h_prev = &h_t_1_tensor;
+      }
 
       functor::VanillaRNNCellFprop<Device, T, USE_CUBLAS>(seq_length, insize)(
           ctx, device, t,
-          x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), tmp->matrix<T>(), 
+          x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), tmp_h_prev->matrix<T>(), 
           w_xh_tensor->matrix<T>(), w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(),
           b_h_tensor->matrix<T>(), b_y_tensor->matrix<T>(), 
-          p_tensor->matrix<T>(), h_tensor->matrix<T>(), loss.scalar<T>());
+          p_tensor.matrix<T>(), h_tensor.matrix<T>(), loss.scalar<T>());
 
       // cumulate
       loss_tensor->scalar<T>()() += loss.scalar<T>()();
@@ -495,13 +504,83 @@ template <typename Device, typename T, bool USE_CUBLAS>
 class VanillaRNNGradOp : public OpKernel {
  public:
   explicit VanillaRNNGradOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
-    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_peephole", &use_peephole_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("hidsize", &hidsize));
   }
 
   void Compute(OpKernelContext* ctx) override {
-    const Tensor* seq_len_max_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("seq_len_max", &seq_len_max_tensor));
+    // check the shape of x
+    const Tensor* x_tensor;
+    OP_REQUIRES_OK(ctx, ctx->input("x", &x_tensor));
+    OP_REQUIRES(ctx, x_tensor->dims() == 3, errors::InvalidArgument("x must be 3D"));
+    const int64 seq_length = x_tensor->dim_size(0);
+    const int64 insize = x_tensor->dim_size(1);
 
+    // check the shape of y
+    const Tensor* y_tensor;
+    OP_REQUIRES_OK(ctx, ctx->input("y", &y_tensor));
+    OP_REQUIRES(ctx, y_tensor->dims() == 2, errors::InvalidArgument("y must be 2D"));
+
+    // check the shape of p
+    const Tensor* p_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("p", &p_tensor));
+    OP_REQUIRES(ctx, p_tensor->dims() == 3,
+                errors::InvalidArgument("p must be 3D"));
+    OP_REQUIRES(ctx, p_tensor->dim_size(0) == seq_length,
+                errors::InvalidArgument("p.dims(0) != seq_length: ",
+                                        p_tensor->dim_size(0), " vs. ",
+                                        seq_length));
+    OP_REQUIRES(ctx, p_tensor->dim_size(1) == insize,
+                errors::InvalidArgument("p.dims(1) != insize: ",
+                                        p_tensor->dim_size(1), " vs. ",
+                                        insize));
+    OP_REQUIRES(ctx, p_tensor->dim_size(2) == 2,
+                errors::InvalidArgument(
+                    "p.dims(2) != 1: ", p_tensor->dim_size(2),
+                    " vs. ", 1));
+
+    // check the shape of h
+    const Tensor* h_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("h", &h_tensor));
+    OP_REQUIRES(ctx, p_tensor->dims() == 3,
+                errors::InvalidArgument("p must be 3D"));
+    OP_REQUIRES(ctx, p_tensor->dim_size(0) == seq_length,
+                errors::InvalidArgument("p.dims(0) != seq_length: ",
+                                        p_tensor->dim_size(0), " vs. ",
+                                        seq_length));
+    OP_REQUIRES(ctx, p_tensor->dim_size(1) == hidsize,
+                errors::InvalidArgument("p.dims(1) != hidsize: ",
+                                        p_tensor->dim_size(1), " vs. ",
+                                        hidsize));
+    OP_REQUIRES(ctx, p_tensor->dim_size(2) == 2,
+                errors::InvalidArgument(
+                    "p.dims(2) != 1: ", p_tensor->dim_size(2),
+                    " vs. ", 1));
+
+    // set shape of outputs
+    TensorShape d_w_xh_shape({hidsize, insize});
+    Tensor* d_w_xh_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_xh", d_w_xh_shape, &d_w_xh_tensor));
+
+    TensorShape d_w_hh_shape({hidsize, hidsize});
+    Tensor* d_w_hh_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hh", d_w_hh_shape, &d_w_hh_tensor));
+
+    TensorShape d_w_hy_shape({insize, hidsize});
+    Tensor* d_w_hy_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hy", d_w_hy_shape, &d_w_hy_tensor));
+
+    TensorShape d_b_h_shape({hidsize, 1});
+    Tensor* d_b_h_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_h", d_b_h_shape, &d_b_h_tensor));
+
+    TensorShape d_b_y_shape({insize, 1});
+    Tensor* d_b_y_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_y", d_b_y_shape, &d_b_y_tensor));
+
+
+
+
+#if 0
     const Tensor* x;
     OP_REQUIRES_OK(ctx, ctx->input("x", &x));
     OP_REQUIRES(ctx, x->dims() == 3, errors::InvalidArgument("x must be 3D"));
@@ -679,11 +758,14 @@ class VanillaRNNGradOp : public OpKernel {
     //       wci_grad_tensor->vec<T>(), wcf_grad_tensor->vec<T>(),
     //       wco_grad_tensor->vec<T>(), b_grad_tensor->vec<T>());
     }
+#endif
+
+
 
   }
 
  private:
-  bool use_peephole_;
+  int32 hidsize;
 };
 
 #define REGISTER_KERNEL(T)                                             \

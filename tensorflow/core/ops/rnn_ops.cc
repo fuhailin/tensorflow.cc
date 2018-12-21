@@ -53,15 +53,15 @@ REGISTER_OP("VanillaRNN")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(6), 2, &b_h));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(7), 2, &b_y));
 
-      // DimensionHandle seq_length = c->Dim(x, 0);
+      DimensionHandle seq_length = c->Dim(x, 0);
       DimensionHandle input_size = c->Dim(x, 1);
 
-      ShapeHandle output = c->Matrix(input_size, 1);
+      ShapeHandle output = c->MakeShape({seq_length, input_size, 1});
       c->set_output(0, output);
 
       int32 hidsize;
       TF_RETURN_IF_ERROR(c->GetAttr("hidsize", &hidsize));
-      output = c->Matrix(hidsize, 1);
+      output = c->MakeShape({seq_length, hidsize, 1});
       c->set_output(1, output);
 
       output = c->Scalar();
@@ -78,31 +78,40 @@ REGISTER_OP("VanillaRNNGrad")
     .Input("x: T")
     .Input("y: T")
     .Input("p: T")
-    .Input("h_prev: T")
-    .Output("param: T")
-    .Output("dparam: T")
-    .Output("adaparam: T")
-    .Attr("insize: int")
-    .Attr("outsize: int")
+    .Input("h: T")
+    .Output("d_w_xh: T")
+    .Output("d_w_hh: T")
+    .Output("d_w_hy: T")
+    .Output("d_b_h: T")
+    .Output("d_b_y: T")
     .Attr("hidsize: int = 100")
-    .Attr("T: {half, float}")
+    .Attr("T: {float}")
     .SetShapeFn([](InferenceContext* c) {
-      ShapeHandle x, y, p, h_prev;
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &x));
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &y));
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 2, &p));
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &h_prev));
-
+      ShapeHandle x, y, p, h;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 3, &x));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &y));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 3, &p));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 3, &h));
+      
       DimensionHandle seq_length = c->Dim(x, 0);
-      int32 insize;
-      TF_RETURN_IF_ERROR(c->GetAttr("insize", &insize));
-      int32 outsize;
-      TF_RETURN_IF_ERROR(c->GetAttr("outsize", &outsize));
+      DimensionHandle input_size = c->Dim(x, 1);
+      int32 hidsize;
+      TF_RETURN_IF_ERROR(c->GetAttr("hidsize", &hidsize));
 
-      ShapeHandle output = c->Matrix(outsize, seq_length);
+      ShapeHandle output = c->Matrix(hidsize, input_size);
       c->set_output(0, output);
+
+      output = c->Matrix(hidsize, hidsize);
       c->set_output(1, output);
+
+      output = c->Matrix(input_size, hidsize);
       c->set_output(2, output);
+
+      output = c->Matrix(hidsize, 1);
+      c->set_output(3, output);
+
+      output = c->Matrix(input_size, 1);
+      c->set_output(4, output);
 
       return tensorflow::Status::OK();
     })

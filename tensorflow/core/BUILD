@@ -1117,6 +1117,7 @@ tf_gen_op_libs(
         "stateless_random_ops",
         "summary_ops",
         "training_ops",
+        "rnn_ops",
     ],
 )
 
@@ -1273,6 +1274,7 @@ cc_library(
         ":stateless_random_ops_op_lib",
         ":string_ops_op_lib",
         ":training_ops_op_lib",
+        ":rnn_ops_op_lib",
         ":user_ops_op_lib",
         ":word2vec_ops",
     ] + if_mkl([":mkl_nn_ops_op_lib"]) + tf_additional_cloud_op_deps(),
@@ -1430,6 +1432,7 @@ cc_library(
         "//tensorflow/core/kernels:string",
         "//tensorflow/core/kernels:summary_kernels",
         "//tensorflow/core/kernels:training_ops",
+        "//tensorflow/core/kernels:rnn_ops",
         "//tensorflow/core/kernels:word2vec_kernels",
     ] + tf_additional_cloud_kernel_deps() + if_not_windows([
         "//tensorflow/core/kernels:fact_op",
@@ -4689,6 +4692,7 @@ tf_cc_tests(
         "ops/state_ops_test.cc",
         "ops/string_ops_test.cc",
         "ops/training_ops_test.cc",
+        "ops/rnn_ops_test.cc",
     ],
     linkstatic = tf_kernel_tests_linkstatic(),
     deps = [

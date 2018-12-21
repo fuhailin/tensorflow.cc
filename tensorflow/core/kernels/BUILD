@@ -3699,6 +3699,7 @@ cc_library(
         ":softsign_op",
         ":topk_op",
         ":xent_op",
+        ":rnn",
     ],
 )
 
@@ -6901,6 +6902,45 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:string_ops_op_lib",
         "@icu//:common",
+    ],
+)
+
+# By Rock Zhuang
+cc_library(
+    name = "rnn",
+    deps = [
+        ":rnn_ops",
+    ],
+)
+
+tf_kernel_library(
+    name = "rnn_ops",
+    prefix = "rnn_ops",
+    deps = [
+        ":bounds_check",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/kernels:eigen_helpers",
+        "//third_party/eigen3",
+    ],
+)
+
+tf_cc_test(
+    name = "rnn_ops_test",
+    size = "small",
+    srcs = ["rnn_ops_test.cc"],
+    deps = [
+        ":ops_testutil",
+        ":ops_util",
+        ":rnn_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
     ],
 )
 

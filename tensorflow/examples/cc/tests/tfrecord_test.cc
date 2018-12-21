@@ -213,15 +213,6 @@ static tensorflow::Node* Constant(tensorflow::Graph* g, const tensorflow::Tensor
   return ret;
 }
 
-static tensorflow::Node* Constant(tensorflow::Graph* g, const tensorflow::Tensor& tensor, const std::string& name) {
-  tensorflow::Node* ret;
-  TF_CHECK_OK(tensorflow::NodeBuilder(name, "Const")
-                  .Attr("dtype", tensor.dtype())
-                  .Attr("value", tensor)
-                  .Finalize(g, &ret));
-  return ret;
-}
-
 static tensorflow::Status ParseExample(const tensorflow::Scope& scope, 
                tensorflow::Tensor serialized,
                tensorflow::Output &output) {
@@ -343,23 +334,24 @@ int main() {
   tensorflow::ClientSession session(root);
 
   // Run make_iterator_output first, then iterator_get_next_output
-  TF_CHECK_OK(session.Run({}, {dataset_output, iterator_output, iterator_get_next_output}, {make_iterator_output.op(), iterator_get_next_output.op()}, &outputs));
+  TF_CHECK_OK(session.Run({}, {}, {make_iterator_output.op()}, &outputs));
+  TF_CHECK_OK(session.Run({}, {dataset_output, iterator_output, iterator_get_next_output}, {iterator_get_next_output.op()}, &outputs));
 
   LOG(INFO) << "Print: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape();
   LOG(INFO) << "Print: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() ;
 
-  auto result = outputs[2].scalar<std::string>()();
+  auto result = outputs[2].template scalar<std::string>()();
   LOG(INFO) << "Print: result: " << result;
 
   // Input for ParseExample
   int record_index = 0;
   tensorflow::Tensor record_string(tensorflow::DT_STRING, tensorflow::TensorShape({3}));
-  record_string.vec<std::string>()(record_index++) = result;
+  record_string.template vec<std::string>()(record_index++) = result;
 
   // Iterator get_next
   while(session.Run({iterator_get_next_output}, &outputs).ok()) {
-    result = outputs[0].scalar<std::string>()();
-    record_string.vec<std::string>()(record_index++) = result;
+    result = outputs[0].template scalar<std::string>()();
+    record_string.template vec<std::string>()(record_index++) = result;
 
     LOG(INFO) << "Print: result: " << result;
   }

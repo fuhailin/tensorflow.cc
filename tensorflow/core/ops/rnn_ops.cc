@@ -79,6 +79,9 @@ REGISTER_OP("VanillaRNNGrad")
     .Input("y: T")
     .Input("p: T")
     .Input("h: T")
+    .Input("w_hh: T")
+    .Input("w_hy: T")
+    .Input("h_prev: T")
     .Output("d_w_xh: T")
     .Output("d_w_hh: T")
     .Output("d_w_hy: T")
@@ -87,11 +90,14 @@ REGISTER_OP("VanillaRNNGrad")
     .Attr("hidsize: int = 100")
     .Attr("T: {float}")
     .SetShapeFn([](InferenceContext* c) {
-      ShapeHandle x, y, p, h;
+      ShapeHandle x, y, p, h, w_hh, w_hy, h_prev;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 3, &x));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &y));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 3, &p));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 3, &h));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 2, &w_hh));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(5), 2, &w_hy));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(6), 2, &h_prev));
       
       DimensionHandle seq_length = c->Dim(x, 0);
       DimensionHandle input_size = c->Dim(x, 1);

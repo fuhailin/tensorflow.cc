@@ -106,14 +106,14 @@ void VanillaRNNCellFpropWithEigen(
   //  loss += -np.log(p[t][y[t],0])#softmax (cross-entropy loss)
   // 
   auto py = p.chip(y_index, 0);
-  loss_out.device(d) = -py.log();
+  loss_out.device(d) += -py.log();
 
   p_out.device(d) = p;
   h_out.device(d) = h;
 
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "----------------------------py:" << std::endl << py;
-  LOG(INFO) << __FUNCTION__ << "----------------------------loss:" << std::endl << loss_out;
+  LOG(INFO) << __FUNCTION__ << "----------------------------loss: " << std::endl << -py.log() << ", cumulated: " << loss_out;
 #endif
 
 
@@ -128,11 +128,11 @@ void VanillaRNNCellFpropWithEigen(
     b.setValues({{1, 2}, {4, 5}, {5, 6}});
 
     const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
-    Eigen::Tensor<int, 2> output = a.shuffle(matrix_transpose); // transpose
+    Eigen::Tensor<int, 2> output = a.shuffle(matrix_transpose); // transposlosse
 
     // LOG(INFO) << __FUNCTION__ << "----------------------------output:" << std::endl << output;
 
-    auto c = a * b;
+    // auto c = a * b;
     // LOG(INFO) << __FUNCTION__ << "----------------------------output:" << std::endl << c;
   }
 
@@ -163,6 +163,174 @@ void VanillaRNNCellFpropWithEigen(
 #endif
 }
 
+template <typename T>
+void VanillaRNNBpropWithEigen(
+    const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
+    typename TTypes<T>::ConstMatrix x,                                      
+      typename TTypes<T>::ConstMatrix y,                                      
+      typename TTypes<T>::ConstMatrix p,                                 
+      typename TTypes<T>::ConstMatrix h,                                 
+      typename TTypes<T>::ConstMatrix w_hh,                                 
+      typename TTypes<T>::ConstMatrix w_hy, 
+      typename TTypes<T>::ConstMatrix h_prev,
+      typename TTypes<T>::Matrix dh_next, 
+      typename TTypes<T>::Matrix d_w_xh_out,                                      
+      typename TTypes<T>::Matrix d_w_hh_out,                                      
+      typename TTypes<T>::Matrix d_w_hy_out,                                      
+      typename TTypes<T>::Matrix d_b_h_out,                                       
+      typename TTypes<T>::Matrix d_b_y_out) {
+
+  // Note that that Tensorflow uses Eigen::RowMajor, don't mix it with Eigen::ColMajor
+
+  // Python code:
+  //   dy = np.copy(p[t])
+  int p_data_len = p.dimension(0) * p.dimension(1);
+  float dy_data[p_data_len];
+  std::copy_n(p.data(), p_data_len, dy_data);
+  Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor>> dy(dy_data, p.dimension(0), p.dimension(1));
+
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "---------------------------------------------------------sequence number:" << std::endl << t;
+  LOG(INFO) << __FUNCTION__ << "----------------------------x:" << std::endl << x;
+  LOG(INFO) << __FUNCTION__ << "----------------------------y:" << std::endl << y;
+  LOG(INFO) << __FUNCTION__ << "----------------------------p:" << std::endl << p;
+  LOG(INFO) << __FUNCTION__ << "----------------------------h:" << std::endl << h;
+  LOG(INFO) << __FUNCTION__ << "----------------------------h_prev:" << std::endl << h_prev;
+  LOG(INFO) << __FUNCTION__ << "----------------------------dy:" << std::endl << dy;
+  LOG(INFO) << __FUNCTION__ << "----------------------------input dh_next:" << std::endl << dh_next;
+#endif
+
+  // Python code:
+  //  dy[y[t]] -= 1
+  Eigen::Tensor<float, 2, Eigen::RowMajor> one_m(p.dimension(0), p.dimension(1));
+  one_m.setConstant(1.0f);
+  dy -= one_m;
+
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------dy - 1:" << std::endl << dy;
+#endif
+
+  Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) }; // for dot product
+  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0}); // For matrix transpose
+
+  //    dW_hy += np.dot(dy, h[t].T)
+  auto h_t = h.shuffle(matrix_transpose);
+  d_w_hy_out.device(d) += dy.contract(h_t, product_dims);
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------h_transpose:" << std::endl << h_t;
+  LOG(INFO) << __FUNCTION__ << "----------------------------dw_hy:" << std::endl << d_w_hy_out;
+#endif
+
+  //    db_y += dy
+  d_b_y_out.device(d) += dy;
+
+  // dh = np.dot(self.W_hy.T, dy) + dh_next
+  auto w_hy_t = w_hy.shuffle(matrix_transpose);
+  auto dh = w_hy_t.contract(dy, product_dims) + dh_next;
+
+  //             dh_raw = (1 - h[t]**2) * dh
+  Eigen::Tensor<float, 2, Eigen::RowMajor> one_h(h.dimension(0), h.dimension(1));
+  one_h.setConstant(1.0f);
+  Eigen::Tensor<float, 2, Eigen::RowMajor> dh_raw = (one_h - h.pow(2)) * dh;
+
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------dh_raw:" << std::endl << dh_raw;
+#endif
+
+  //          dW_xh += np.dot(dh_raw, xhat[t].T)
+  //          dW_hh += np.dot(dh_raw, h[t-1].T)
+  //          db_h += dh_raw
+  auto x_t = x.shuffle(matrix_transpose);
+  d_w_xh_out.device(d) += dh_raw.contract(x_t, product_dims);
+  d_w_hh_out.device(d) += dh_raw.contract(h_prev.shuffle(matrix_transpose), product_dims);
+  d_b_h_out.device(d) += dh_raw;
+
+  //            dh_next = np.dot(self.W_hh.T, dh_raw)
+  dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);;
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------updated dh_next:" << std::endl << dh_next;
+#endif
+
+
+#ifdef TESTING
+{
+  int storage[128];  // 2 x 4 x 2 x 8 = 128
+  Eigen::TensorMap<Eigen::Tensor<int, 4>> t_4d(storage, 2, 4, 2, 8);
+
+  float s2[12];  
+  // Eigen::TensorMap<Eigen::Tensor<const float, 2>> h(s2, 3, 4);
+  Eigen::TensorMap<Eigen::Tensor<const float, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> h(s2, 3, 4);
+
+  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
+  Eigen::Tensor<float, 2, Eigen::RowMajor> h_t = h.shuffle(matrix_transpose);
+#ifdef VERBOSEdh_raw
+  // LOG(INFO) << __FUNCTION__ << "----------------------------h_t:" << std::endl << h_t;
+#endif
+}
+
+{
+  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
+
+  Eigen::Tensor<float, 2> input(8, 16);
+  input.setConstant(1.0f);
+  Eigen::Tensor<float, 2> output = input.shuffle(matrix_transpose);
+
+    // d_b_y_out.device(d) = input;
+
+}
+
+{
+  int storage[128];  // 2 x 4 x 2 x 8 = 128
+  Eigen::TensorMap<Eigen::Tensor<int, 4>> t_4d(storage, 2, 4, 2, 8);
+
+  Eigen::TensorMap<Eigen::Tensor<int, 2>> t_2d(storage, 16, 8);
+
+  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
+  Eigen::Tensor<int, 2> output = t_2d.shuffle(matrix_transpose);
+
+}
+  { // ColMajor
+    // Create 2 matrices using tensors of rank 2
+    Eigen::Tensor<int, 2, Eigen::ColMajor> a(2, 1);
+    a.setValues({{1}, {2}});
+    Eigen::Tensor<int, 2, Eigen::ColMajor> b(1, 3);
+    b.setValues({{1, 2, 3}});
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract ColMajor a:" << std::endl << a;
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract ColMajor b:" << std::endl << b;
+
+    // Compute the traditional matrix product
+    Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) };
+    Eigen::Tensor<int, 2, Eigen::ColMajor> AB = a.contract(b, product_dims);
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract ColMajor:" << std::endl << AB;
+
+    float storage[2];  
+    Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor>> t_2d(storage, 2, 1);
+    auto pow_result = t_2d.pow(2);
+    // LOG(INFO) << __FUNCTION__ << "----------------------------pow_result:" << std::endl << pow_result;
+
+
+  }
+
+  { // RowMajor
+    // Create 2 matrices using tensors of rank 2
+    Eigen::Tensor<int, 2, Eigen::RowMajor> a(2, 1);
+    a.setValues({{1}, {2}});
+    Eigen::Tensor<int, 2, Eigen::RowMajor> b(1, 3);
+    b.setValues({{1, 2, 3}});
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract a:" << std::endl << a;
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract b:" << std::endl << b;
+
+    // Compute the traditional matrix product
+    Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) };
+    Eigen::Tensor<int, 2, Eigen::RowMajor> AB = a.contract(b, product_dims);
+    // LOG(INFO) << __FUNCTION__ << "----------------------------contract:" << std::endl << AB;
+
+  }
+#endif
+
+
+}
+
 #define DEFINE_CPU_SPECS(T)                                                   \
   template <>                                                                 \
   void VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
@@ -180,10 +348,32 @@ void VanillaRNNCellFpropWithEigen(
     VanillaRNNCellFpropWithEigen<T>(                                           \
         *this, ctx, d, t, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, p_out, h_out, loss_out);       \
   }                                                                           \
-  template struct VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>;
+  template <>                                                                 \
+  void VanillaRNNBprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
+      OpKernelContext* ctx, const CPUDevice& d, const int64 t,                      \
+      typename TTypes<T>::ConstMatrix x,                                      \
+      typename TTypes<T>::ConstMatrix y,                                      \
+      typename TTypes<T>::ConstMatrix p,                                 \
+      typename TTypes<T>::ConstMatrix h,                                 \
+      typename TTypes<T>::ConstMatrix w_hh,                                 \
+      typename TTypes<T>::ConstMatrix w_hy,                              \
+      typename TTypes<T>::ConstMatrix h_prev,                             \
+      typename TTypes<T>::Matrix dh_next,                                \
+      typename TTypes<T>::Matrix d_w_xh_out,                                      \
+      typename TTypes<T>::Matrix d_w_hh_out,                                      \
+      typename TTypes<T>::Matrix d_w_hy_out,                                      \
+      typename TTypes<T>::Matrix d_b_h_out,                                       \
+      typename TTypes<T>::Matrix d_b_y_out) {                                      \
+    VanillaRNNBpropWithEigen<T>(                                           \
+        *this, ctx, d, t, x, y, p, h, w_hh, w_hy, h_prev, dh_next, d_w_xh_out, d_w_hh_out, d_w_hy_out, d_b_h_out, d_b_y_out); \
+  }                                                                           \
+  template struct VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>;  \
+  template struct VanillaRNNBprop<CPUDevice, T, false /* USE_CUBLAS */>; 
 
 DEFINE_CPU_SPECS(float);
 #undef DEFINE_CPU_SPECS
+
+
 
 }  // namespace functor
 
@@ -418,6 +608,7 @@ class VanillaRNNOp : public OpKernel {
     TensorShape loss_shape({});
     Tensor* loss_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("loss", loss_shape, &loss_tensor));
+    loss_tensor->scalar<T>().setZero();
 
     // 
     const Device& device = ctx->eigen_device<Device>();
@@ -428,8 +619,6 @@ class VanillaRNNOp : public OpKernel {
     for (int64 t = 0; t < seq_length; ++t) {
       const Tensor x_t_tensor = slicer.InputSlice(*x_tensor, t, "x");
       
-      Tensor loss(DT_FLOAT, TensorShape({}));
-
       Tensor p_tensor = slicer.OutputSlice(p_out, t, "p_out");
       Tensor h_tensor = slicer.OutputSlice(h_out, t, "h_out");
 
@@ -444,17 +633,21 @@ class VanillaRNNOp : public OpKernel {
           x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), tmp_h_prev->matrix<T>(), 
           w_xh_tensor->matrix<T>(), w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(),
           b_h_tensor->matrix<T>(), b_y_tensor->matrix<T>(), 
-          p_tensor.matrix<T>(), h_tensor.matrix<T>(), loss.scalar<T>());
-
-      // cumulate
-      loss_tensor->scalar<T>()() += loss.scalar<T>()();
+          p_tensor.matrix<T>(), h_tensor.matrix<T>(), loss_tensor->scalar<T>());
 
 #ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------------------loss:" << std::endl << loss.scalar<T>()() << ", " << loss_tensor->scalar<T>()();
+  LOG(INFO) << __FUNCTION__ << "----------------------------loss cumulated:" << std::endl << loss_tensor->scalar<T>()();
 #endif
       slicer.FinishTimeStep();
+
     }
 
+
+#ifdef VERBOSE
+  Tensor h_tensorxxx = slicer.OutputSlice(h_out, seq_length - 1, "h_out");
+
+  LOG(INFO) << __FUNCTION__ << "----------------------------h_tensorxxx 111:" << std::endl << h_tensorxxx.matrix<T>();
+#endif
   }
 
  private:
@@ -533,7 +726,7 @@ class VanillaRNNGradOp : public OpKernel {
                 errors::InvalidArgument("p.dims(1) != insize: ",
                                         p_tensor->dim_size(1), " vs. ",
                                         insize));
-    OP_REQUIRES(ctx, p_tensor->dim_size(2) == 2,
+    OP_REQUIRES(ctx, p_tensor->dim_size(2) == 1,
                 errors::InvalidArgument(
                     "p.dims(2) != 1: ", p_tensor->dim_size(2),
                     " vs. ", 1));
@@ -541,226 +734,117 @@ class VanillaRNNGradOp : public OpKernel {
     // check the shape of h
     const Tensor* h_tensor = nullptr;
     OP_REQUIRES_OK(ctx, ctx->input("h", &h_tensor));
-    OP_REQUIRES(ctx, p_tensor->dims() == 3,
-                errors::InvalidArgument("p must be 3D"));
-    OP_REQUIRES(ctx, p_tensor->dim_size(0) == seq_length,
-                errors::InvalidArgument("p.dims(0) != seq_length: ",
-                                        p_tensor->dim_size(0), " vs. ",
+    OP_REQUIRES(ctx, h_tensor->dims() == 3,
+                errors::InvalidArgument("h must be 3D"));
+    OP_REQUIRES(ctx, h_tensor->dim_size(0) == seq_length,
+                errors::InvalidArgument("h.dims(0) != seq_length: ",
+                                        h_tensor->dim_size(0), " vs. ",
                                         seq_length));
-    OP_REQUIRES(ctx, p_tensor->dim_size(1) == hidsize,
-                errors::InvalidArgument("p.dims(1) != hidsize: ",
-                                        p_tensor->dim_size(1), " vs. ",
+    OP_REQUIRES(ctx, h_tensor->dim_size(1) == hidsize,
+                errors::InvalidArgument("h.dims(1) != hidsize: ",
+                                        h_tensor->dim_size(1), " vs. ",
                                         hidsize));
-    OP_REQUIRES(ctx, p_tensor->dim_size(2) == 2,
+    OP_REQUIRES(ctx, h_tensor->dim_size(2) == 1,
                 errors::InvalidArgument(
-                    "p.dims(2) != 1: ", p_tensor->dim_size(2),
+                    "h.dims(2) != 1: ", h_tensor->dim_size(2),
+                    " vs. ", 1));
+
+    // w_hh_tensor
+    const Tensor* w_hh_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("w_hh", &w_hh_tensor));
+    OP_REQUIRES(ctx, w_hh_tensor->dims() == 2,
+                errors::InvalidArgument("w_hh must be 2D"));
+    OP_REQUIRES(ctx, w_hh_tensor->dim_size(0) == hidsize,
+                errors::InvalidArgument("w_hh.dims(0) != hidsize: ",
+                                        w_hh_tensor->dim_size(0), " vs. ",
+                                        hidsize));
+    OP_REQUIRES(ctx, w_hh_tensor->dim_size(1) == hidsize,
+                errors::InvalidArgument(
+                    "w_hh.dims(1) != hidsize: ", w_hh_tensor->dim_size(1),
+                    " vs. ", hidsize));
+
+    // w_hy_tensor
+    const Tensor* w_hy_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("w_hy", &w_hy_tensor));
+    OP_REQUIRES(ctx, w_hy_tensor->dims() == 2,
+                errors::InvalidArgument("w_hy must be 2D"));
+    OP_REQUIRES(ctx, w_hy_tensor->dim_size(0) == insize,
+                errors::InvalidArgument("w_hy.dims(0) != insize: ",
+                                        w_hy_tensor->dim_size(0), " vs. ",
+                                        insize));
+    OP_REQUIRES(ctx, w_hy_tensor->dim_size(1) == hidsize,
+                errors::InvalidArgument(
+                    "w_hy.dims(1) != hidsize: ", w_hy_tensor->dim_size(1),
+                    " vs. ", hidsize));
+
+    // check the shape of h_prev
+    const Tensor* h_prev_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("h_prev", &h_prev_tensor));
+    OP_REQUIRES(ctx, h_prev_tensor->dims() == 2,
+                errors::InvalidArgument("h_prev must be 2D"));
+    OP_REQUIRES(ctx, h_prev_tensor->dim_size(0) == hidsize,
+                errors::InvalidArgument("h_prev.dims(0) != hidsize: ",
+                                        h_prev_tensor->dim_size(0), " vs. ",
+                                        hidsize));
+    OP_REQUIRES(ctx, h_prev_tensor->dim_size(1) == 1,
+                errors::InvalidArgument(
+                    "h_prev.dims(1) != 1: ", h_prev_tensor->dim_size(1),
                     " vs. ", 1));
 
     // set shape of outputs
     TensorShape d_w_xh_shape({hidsize, insize});
     Tensor* d_w_xh_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_xh", d_w_xh_shape, &d_w_xh_tensor));
+    d_w_xh_tensor->matrix<T>().setZero();
 
     TensorShape d_w_hh_shape({hidsize, hidsize});
     Tensor* d_w_hh_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hh", d_w_hh_shape, &d_w_hh_tensor));
+    d_w_hh_tensor->matrix<T>().setZero();
 
     TensorShape d_w_hy_shape({insize, hidsize});
     Tensor* d_w_hy_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hy", d_w_hy_shape, &d_w_hy_tensor));
+    d_w_hy_tensor->matrix<T>().setZero();
 
     TensorShape d_b_h_shape({hidsize, 1});
     Tensor* d_b_h_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_h", d_b_h_shape, &d_b_h_tensor));
+    d_b_h_tensor->matrix<T>().setZero();
 
     TensorShape d_b_y_shape({insize, 1});
     Tensor* d_b_y_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_y", d_b_y_shape, &d_b_y_tensor));
+    d_b_y_tensor->matrix<T>().setZero();
 
+    Tensor dh_next(DT_FLOAT, TensorShape({hidsize, 1}));
+    dh_next.matrix<float>().setZero();
 
-
-
-#if 0
-    const Tensor* x;
-    OP_REQUIRES_OK(ctx, ctx->input("x", &x));
-    OP_REQUIRES(ctx, x->dims() == 3, errors::InvalidArgument("x must be 3D"));
-    const int64 timelen = x->dim_size(0);
-    const int64 batch_size = x->dim_size(1);
-    const int64 input_size = x->dim_size(2);
-
-    const Tensor* cs_prev_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("cs_prev", &cs_prev_tensor));
-
-    const Tensor* h_prev_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("h_prev", &h_prev_tensor));
-
-    const Tensor* w_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("w", &w_tensor));
-    const int64 cell_size = w_tensor->dim_size(1) / 4;
-    OP_REQUIRES(ctx, input_size + cell_size == w_tensor->dim_size(0),
-                errors::InvalidArgument(
-                    "w matrix rows don't match: ", input_size + cell_size,
-                    " vs. ", w_tensor->dim_size(0)));
-
-    const Tensor* wci_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("wci", &wci_tensor));
-
-    const Tensor* wcf_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("wcf", &wcf_tensor));
-
-    const Tensor* wco_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("wco", &wco_tensor));
-
-    const Tensor* b_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("b", &b_tensor));
-    OP_REQUIRES(
-        ctx, cell_size == b_tensor->dim_size(0) / 4,
-        errors::InvalidArgument("w and b cell_size don't match: ", cell_size,
-                                " vs. ", b_tensor->dim_size(0)));
-
-    const Tensor* i_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("i", &i_out));
-
-    const Tensor* cs_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("cs", &cs_out));
-
-    const Tensor* f_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("f", &f_out));
-
-    const Tensor* o_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("o", &o_out));
-
-    const Tensor* ci_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("ci", &ci_out));
-
-    const Tensor* co_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("co", &co_out));
-
-    const Tensor* h_out = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("h", &h_out));
-
-    const Tensor* cs_grad = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("cs_grad", &cs_grad));
-
-    const Tensor* h_grad = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->input("h_grad", &h_grad));
-
-    TensorShape batch_input_shape({timelen, batch_size, input_size});
-    Tensor* x_grad;
-    OP_REQUIRES_OK(ctx,
-                   ctx->allocate_output("x_grad", batch_input_shape, &x_grad));
-
-    Tensor* cs_prev_grad_tensor = nullptr;
-    OP_REQUIRES_OK(ctx,
-                   ctx->allocate_output("cs_prev_grad", cs_prev_tensor->shape(),
-                                        &cs_prev_grad_tensor));
-
-    Tensor* h_prev_grad_tensor = nullptr;
-    OP_REQUIRES_OK(ctx,
-                   ctx->allocate_output("h_prev_grad", h_prev_tensor->shape(),
-                                        &h_prev_grad_tensor));
-
-    Tensor* w_grad_tensor = nullptr;
-    OP_REQUIRES_OK(
-        ctx, ctx->allocate_output("w_grad", w_tensor->shape(), &w_grad_tensor));
-
-    Tensor* wci_grad_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->allocate_output("wci_grad", wci_tensor->shape(),
-                                             &wci_grad_tensor));
-
-    Tensor* wcf_grad_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->allocate_output("wcf_grad", wcf_tensor->shape(),
-                                             &wcf_grad_tensor));
-
-    Tensor* wco_grad_tensor = nullptr;
-    OP_REQUIRES_OK(ctx, ctx->allocate_output("wco_grad", wco_tensor->shape(),
-                                             &wco_grad_tensor));
-
-    Tensor* b_grad_tensor = nullptr;
-    OP_REQUIRES_OK(
-        ctx, ctx->allocate_output("b_grad", b_tensor->shape(), &b_grad_tensor));
-
-    TensorShape batch_cell_shape({batch_size, cell_size});
-
-    Tensor xh_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(
-                            DataTypeToEnum<T>::v(),
-                            TensorShape({batch_size, input_size + cell_size}),
-                            &xh_tensor));
-
-    Tensor xh_grad_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           xh_tensor.shape(), &xh_grad_tensor));
-
-    Tensor do_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &do_tensor));
-
-    Tensor dcs_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &dcs_tensor));
-
-    Tensor dci_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &dci_tensor));
-
-    Tensor df_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &df_tensor));
-
-    Tensor di_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &di_tensor));
-
-    Tensor dicfo_tensor;
-    OP_REQUIRES_OK(ctx,
-                   ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                      TensorShape({batch_size, cell_size * 4}),
-                                      &dicfo_tensor));
-
-    Tensor cs_grad_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &cs_grad_tensor));
-
-    Tensor h_grad_tensor;
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
-                                           batch_cell_shape, &h_grad_tensor));
-
+    // 
     const Device& device = ctx->eigen_device<Device>();
+    SliceHelper<Device, T> slicer(ctx);
 
-    functor::TensorZero<Device, T>()(device, cs_grad_tensor.flat<T>());
-    functor::TensorZero<Device, T>()(device, cs_prev_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, h_grad_tensor.flat<T>());
-    functor::TensorZero<Device, T>()(device, h_prev_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, w_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, wci_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, wcf_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, wco_grad_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, b_grad_tensor->flat<T>());
+    for (int64 t = seq_length - 1; t >= 0; --t) {
+      const Tensor x_t_tensor = slicer.InputSlice(*x_tensor, t, "x");
+      const Tensor p_t_tensor = slicer.InputSlice(*p_tensor, t, "p");
+      const Tensor h_t_tensor = slicer.InputSlice(*h_tensor, t, "h");
+      const Tensor h_prev_t_tensor = slicer.InputSlice(*h_tensor, t == 0 ? t : t - 1, "h");
 
-    const int64 seq_len_max = seq_len_max_tensor->scalar<int64>()();
-    for (int64 t = seq_len_max - 1; t >= 0; --t) {
+      const Tensor *h_prev_p = h_prev_tensor;
+      if(t != 0) {
+        h_prev_p = &h_prev_t_tensor;
+      }
       
-    //   functor::VanillaRNNBprop<Device, T, USE_CUBLAS>(batch_size, input_size,
-    //                                                  cell_size)(
-    //       ctx, device, use_peephole_, x_tensor.matrix<T>(),
-    //       cs_prev_tensor2.matrix<T>(), h_prev_tensor2.matrix<T>(),
-    //       w_tensor->matrix<T>(), wci_tensor->vec<T>(), wcf_tensor->vec<T>(),
-    //       wco_tensor->vec<T>(), b_tensor->vec<T>(), xh_tensor.matrix<T>(),
-    //       i_tensor.matrix<T>(), cs_tensor.matrix<T>(), f_tensor.matrix<T>(),
-    //       o_tensor.matrix<T>(), ci_tensor.matrix<T>(), co_tensor.matrix<T>(),
-    //       const_cs_grad_tensor.matrix<T>(), const_h_grad_tensor.matrix<T>(),
-    //       do_tensor.matrix<T>(), dcs_tensor.matrix<T>(), dci_tensor.matrix<T>(),
-    //       df_tensor.matrix<T>(), di_tensor.matrix<T>(),
-    //       dicfo_tensor.matrix<T>(), cs_prev_grad_tensor->matrix<T>(),
-    //       h_prev_grad_tensor->matrix<T>(), xh_grad_tensor.matrix<T>(),
-    //       x_grad_tensor.matrix<T>(), w_grad_tensor->matrix<T>(),
-    //       wci_grad_tensor->vec<T>(), wcf_grad_tensor->vec<T>(),
-    //       wco_grad_tensor->vec<T>(), b_grad_tensor->vec<T>());
+      functor::VanillaRNNBprop<Device, T, USE_CUBLAS>(seq_length, insize)(
+          ctx, device, t,
+          x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), 
+          p_t_tensor.matrix<T>(), h_t_tensor.matrix<T>(), 
+          w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(), h_prev_p->matrix<T>(), dh_next.matrix<T>(), 
+          d_w_xh_tensor->matrix<T>(), d_w_hh_tensor->matrix<T>(), d_w_hy_tensor->matrix<T>(),
+          d_b_h_tensor->matrix<T>(), d_b_y_tensor->matrix<T>());
+
+      slicer.FinishTimeStep();
     }
-#endif
-
-
 
   }
 

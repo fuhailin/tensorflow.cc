@@ -42,8 +42,8 @@ const char test_content[] = "hello world hello world hello world hello world hel
 #define VERBOSE 1
 #define TESTING 1
 
-// VanillaRNN node builder with Placeholder
-static tensorflow::Status VanillaRNNPlaceholder(const tensorflow::Scope& scope, 
+// VanillaRNN node builder 
+static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope, 
                                           tensorflow::Input x,
                                           tensorflow::Input y, 
                                           tensorflow::Input h_prev, 
@@ -118,21 +118,19 @@ static tensorflow::Status VanillaRNNPlaceholder(const tensorflow::Scope& scope,
   return tensorflow::Status::OK();
 }
 
-// VanillaRNN node with extra inputs
-static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope, 
+// VanillaRNNGrad node builder
+static tensorflow::Status VanillaRNNGrad(const tensorflow::Scope& scope, 
                                           tensorflow::Input x,
                                           tensorflow::Input y, 
-                                          tensorflow::Input h_prev, 
-                                          tensorflow::Input w_xh, 
+                                          tensorflow::Input p, 
+                                          tensorflow::Input h, 
                                           tensorflow::Input w_hh, 
                                           tensorflow::Input w_hy, 
-                                          tensorflow::Input b_h, 
-                                          tensorflow::Input b_y, 
-                                          const int hidsize,
+                                          tensorflow::Input h_prev, 
                                           tensorflow::Output &output) {
   if (!scope.ok()) 
-    return  scope.status();
-
+    return  scope.status();  
+  
   // Prepare inputs
   auto _x = tensorflow::ops::AsNodeOut(scope, x);
   if (!scope.ok()) 
@@ -142,11 +140,11 @@ static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope,
   if (!scope.ok()) 
     return scope.status();
 
-  auto _h_prev = tensorflow::ops::AsNodeOut(scope, h_prev);
+  auto _p = tensorflow::ops::AsNodeOut(scope, p);
   if (!scope.ok()) 
     return scope.status();
 
-  auto _w_xh = tensorflow::ops::AsNodeOut(scope, w_xh);
+  auto _h = tensorflow::ops::AsNodeOut(scope, h);
   if (!scope.ok()) 
     return scope.status();
 
@@ -158,26 +156,21 @@ static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope,
   if (!scope.ok()) 
     return scope.status();
 
-  auto _b_h = tensorflow::ops::AsNodeOut(scope, b_h);
-  if (!scope.ok()) 
-    return scope.status();
-
-  auto _b_y = tensorflow::ops::AsNodeOut(scope, b_y);
+  auto _h_prev = tensorflow::ops::AsNodeOut(scope, h_prev);
   if (!scope.ok()) 
     return scope.status();
 
   // Build node
   tensorflow::Node* ret;
-  const auto unique_name = scope.GetUniqueNameForOp("VanillaRNN");
-  auto builder = tensorflow::NodeBuilder(unique_name, "VanillaRNN")
+  const auto unique_name = scope.GetUniqueNameForOp("VanillaRNNGrad");
+  auto builder = tensorflow::NodeBuilder(unique_name, "VanillaRNNGrad")
                     .Input(_x)
                     .Input(_y)
-                    .Input(_h_prev)
-                    .Input(_w_xh)
+                    .Input(_p)
+                    .Input(_h)
                     .Input(_w_hh)
                     .Input(_w_hy)
-                    .Input(_b_h)
-                    .Input(_b_y)
+                    .Input(_h_prev)
                     .Attr("hidsize", HIDDEN_SIZE);
 
   // Update scope
@@ -221,7 +214,7 @@ int main() {
   // Prepare hidden tensor
   tensorflow::Tensor h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
   typename tensorflow::TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
-  h_prev_t.setRandom();
+  h_prev_t.setZero();
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
 #endif
@@ -264,14 +257,25 @@ int main() {
   auto b_h = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
   auto b_y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE, 1}));
 
+  auto p = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
+  auto h = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, HIDDEN_SIZE, 1}));
+
   // VanillaRNN Node
   tensorflow::Output vanilla_rnn_output;
-  if (!VanillaRNNPlaceholder(root, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output).ok()) {
+  if (!VanillaRNN(root, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output).ok()) {
     LOG(ERROR) << "-----------------------------------------status: " << root.status();
     return root.status().code();
   }
 
-  std::vector<tensorflow::Tensor> outputs;
+  // VanillaRNNGrad Node
+  tensorflow::Output vanilla_rnn_grad_output;
+  if (!VanillaRNNGrad(root, x, y, p, h, w_hh, w_hy, h_prev, vanilla_rnn_grad_output).ok()) {
+    LOG(ERROR) << "-----------------------------------------status: " << root.status();
+    return root.status().code();
+  }
+
+  std::vector<tensorflow::Tensor> outputs_forward;
+  std::vector<tensorflow::Tensor> outputs_backward;
   tensorflow::ClientSession session(root);
 
   // Train
@@ -323,24 +327,41 @@ int main() {
     y_t(vocab_index - 1, 0) = 1.0f;
 #ifdef VERBOSE  
     LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
-#endif
+#endif 
 
-    // Run 
+    // Run forward 
     TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}, {w_xh, w_xh_tensor}, {w_hh, w_hh_tensor}, {w_hy, w_hy_tensor}, {b_h, b_h_tensor}, {b_y, b_y_tensor} }, 
                             {tensorflow::Output(vanilla_rnn_output.node(), 0), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2)}, 
                             {vanilla_rnn_output.op()}, 
-                            &outputs));
+                            &outputs_forward));
 
-    LOG(INFO) << "Print: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape();
-    LOG(INFO) << "Print: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString();
+    LOG(INFO) << "Print forward: " << outputs_forward[0].shape() << ", " << outputs_forward[1].shape() << ", " << outputs_forward[2].shape();
+    LOG(INFO) << "Print forward: " << outputs_forward[0].DebugString() << ", " << outputs_forward[1].DebugString() << ", " << outputs_forward[2].DebugString();
+
+    // Run backword propagation
+    TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {p, outputs_forward[0]}, {h, outputs_forward[1]}, {w_hh, w_hh_tensor}, {w_hy, w_hy_tensor}, {h_prev, h_prev_tensor}}, 
+                            {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
+                              tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
+                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4)}, 
+                            {vanilla_rnn_grad_output.op()}, 
+                            &outputs_backward));
+
+    LOG(INFO) << "Print backword: " << outputs_backward[0].shape() << ", " << outputs_backward[1].shape() << ", " << outputs_backward[2].shape() << ", " << outputs_backward[3].shape() << ", " << outputs_backward[4].shape();
+    LOG(INFO) << "Print backword: " << outputs_backward[0].DebugString() << ", " << outputs_backward[1].DebugString() << ", " << outputs_backward[2].DebugString() << ", " << outputs_backward[3].DebugString() << ", " << outputs_backward[4].DebugString();
+
+    // Gradient
+
+
+    // Update h_prev
+    CHECK(h_prev_tensor.CopyFrom(outputs_forward[1].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs_forward[1].dim_size(1), outputs_forward[1].dim_size(2)}));
+#ifdef VERBOSE  
+    LOG(INFO) << __FUNCTION__ << "----------------------------h_tensorxxx 222:" << std::endl << h_prev_tensor.matrix<float>();
+#endif
+
+    // Evaluate
+
+
   }
-
-  // Backward propagation
-
-
-  // Gradient
-
-
 
   return 0;
 }

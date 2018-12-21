@@ -113,6 +113,9 @@ TEST(RNNOpsTest, VanillaRNNGrad_InvalidNumberOfInputs) {
                      .Input("y", 0, DT_FLOAT)
                      .Input("p", 0, DT_FLOAT)
                      .Input("h", 0, DT_FLOAT)
+                     .Input("w_hh", 0, DT_FLOAT)
+                     .Input("w_hy", 0, DT_FLOAT)
+                     .Input("h_prev", 0, DT_FLOAT)
                      .Attr("hidsize", hidsize)
                      .Finalize(&op.node_def));
   };
@@ -121,8 +124,8 @@ TEST(RNNOpsTest, VanillaRNNGrad_InvalidNumberOfInputs) {
   rebuild_node_def(10);
 
   INFER_ERROR("Wrong number of inputs passed", op, "?;?;?");
-  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?];?");
-  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?,?];[?,?]");
+  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?];?;?;?;?");
+  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?,?];[?,?];?;?;?");
 }
 
 }  // end namespace tensorflow

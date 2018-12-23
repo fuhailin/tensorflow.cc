@@ -53,6 +53,7 @@ using GPUDevice = Eigen::GpuDevice;
 
 namespace functor {
 
+// Forward pass for one input character of the input sequence
 template <typename T>
 void VanillaRNNCellFpropWithEigen(
     const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
@@ -163,6 +164,7 @@ void VanillaRNNCellFpropWithEigen(
 #endif
 }
 
+// Backward pass for one input character of the input sequence
 template <typename T>
 void VanillaRNNBpropWithEigen(
     const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
@@ -182,11 +184,22 @@ void VanillaRNNBpropWithEigen(
 
   // Note that that Tensorflow uses Eigen::RowMajor, don't mix it with Eigen::ColMajor
 
+  // Get y index
+  int y_index = 0;
+  int insize = y.dimension(0);
+  for(; y_index < insize; y_index++) {
+    T scalar = y(y_index, 0);
+    if(scalar > 0.0f)
+      break;
+  }
+
   // Python code:
   //   dy = np.copy(p[t])
+  //   dy[y[t]] -= 1
   int p_data_len = p.dimension(0) * p.dimension(1);
   float dy_data[p_data_len];
   std::copy_n(p.data(), p_data_len, dy_data);
+  dy_data[y_index] -= 1.0f;
   Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor>> dy(dy_data, p.dimension(0), p.dimension(1));
 
 #ifdef VERBOSE
@@ -200,20 +213,10 @@ void VanillaRNNBpropWithEigen(
   LOG(INFO) << __FUNCTION__ << "----------------------------input dh_next:" << std::endl << dh_next;
 #endif
 
-  // Python code:
-  //  dy[y[t]] -= 1
-  Eigen::Tensor<float, 2, Eigen::RowMajor> one_m(p.dimension(0), p.dimension(1));
-  one_m.setConstant(1.0f);
-  dy -= one_m;
-
-#ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------------------dy - 1:" << std::endl << dy;
-#endif
-
   Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) }; // for dot product
   const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0}); // For matrix transpose
 
-  //    dW_hy += np.dot(dy, h[t].T)
+  //   dW_hy += np.dot(dy, h[t].T)
   auto h_t = h.shuffle(matrix_transpose);
   d_w_hy_out.device(d) += dy.contract(h_t, product_dims);
 #ifdef VERBOSE
@@ -221,14 +224,14 @@ void VanillaRNNBpropWithEigen(
   LOG(INFO) << __FUNCTION__ << "----------------------------dw_hy:" << std::endl << d_w_hy_out;
 #endif
 
-  //    db_y += dy
+  //   db_y += dy
   d_b_y_out.device(d) += dy;
 
-  // dh = np.dot(self.W_hy.T, dy) + dh_next
+  //   dh = np.dot(self.W_hy.T, dy) + dh_next
   auto w_hy_t = w_hy.shuffle(matrix_transpose);
   auto dh = w_hy_t.contract(dy, product_dims) + dh_next;
 
-  //             dh_raw = (1 - h[t]**2) * dh
+  //   dh_raw = (1 - h[t]**2) * dh
   Eigen::Tensor<float, 2, Eigen::RowMajor> one_h(h.dimension(0), h.dimension(1));
   one_h.setConstant(1.0f);
   Eigen::Tensor<float, 2, Eigen::RowMajor> dh_raw = (one_h - h.pow(2)) * dh;
@@ -237,15 +240,15 @@ void VanillaRNNBpropWithEigen(
   LOG(INFO) << __FUNCTION__ << "----------------------------dh_raw:" << std::endl << dh_raw;
 #endif
 
-  //          dW_xh += np.dot(dh_raw, xhat[t].T)
-  //          dW_hh += np.dot(dh_raw, h[t-1].T)
-  //          db_h += dh_raw
+  //   dW_xh += np.dot(dh_raw, xhat[t].T)
+  //   dW_hh += np.dot(dh_raw, h[t-1].T)
+  //   db_h += dh_raw
   auto x_t = x.shuffle(matrix_transpose);
   d_w_xh_out.device(d) += dh_raw.contract(x_t, product_dims);
   d_w_hh_out.device(d) += dh_raw.contract(h_prev.shuffle(matrix_transpose), product_dims);
   d_b_h_out.device(d) += dh_raw;
 
-  //            dh_next = np.dot(self.W_hh.T, dh_raw)
+  //   dh_next = np.dot(self.W_hh.T, dh_raw)
   dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);;
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "----------------------------updated dh_next:" << std::endl << dh_next;
@@ -327,10 +330,9 @@ void VanillaRNNBpropWithEigen(
 
   }
 #endif
-
-
 }
 
+// CPUDevice Instatiation of template class
 #define DEFINE_CPU_SPECS(T)                                                   \
   template <>                                                                 \
   void VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
@@ -372,9 +374,6 @@ void VanillaRNNBpropWithEigen(
 
 DEFINE_CPU_SPECS(float);
 #undef DEFINE_CPU_SPECS
-
-
-
 }  // namespace functor
 
 namespace {
@@ -639,14 +638,13 @@ class VanillaRNNOp : public OpKernel {
   LOG(INFO) << __FUNCTION__ << "----------------------------loss cumulated:" << std::endl << loss_tensor->scalar<T>()();
 #endif
       slicer.FinishTimeStep();
-
     }
 
 
 #ifdef VERBOSE
   Tensor h_tensorxxx = slicer.OutputSlice(h_out, seq_length - 1, "h_out");
 
-  LOG(INFO) << __FUNCTION__ << "----------------------------h_tensorxxx 111:" << std::endl << h_tensorxxx.matrix<T>();
+  LOG(INFO) << __FUNCTION__ << "----------------------------h_tensor xxx 111:" << std::endl << h_tensorxxx.matrix<T>();
 #endif
   }
 

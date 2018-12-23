@@ -184,7 +184,7 @@ def test():
     
     g_i = 0
 
-    while g_i < 5000:
+    while g_i < 1000:
       for i in range(len(data)/seq_length):
         x = [char_to_ix[c] for c in data[i*seq_length:(i+1)*seq_length]]#inputs to the RNN
         y = [char_to_ix[c] for c in data[i*seq_length+1:(i+1)*seq_length+1]]#the targets it should be outputting

@@ -219,46 +219,46 @@ int main() {
   LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
 #endif
 
-  // Trainable parameters start here 
-  // Prepare w_xh tensor
-  tensorflow::Tensor w_xh_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, VOCAB_SIZE}));
-  typename tensorflow::TTypes<float>::Matrix w_xh_t = w_xh_tensor.matrix<float>();
-  w_xh_t.setRandom();
+  // Trainable parameters start here
+  auto w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_xh = tensorflow::ops::Assign(root, w_xh, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT));
 
-  // Prepare w_hh tensor
-  tensorflow::Tensor w_hh_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, HIDDEN_SIZE}));
-  typename tensorflow::TTypes<float>::Matrix w_hh_t = w_hh_tensor.matrix<float>();
-  w_hh_t.setRandom();
+  auto w_hh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_hh = tensorflow::ops::Assign(root, w_hh, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT));
 
-  // Prepare w_hy tensor
-  tensorflow::Tensor w_hy_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({VOCAB_SIZE, HIDDEN_SIZE}));
-  typename tensorflow::TTypes<float>::Matrix w_hy_t = w_hy_tensor.matrix<float>();
-  w_hy_t.setRandom();
+  auto w_hy = tensorflow::ops::Variable(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_hy = tensorflow::ops::Assign(root, w_hy, tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT));
 
-  // Prepare b_h tensor
-  tensorflow::Tensor b_h_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
-  typename tensorflow::TTypes<float>::Matrix b_h_t = b_h_tensor.matrix<float>();
-  b_h_t.setRandom();
+  auto b_h = tensorflow::ops::Variable(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto assign_b_h = tensorflow::ops::Assign(root, b_h, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT));
 
-  // Prepare b_y tensor
-  tensorflow::Tensor b_y_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({VOCAB_SIZE, 1}));
-  typename tensorflow::TTypes<float>::Matrix b_y_t = b_y_tensor.matrix<float>();
-  b_y_t.setRandom();
+  auto b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto assign_b_y = tensorflow::ops::Assign(root, b_y, tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT));
   // Trainable parameters end here 
 
+
+  // Gradient accum parameters start here
+  auto ada_w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_ada_w_xh = tensorflow::ops::Assign(root, ada_w_xh, tensorflow::ops::ZerosLike(root, w_xh));
+
+  auto ada_w_hh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_ada_w_hh = tensorflow::ops::Assign(root, ada_w_hh, tensorflow::ops::ZerosLike(root, w_hh));
+
+  auto ada_w_hy = tensorflow::ops::Variable(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_ada_w_hy = tensorflow::ops::Assign(root, ada_w_hy, tensorflow::ops::ZerosLike(root, w_hy));
+
+  auto ada_b_h = tensorflow::ops::Variable(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto assign_ada_b_h = tensorflow::ops::Assign(root, ada_b_h, tensorflow::ops::ZerosLike(root, b_h));
+
+  auto ada_b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto assign_ada_b_y = tensorflow::ops::Assign(root, ada_b_y, tensorflow::ops::ZerosLike(root, b_y));
+
+  // Gradient accum parameters end here 
 
   // Placeholders
   auto x = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
   auto y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE, 1}));
   auto h_prev = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
-  auto w_xh = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, VOCAB_SIZE}));
-  auto w_hh = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, HIDDEN_SIZE}));
-  auto w_hy = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE, HIDDEN_SIZE}));
-  auto b_h = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
-  auto b_y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE, 1}));
-
-  auto p = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
-  auto h = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, HIDDEN_SIZE, 1}));
 
   // VanillaRNN Node
   tensorflow::Output vanilla_rnn_output;
@@ -269,19 +269,33 @@ int main() {
 
   // VanillaRNNGrad Node
   tensorflow::Output vanilla_rnn_grad_output;
-  if (!VanillaRNNGrad(root, x, y, p, h, w_hh, w_hy, h_prev, vanilla_rnn_grad_output).ok()) {
+  if (!VanillaRNNGrad(root, x, y, tensorflow::Output(vanilla_rnn_output.node(), 0), tensorflow::Output(vanilla_rnn_output.node(), 1), w_hh, w_hy, h_prev, vanilla_rnn_grad_output).ok()) {
     LOG(ERROR) << "-----------------------------------------status: " << root.status();
     return root.status().code();
   }
 
-  std::vector<tensorflow::Tensor> outputs_forward;
-  std::vector<tensorflow::Tensor> outputs_backward;
+  // Gradient
+  auto lr = tensorflow::ops::Cast(root, 0.01, tensorflow::DT_FLOAT);
+
+  auto apply_w_xh = tensorflow::ops::ApplyAdagrad(root, w_xh, ada_w_xh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 0));
+  auto apply_w_hh = tensorflow::ops::ApplyAdagrad(root, w_hh, ada_w_hh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 1));
+  auto apply_w_hy = tensorflow::ops::ApplyAdagrad(root, w_hy, ada_w_hy, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 2));
+  auto apply_b_h = tensorflow::ops::ApplyAdagrad(root, b_h, ada_b_h, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 3));
+  auto apply_b_y = tensorflow::ops::ApplyAdagrad(root, b_y, ada_b_y, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 4));
+
+  std::vector<tensorflow::Tensor> outputs;
   tensorflow::ClientSession session(root);
 
-  // Train
-  for(int step = 0; step < 10; step++) {
-    // Forward propagation
+  // Initialize variables
+  TF_CHECK_OK(session.Run({assign_w_xh, assign_w_hh, assign_w_hy, assign_b_h, assign_b_y}, 
+                          nullptr));
+  TF_CHECK_OK(session.Run({assign_ada_w_xh, assign_ada_w_hh, assign_ada_w_hy, assign_ada_b_h, assign_ada_b_y}, 
+                          nullptr));
 
+  // Train and eval
+  for(int step = 0; step < 10; step++) {
+    // Train
+    
     // Batch input with batch size of SEQ_LENGTH
     tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({SEQ_LENGTH, VOCAB_SIZE, 1}));
 
@@ -327,35 +341,25 @@ int main() {
     y_t(vocab_index - 1, 0) = 1.0f;
 #ifdef VERBOSE  
     LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
-#endif 
+#endif
 
-    // Run forward 
-    TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}, {w_xh, w_xh_tensor}, {w_hh, w_hh_tensor}, {w_hy, w_hy_tensor}, {b_h, b_h_tensor}, {b_y, b_y_tensor} }, 
-                            {tensorflow::Output(vanilla_rnn_output.node(), 0), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2)}, 
-                            {vanilla_rnn_output.op()}, 
-                            &outputs_forward));
-
-    LOG(INFO) << "Print forward: " << outputs_forward[0].shape() << ", " << outputs_forward[1].shape() << ", " << outputs_forward[2].shape();
-    LOG(INFO) << "Print forward: " << outputs_forward[0].DebugString() << ", " << outputs_forward[1].DebugString() << ", " << outputs_forward[2].DebugString();
-
-    // Run backword propagation
-    TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {p, outputs_forward[0]}, {h, outputs_forward[1]}, {w_hh, w_hh_tensor}, {w_hy, w_hy_tensor}, {h_prev, h_prev_tensor}}, 
+    // Run 
+    TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
                             {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
                               tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
-                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4)}, 
-                            {vanilla_rnn_grad_output.op()}, 
-                            &outputs_backward));
-
-    LOG(INFO) << "Print backword: " << outputs_backward[0].shape() << ", " << outputs_backward[1].shape() << ", " << outputs_backward[2].shape() << ", " << outputs_backward[3].shape() << ", " << outputs_backward[4].shape();
-    LOG(INFO) << "Print backword: " << outputs_backward[0].DebugString() << ", " << outputs_backward[1].DebugString() << ", " << outputs_backward[2].DebugString() << ", " << outputs_backward[3].DebugString() << ", " << outputs_backward[4].DebugString();
-
-    // Gradient
-
+                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1),
+                              apply_w_xh, apply_w_hh, apply_w_hy, apply_b_h, apply_b_y}, 
+                            {}, 
+                            &outputs));
+    LOG(INFO) << "Print output: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape() 
+                                    << ", " << outputs[3].shape() << ", " << outputs[4].shape() << ", " << outputs[5].shape();
+    LOG(INFO) << "Print output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
+                                    << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString() << ", " << outputs[5].DebugString();
 
     // Update h_prev
-    CHECK(h_prev_tensor.CopyFrom(outputs_forward[1].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs_forward[1].dim_size(1), outputs_forward[1].dim_size(2)}));
+    CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
 #ifdef VERBOSE  
-    LOG(INFO) << __FUNCTION__ << "----------------------------h_tensorxxx 222:" << std::endl << h_prev_tensor.matrix<float>();
+    LOG(INFO) << __FUNCTION__ << "----------------------------h_tensor xxx 222:" << std::endl << h_prev_tensor.matrix<float>();
 #endif
 
     // Evaluate

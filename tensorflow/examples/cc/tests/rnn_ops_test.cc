@@ -37,10 +37,10 @@ limitations under the License.
 const char test_content[] = "hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world";
 #define HIDDEN_SIZE 16
 #define SEQ_LENGTH 10
-#define VOCAB_SIZE 8 // "helo wrd" -> 1/2/3/4/5/6/7/8
+#define VOCAB_SIZE 8 // "helo wrd"
 
-#define VERBOSE 1
-#define TESTING 1
+// #define VERBOSE 1
+// #define TESTING 1
 
 // VanillaRNN node builder 
 static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope, 
@@ -188,12 +188,50 @@ static tensorflow::Status VanillaRNNGrad(const tensorflow::Scope& scope,
   return tensorflow::Status::OK();
 }
 
+
+// ApplyAdagradTrick node builder
+static tensorflow::Status ApplyAdagradTrick(const ::tensorflow::Scope& scope,
+                           ::tensorflow::Input var, ::tensorflow::Input accum,
+                           ::tensorflow::Input lr, ::tensorflow::Input grad, 
+                                          tensorflow::Output &output) {
+  if (!scope.ok()) return scope.status();
+
+  auto _var = ::tensorflow::ops::AsNodeOut(scope, var);
+  if (!scope.ok()) return scope.status();
+  auto _accum = ::tensorflow::ops::AsNodeOut(scope, accum);
+  if (!scope.ok()) return scope.status();
+  auto _lr = ::tensorflow::ops::AsNodeOut(scope, lr);
+  if (!scope.ok()) return scope.status();
+  auto _grad = ::tensorflow::ops::AsNodeOut(scope, grad);
+  if (!scope.ok()) return scope.status();
+
+  ::tensorflow::Node* ret;
+  const auto unique_name = scope.GetUniqueNameForOp("ApplyAdagradTrick");
+  auto builder = ::tensorflow::NodeBuilder(unique_name, "ApplyAdagradTrick")
+                     .Input(_var)
+                     .Input(_accum)
+                     .Input(_lr)
+                     .Input(_grad)
+                     .Attr("use_locking", false)
+                     .Attr("update_slots", true)
+  ;
+  scope.UpdateBuilder(&builder);
+  scope.UpdateStatus(builder.Finalize(scope.graph(), &ret));
+  if (!scope.ok()) return scope.status();
+  scope.UpdateStatus(scope.DoShapeInference(ret));
+
+  output = tensorflow::Output(ret, 0);
+
+  return tensorflow::Status::OK();
+}
+
+
 int main() {
 
   tensorflow::Scope root = tensorflow::Scope::NewRootScope();
 
   // vocabulary vs index
-  const std::map<int, char> index_vocab_dic = {{1, 'h'}, {2, 'e'}, {3, 'l'}, {4, 'o'}, {5, ' '}, {6, 'w'}, {7, 'r'}, {8, 'd'}};
+  const std::map<int, char> index_vocab_dic = {{0, ' '}, {1, 'e'}, {2, 'd'}, {3, 'h'}, {4, 'l'}, {5, 'o'}, {6, 'r'}, {7, 'w'}};
   std::map<char, int> vocab_index_dic;
   for(auto iter = index_vocab_dic.begin(); iter != index_vocab_dic.end(); iter++) {
     // LOG(INFO) << "----------------index_vocab_dic: " << iter->first <<' ' << iter->second;  
@@ -219,23 +257,30 @@ int main() {
   LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
 #endif
 
-  // Trainable parameters start here
+  // Trainable parameters start here, to be improved
   auto w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
-  auto assign_w_xh = tensorflow::ops::Assign(root, w_xh, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT));
+  auto rate = tensorflow::ops::Const(root, {0.01f});
+  auto random_value = tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_xh = tensorflow::ops::Assign(root, w_xh, tensorflow::ops::Multiply(root, random_value, rate));
 
   auto w_hh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
-  auto assign_w_hh = tensorflow::ops::Assign(root, w_hh, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT));
+  auto random_value2 = tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_hh = tensorflow::ops::Assign(root, w_hh, tensorflow::ops::Multiply(root, random_value2, rate));
 
   auto w_hy = tensorflow::ops::Variable(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
-  auto assign_w_hy = tensorflow::ops::Assign(root, w_hy, tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT));
+  auto random_value3 = tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto assign_w_hy = tensorflow::ops::Assign(root, w_hy, tensorflow::ops::Multiply(root, random_value3, rate));
 
   auto b_h = tensorflow::ops::Variable(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
-  auto assign_b_h = tensorflow::ops::Assign(root, b_h, tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT));
+  tensorflow::Tensor b_h_zero_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
+  b_h_zero_tensor.matrix<float>().setZero();
+  auto assign_b_h = tensorflow::ops::Assign(root, b_h, tensorflow::ops::ZerosLike(root, b_h_zero_tensor));
 
   auto b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
-  auto assign_b_y = tensorflow::ops::Assign(root, b_y, tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT));
+  tensorflow::Tensor b_y_zero_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({VOCAB_SIZE, 1}));
+  b_y_zero_tensor.matrix<float>().setZero();  
+  auto assign_b_y = tensorflow::ops::Assign(root, b_y, tensorflow::ops::ZerosLike(root, b_y_zero_tensor));
   // Trainable parameters end here 
-
 
   // Gradient accum parameters start here
   auto ada_w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
@@ -277,11 +322,17 @@ int main() {
   // Gradient
   auto lr = tensorflow::ops::Cast(root, 0.01, tensorflow::DT_FLOAT);
 
-  auto apply_w_xh = tensorflow::ops::ApplyAdagrad(root, w_xh, ada_w_xh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 0));
-  auto apply_w_hh = tensorflow::ops::ApplyAdagrad(root, w_hh, ada_w_hh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 1));
-  auto apply_w_hy = tensorflow::ops::ApplyAdagrad(root, w_hy, ada_w_hy, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 2));
-  auto apply_b_h = tensorflow::ops::ApplyAdagrad(root, b_h, ada_b_h, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 3));
-  auto apply_b_y = tensorflow::ops::ApplyAdagrad(root, b_y, ada_b_y, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 4));
+  // alternative of tensorflow::ops::ApplyAdagrad
+  tensorflow::Output  apply_w_xh;
+  ApplyAdagradTrick(root, w_xh, ada_w_xh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 0), apply_w_xh);
+  tensorflow::Output  apply_w_hh;
+  ApplyAdagradTrick(root, w_hh, ada_w_hh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 1), apply_w_hh);
+  tensorflow::Output  apply_w_hy;
+  ApplyAdagradTrick(root, w_hy, ada_w_hy, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 2), apply_w_hy);
+  tensorflow::Output  apply_b_h;
+  ApplyAdagradTrick(root, b_h, ada_b_h, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 3), apply_b_h);
+  tensorflow::Output  apply_b_y;
+  ApplyAdagradTrick(root, b_y, ada_b_y, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 4), apply_b_y);
 
   std::vector<tensorflow::Tensor> outputs;
   tensorflow::ClientSession session(root);
@@ -293,9 +344,9 @@ int main() {
                           nullptr));
 
   // Train and eval
-  for(int step = 0; step < 10; step++) {
+  for(int step = 0; step < 10000; step++) {
     // Train
-    
+
     // Batch input with batch size of SEQ_LENGTH
     tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({SEQ_LENGTH, VOCAB_SIZE, 1}));
 
@@ -312,7 +363,7 @@ int main() {
       char test_char = test_content[content_index++];
       auto search = vocab_index_dic.find(test_char);
       int vocab_index = search->second;
-      m(0, vocab_index - 1) = 1.0f;
+      m(0, vocab_index) = 1.0f;
 
       // set e_2d
       Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
@@ -338,7 +389,7 @@ int main() {
     char test_char = test_content[content_index];
     auto search = vocab_index_dic.find(test_char);
     int vocab_index = search->second;
-    y_t(vocab_index - 1, 0) = 1.0f;
+    y_t(vocab_index, 0) = 1.0f;
 #ifdef VERBOSE  
     LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
 #endif
@@ -347,24 +398,33 @@ int main() {
     TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
                             {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
                               tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
-                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1),
+                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2),
                               apply_w_xh, apply_w_hh, apply_w_hy, apply_b_h, apply_b_y}, 
                             {}, 
                             &outputs));
+#ifdef VERBOSE  
     LOG(INFO) << "Print output: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape() 
-                                    << ", " << outputs[3].shape() << ", " << outputs[4].shape() << ", " << outputs[5].shape();
-    LOG(INFO) << "Print output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
-                                    << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString() << ", " << outputs[5].DebugString();
+                                    << ", " << outputs[3].shape() << ", " << outputs[4].shape()
+                                    << ", " << outputs[5].shape() << ", " << outputs[6].shape();
+    LOG(INFO) << "Print step: " << step << ", output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
+                                    << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString()
+                                    << ", " << outputs[5].DebugString() << ", " << outputs[6].DebugString();
+#endif
+    LOG(INFO) << "Print step: " << step << ", loss: " << outputs[6].DebugString();
 
     // Update h_prev
     CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
 #ifdef VERBOSE  
-    LOG(INFO) << __FUNCTION__ << "----------------------------h_tensor xxx 222:" << std::endl << h_prev_tensor.matrix<float>();
+    LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
 #endif
 
     // Evaluate
 
 
+
+    // start over
+    if(content_index > 350)
+      content_index = 0;
   }
 
   return 0;

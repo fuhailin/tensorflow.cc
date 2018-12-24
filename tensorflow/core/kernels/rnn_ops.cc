@@ -29,8 +29,8 @@ limitations under the License.
 #define EIGEN_USE_GPU
 #endif  // GOOGLE_CUDA_TODO
 
-#define VERBOSE 1
-#define TESTING 1
+// #define VERBOSE 1
+// #define TESTING 1
 
 #define EIGEN_USE_THREADS
 
@@ -67,11 +67,16 @@ void VanillaRNNCellFpropWithEigen(
     typename TTypes<T>::ConstMatrix b_y,
     typename TTypes<T>::Matrix p_out, typename TTypes<T>::Matrix h_out, typename TTypes<T>::Scalar loss_out) {
 
+  // Note that that Tensorflow uses Eigen::RowMajor, don't mix it with Eigen::ColMajor
+
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "---------------------------------------------------------sequence number:" << std::endl << t;
   LOG(INFO) << __FUNCTION__ << "----------------------------x:" << std::endl << x;
   LOG(INFO) << __FUNCTION__ << "----------------------------y:" << std::endl << y;
   LOG(INFO) << __FUNCTION__ << "----------------------------h_prev:" << std::endl << h_prev;
+  LOG(INFO) << __FUNCTION__ << "----------------------------w_xh:" << std::endl << w_xh;
+  LOG(INFO) << __FUNCTION__ << "----------------------------w_hh:" << std::endl << w_hh;
+  LOG(INFO) << __FUNCTION__ << "----------------------------b_h:" << std::endl << b_h;
 #endif
   int y_index = 0;
   int insize = y.dimension(0);
@@ -97,9 +102,9 @@ void VanillaRNNCellFpropWithEigen(
   auto p = y_c_exp / y_c_exp.sum().reshape(b_shape).broadcast(bcast);
 
 #ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------------------softmax h:" << std::endl << h<< std::endl;
-  LOG(INFO) << __FUNCTION__ << "----------------------------softmax y_c:" << std::endl << y_c<< std::endl;
-  LOG(INFO) << __FUNCTION__ << "----------------------------softmax y_c_exp:" << std::endl << y_c_exp<< std::endl;
+  LOG(INFO) << __FUNCTION__ << "----------------------------softmax h:" << std::endl << h;
+  LOG(INFO) << __FUNCTION__ << "----------------------------softmax y_c:" << std::endl << y_c;
+  LOG(INFO) << __FUNCTION__ << "----------------------------softmax y_c_exp:" << std::endl << y_c_exp;
   LOG(INFO) << __FUNCTION__ << "----------------------------softmax p:" << std::endl << p;
 #endif
 
@@ -243,55 +248,35 @@ void VanillaRNNBpropWithEigen(
   //   dW_xh += np.dot(dh_raw, xhat[t].T)
   //   dW_hh += np.dot(dh_raw, h[t-1].T)
   //   db_h += dh_raw
-  auto x_t = x.shuffle(matrix_transpose);
-  d_w_xh_out.device(d) += dh_raw.contract(x_t, product_dims);
+  d_w_xh_out.device(d) += dh_raw.contract(x.shuffle(matrix_transpose), product_dims);
   d_w_hh_out.device(d) += dh_raw.contract(h_prev.shuffle(matrix_transpose), product_dims);
   d_b_h_out.device(d) += dh_raw;
 
   //   dh_next = np.dot(self.W_hh.T, dh_raw)
   dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);;
 #ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------d_w_xh_out:" << std::endl << d_w_xh_out;
+
   LOG(INFO) << __FUNCTION__ << "----------------------------updated dh_next:" << std::endl << dh_next;
 #endif
 
 
 #ifdef TESTING
-{
-  int storage[128];  // 2 x 4 x 2 x 8 = 128
-  Eigen::TensorMap<Eigen::Tensor<int, 4>> t_4d(storage, 2, 4, 2, 8);
+  {// Matrix Transpose
+    int storage[128];  // 2 x 4 x 2 x 8 = 128
+    Eigen::TensorMap<Eigen::Tensor<int, 4>> t_4d(storage, 2, 4, 2, 8);
 
-  float s2[12];  
-  // Eigen::TensorMap<Eigen::Tensor<const float, 2>> h(s2, 3, 4);
-  Eigen::TensorMap<Eigen::Tensor<const float, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> h(s2, 3, 4);
+    float s2[12];  
+    // Eigen::TensorMap<Eigen::Tensor<const float, 2>> h(s2, 3, 4);
+    Eigen::TensorMap<Eigen::Tensor<const float, 2, Eigen::RowMajor, Eigen::DenseIndex>, Eigen::Aligned> h(s2, 3, 4);
 
-  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
-  Eigen::Tensor<float, 2, Eigen::RowMajor> h_t = h.shuffle(matrix_transpose);
-#ifdef VERBOSEdh_raw
-  // LOG(INFO) << __FUNCTION__ << "----------------------------h_t:" << std::endl << h_t;
-#endif
-}
+    const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
+    Eigen::Tensor<float, 2, Eigen::RowMajor> h_t = h.shuffle(matrix_transpose);
+  #ifdef VERBOSE
+    // LOG(INFO) << __FUNCTION__ << "----------------------------h_t:" << std::endl << h_t;
+  #endif
+  }
 
-{
-  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
-
-  Eigen::Tensor<float, 2> input(8, 16);
-  input.setConstant(1.0f);
-  Eigen::Tensor<float, 2> output = input.shuffle(matrix_transpose);
-
-    // d_b_y_out.device(d) = input;
-
-}
-
-{
-  int storage[128];  // 2 x 4 x 2 x 8 = 128
-  Eigen::TensorMap<Eigen::Tensor<int, 4>> t_4d(storage, 2, 4, 2, 8);
-
-  Eigen::TensorMap<Eigen::Tensor<int, 2>> t_2d(storage, 16, 8);
-
-  const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
-  Eigen::Tensor<int, 2> output = t_2d.shuffle(matrix_transpose);
-
-}
   { // ColMajor
     // Create 2 matrices using tensors of rank 2
     Eigen::Tensor<int, 2, Eigen::ColMajor> a(2, 1);
@@ -328,6 +313,25 @@ void VanillaRNNBpropWithEigen(
     Eigen::Tensor<int, 2, Eigen::RowMajor> AB = a.contract(b, product_dims);
     // LOG(INFO) << __FUNCTION__ << "----------------------------contract:" << std::endl << AB;
 
+  }
+
+  {
+    // Eigen::Tensor<float, 1, Eigen::RowMajor> lr(1);
+    // lr.setValues({0.01f});
+
+    // Eigen::Tensor<float, 1, Eigen::RowMajor> grad(2);
+    // grad.setValues({0.5f, 0.0f});
+
+    // auto add_result = grad + 0.5f;
+    // LOG(INFO) << __FUNCTION__ << "----------------------------add_result test:" << std::endl << add_result;
+
+    // auto accum = grad.square();
+    // LOG(INFO) << __FUNCTION__ << "----------------------------accum test:" << std::endl << accum;
+
+    // LOG(INFO) << __FUNCTION__ << "----------------------------accum.rsqrt() test:" << std::endl << accum.rsqrt();
+
+    // auto var = grad * lr * (accum + 1e-8f).rsqrt();
+    // LOG(INFO) << __FUNCTION__ << "----------------------------var test:" << std::endl << var;
   }
 #endif
 }
@@ -374,6 +378,7 @@ void VanillaRNNBpropWithEigen(
 
 DEFINE_CPU_SPECS(float);
 #undef DEFINE_CPU_SPECS
+
 }  // namespace functor
 
 namespace {

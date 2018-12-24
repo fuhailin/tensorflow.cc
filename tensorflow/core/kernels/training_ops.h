@@ -71,6 +71,15 @@ struct ApplyAdagrad {
                   typename TTypes<T>::ConstFlat grad, bool update_slots);
 };
 
+// ApplyAdagradTrick functor
+template <typename Device, typename T>
+struct ApplyAdagradTrick {
+  void operator()(const Device& d, typename TTypes<T>::Flat var,
+                  typename TTypes<T>::Flat accum,
+                  typename TTypes<T>::ConstScalar lr,
+                  typename TTypes<T>::ConstFlat grad, bool update_slots);
+};
+
 template <typename Device, typename T>
 struct ApplyAdagradDA {
   void operator()(const Device& d, typename TTypes<T>::Flat var,

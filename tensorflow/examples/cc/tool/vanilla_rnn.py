@@ -61,19 +61,35 @@ class RNN(object):
             xhat[t][x[t]] = 1#xhat[t] = 1-of-k representation of x[t]
 
             h[t] = np.tanh(np.dot(self.W_xh, xhat[t]) + np.dot(self.W_hh, h[t-1]) + self.b_h)#find new hidden state
+            # print '------------------------------------------x'
+            # print (xhat[t])
+            # print '------------------------------------------self.W_xh'
+            # print (self.W_xh)
+            # print '------------------------------------------self.W_hh'
+            # print (self.W_hh)
+            # print '------------------------------------------self.b_h'
+            # print (self.b_h)
+            # print '------------------------------------------h_pref'
+            # print (h[t - 1])
+            # print '------------------------------------------h1'
+            # print (np.dot(self.W_xh, xhat[t]) + np.dot(self.W_hh, h[t-1]) + self.b_h)
+            # print '------------------------------------------h'
+            # print (h[t])
             yhat[t] = np.dot(self.W_hy, h[t]) + self.b_y#find unnormalized log probabilities for next chars
 
             p[t] = np.exp(yhat[t]) / np.sum(np.exp(yhat[t]))#find probabilities for next chars
 
-            # print '------------------------------------------'
+            # print '------------------------------------------yhat'
             # print (yhat[t])
-            # print '------------------------------------------'
-            # print (np.exp(yhat[t]))
-            # print '------------------------------------------'
-            # print (np.sum(np.exp(yhat[t])))
-            # print '------------------------------------------'
+            # print '------------------------------------------p'
+            # print p[t]
 
             loss += -np.log(p[t][y[t],0])#softmax (cross-entropy loss)
+
+            # print '------------------------------------------py'
+            # print p[t][y[t],0]
+            # print '------------------------------------------loss'
+            # print loss
 
         #=====backward pass: compute gradients going backwards=====
         for t in reversed(range(len(x))):
@@ -94,8 +110,23 @@ class RNN(object):
             dW_hh += np.dot(dh_raw, h[t-1].T)
             db_h += dh_raw
 
+            # print '------------------------------------------xhat[t]'
+            # print (xhat[t])
+            # print '------------------------------------------dh_raw'
+            # print (dh_raw)
+            # print '------------------------------------------dW_xh'
+            # print (dW_xh)
+
+
             #save dh_next for subsequent iteration
             dh_next = np.dot(self.W_hh.T, dh_raw)
+
+            # print '------------------------------------------dy'
+            # print dy
+            # print '------------------------------------------dh_raw'
+            # print dh_raw
+            # print '------------------------------------------dh_next'
+            # print dh_next
 
         for dparam in [dW_xh, dW_hh, dW_hy, db_h, db_y]:
             np.clip(dparam, -5, 5, out=dparam)#clip to mitigate exploding gradients
@@ -106,6 +137,10 @@ class RNN(object):
                                 [self.adaW_hh, self.adaW_xh, self.adaW_hy, self.adab_h, self.adab_y]):
             adaparam += dparam*dparam
             param += -self.learning_rate*dparam/np.sqrt(adaparam+1e-8)
+            
+        # print '------------------------------------------self.W_xh'
+        # print (self.W_xh)
+
 
         self.h = h[len(x)-1]
 
@@ -172,6 +207,9 @@ def test():
     #make some dictionaries for encoding and decoding from 1-of-k
     char_to_ix = { ch:i for i,ch in enumerate(chars) }
     ix_to_char = { i:ch for i,ch in enumerate(chars) }
+
+    # print '---------------------------ix_to_char'
+    # print ix_to_char
 
     #insize and outsize are len(chars). hidsize is 15. seq_length is 10. learning_rate is 0.1.
     rnn = RNN(vocab_size, vocab_size, 15, 0.1)

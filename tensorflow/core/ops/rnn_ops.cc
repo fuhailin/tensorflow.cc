@@ -126,4 +126,66 @@ Computes the Vanilla RNN back propagation for all time step.
 )doc");
 
 
+// ApplyAdagradTrick, to be moved
+static ShapeHandle ShapeOrHandleShape(InferenceContext* c, int input) {
+  auto* handle_data = c->input_handle_shapes_and_types(input);
+  if (handle_data != nullptr && !handle_data->empty() &&
+      (*handle_data)[0].dtype != DT_INVALID) {
+    return (*handle_data)[0].shape;
+  }
+  return c->input(input);
+}
+
+// Handle the gradient and, if <sparse>, indices inputs.
+// <s> is an input+output parameter, containing the current known input shape to
+// the gradient.
+static Status HandleGradAndIndicesInputs(InferenceContext* c, bool sparse,
+                                         int grad_idx, ShapeHandle* s) {
+  ShapeHandle grad = ShapeOrHandleShape(c, grad_idx);
+  if (!sparse) {
+    TF_RETURN_IF_ERROR(c->Merge(*s, grad, s));
+    return Status::OK();
+  }
+  // Indices is a vector where indices.dim[0].rank == grad[0].rank.
+  ShapeHandle indices;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(grad_idx + 1), 1, &indices));
+  DimensionHandle unused;
+  TF_RETURN_IF_ERROR(c->Merge(c->Dim(indices, 0), c->Dim(grad, 0), &unused));
+
+  // Trailing part of grad matches trailing part of *s.
+  ShapeHandle grad_unknown_first;
+  TF_RETURN_IF_ERROR(
+      c->ReplaceDim(grad, 0, c->UnknownDim(), &grad_unknown_first));
+  TF_RETURN_IF_ERROR(c->Merge(*s, grad_unknown_first, s));
+
+  return Status::OK();
+}
+
+static Status ApplyAdagradTrickShapeFn(InferenceContext* c, bool sparse) {
+  ShapeHandle unused;
+  ShapeHandle s = ShapeOrHandleShape(c, 0);                       // var
+  TF_RETURN_IF_ERROR(c->Merge(s, ShapeOrHandleShape(c, 1), &s));  // accum
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 0, &unused));       // lr
+  TF_RETURN_IF_ERROR(
+      HandleGradAndIndicesInputs(c, sparse, 3 /* grad_idx */, &s));
+  if (c->num_outputs() > 0) {
+    c->set_output(0, s);
+  }
+  return Status::OK();
+}
+
+REGISTER_OP("ApplyAdagradTrick")
+    .Input("var: Ref(T)")
+    .Input("accum: Ref(T)")
+    .Input("lr: T")
+    .Input("grad: T")
+    .Output("out: Ref(T)")
+    .Attr("T: numbertype")
+    .Attr("use_locking: bool = false")
+    .Attr("update_slots: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      return ApplyAdagradTrickShapeFn(c, false /* sparse */);
+    });
+
+
 }  // end namespace tensorflow

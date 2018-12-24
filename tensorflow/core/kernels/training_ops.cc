@@ -160,6 +160,23 @@ struct ApplyAdagrad<CPUDevice, T> {
   }
 };
 
+// ApplyAdagradTrick functor
+template <typename T>
+struct ApplyAdagradTrick<CPUDevice, T> {
+  void operator()(const CPUDevice& d, typename TTypes<T>::Flat var,
+                  typename TTypes<T>::Flat accum,
+                  typename TTypes<T>::ConstScalar lr,
+                  typename TTypes<T>::ConstFlat grad, bool update_slots) {
+    if (update_slots) {
+      accum.device(d) += grad.square();
+    }
+    
+    // Trick here
+    T addition = static_cast<T>(1e-8);
+    var.device(d) -= grad * lr() * (accum + addition).rsqrt();
+  }
+};
+
 template <typename T>
 struct ApplyProximalAdagrad<CPUDevice, T> {
   void operator()(const CPUDevice& d, typename TTypes<T>::Flat var,
@@ -1218,6 +1235,104 @@ REGISTER_KERNELS(GPU, double);
 #endif
 #undef REGISTER_CPU_KERNELS
 #undef REGISTER_KERNELS
+
+// ApplyAdagradTrick starts here
+template <typename Device, typename T>
+class ApplyAdagradTrickOp : public OpKernel {
+ public:
+  explicit ApplyAdagradTrickOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("update_slots", &update_slots_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const bool sparse = false;
+    auto locks = MaybeLockVariableInputMutexesInOrder<Device, T>(
+        ctx, use_exclusive_lock_, sparse, {0, 1});
+    Tensor var;
+    OP_REQUIRES_OK(ctx, GetInputTensorFromVariable<Device, T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+    Tensor accum;
+    OP_REQUIRES_OK(ctx, GetInputTensorFromVariable<Device, T>(
+                            ctx, 1, use_exclusive_lock_, sparse, &accum));
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(0)));
+    OP_REQUIRES(
+        ctx, accum.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(1)));
+    const Tensor& lr = ctx->input(2);
+    OP_REQUIRES(ctx, IsLegacyScalar(lr.shape()),
+                errors::InvalidArgument("lr is not a scalar: ",
+                                        lr.shape().DebugString()));
+    const Tensor& grad = ctx->input(3);
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(accum.shape()),
+        errors::InvalidArgument("var and accum do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                accum.shape().DebugString()));
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(grad.shape()),
+        errors::InvalidArgument("var and grad do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                grad.shape().DebugString()));
+
+    const Device& device = ctx->template eigen_device<Device>();
+    functor::ApplyAdagradTrick<Device, T>()(device, var.flat<T>(), accum.flat<T>(),
+                                       lr.scalar<T>(), grad.flat<T>(),
+                                       update_slots_);
+
+    MaybeForwardRefInputToRefOutput(ctx, 0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+  bool update_slots_;
+};
+
+#define REGISTER_KERNELS(D, T)                                        \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("ApplyAdagradTrick").Device(DEVICE_##D).TypeConstraint<T>("T"), \
+      ApplyAdagradTrickOp<D##Device, T>);                                  \
+  REGISTER_KERNEL_BUILDER(Name("ResourceApplyAdagradTrick")                \
+                              .HostMemory("var")                      \
+                              .HostMemory("accum")                    \
+                              .Device(DEVICE_##D)                     \
+                              .TypeConstraint<T>("T"),                \
+                          ApplyAdagradTrickOp<D##Device, T>);
+#define REGISTER_CPU_KERNELS(T) REGISTER_KERNELS(CPU, T);
+
+TF_CALL_half(REGISTER_CPU_KERNELS);
+TF_CALL_bfloat16(REGISTER_CPU_KERNELS);
+TF_CALL_float(REGISTER_CPU_KERNELS);
+TF_CALL_double(REGISTER_CPU_KERNELS);
+
+#if GOOGLE_CUDA_TODO
+// Forward declarations of the functor specializations for GPU.
+namespace functor {
+#define DECLARE_GPU_SPEC(T)                                               \
+  template <>                                                             \
+  void ApplyAdagradTrick<GPUDevice, T>::operator()(                            \
+      const GPUDevice& d, typename TTypes<T>::Flat var,                   \
+      typename TTypes<T>::Flat accum, typename TTypes<T>::ConstScalar lr, \
+      typename TTypes<T>::ConstFlat grad, bool update_slots);             \
+  extern template struct ApplyAdagradTrick<GPUDevice, T>;
+DECLARE_GPU_SPEC(Eigen::half);
+DECLARE_GPU_SPEC(float);
+DECLARE_GPU_SPEC(double);
+#undef DECLARE_GPU_SPEC
+}  // namespace functor
+
+REGISTER_KERNELS(GPU, Eigen::half);
+REGISTER_KERNELS(GPU, float);
+REGISTER_KERNELS(GPU, double);
+#endif
+#undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+// ApplyAdagradTrick ends
 
 template <typename Device, typename T>
 class ApplyProximalAdagradOp : public OpKernel {

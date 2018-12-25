@@ -194,6 +194,12 @@ def test2():
     print 'test h4-------------------------------'
     print h4
 
+    #open a text file
+    data = open('data/input.txt', 'r').read() # should be simple plain text file
+    for i in range(len(data)/10):
+        print i
+
+
     print 'test end-------------------------------'
 
 
@@ -222,24 +228,28 @@ def test():
     
     g_i = 0
 
-    while g_i < 1000:
-      for i in range(len(data)/seq_length):
-        x = [char_to_ix[c] for c in data[i*seq_length:(i+1)*seq_length]]#inputs to the RNN
-        y = [char_to_ix[c] for c in data[i*seq_length+1:(i+1)*seq_length+1]]#the targets it should be outputting
+    while g_i < 10000:
+        for i in range(len(data)/seq_length):
+            x = [char_to_ix[c] for c in data[i*seq_length:(i+1)*seq_length]]#inputs to the RNN
+            y = [char_to_ix[c] for c in data[i*seq_length+1:(i+1)*seq_length+1]]#the targets it should be outputting
+            # print '---------------------------x'
+            # print data[i*seq_length:(i+1)*seq_length]
+            # print '---------------------------y'
+            # print data[i*seq_length+1:(i+1)*seq_length+1]
 
-        if g_i%1000==0:
-            sample_ix = rnn.sample(x[0], 200)
-            txt = ''.join([ix_to_char[n] for n in sample_ix])
-            print txt
+            if g_i%100==0:
+                sample_ix = rnn.sample(x[0], 200)
+                txt = ''.join([ix_to_char[n] for n in sample_ix])
+                print txt
 
-        loss = rnn.train(x, y)
-        smooth_loss = smooth_loss*0.999 + loss*0.001
+            loss = rnn.train(x, y)
+            smooth_loss = smooth_loss*0.999 + loss*0.001
 
-        if g_i%1000==0:
-            print 'iteration %d, smooth_loss = %f' % (g_i, smooth_loss)
-            losses.append(smooth_loss)
-            
-        g_i += 1
+            if g_i%100==0:
+                print 'iteration %d, smooth_loss = %f, loss = %f' % (g_i, smooth_loss, loss)
+                losses.append(smooth_loss)
+                
+            g_i += 1
 
     plt.plot(range(len(losses)), losses, 'b', label='smooth loss')
     plt.xlabel('time in thousands of iterations')

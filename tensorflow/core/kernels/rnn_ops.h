@@ -119,7 +119,7 @@ struct VanillaRNNCellFprop : public VanillaRNNCell {
 
   void operator()(OpKernelContext* ctx, const Device& d, const int64 t,
     typename TTypes<T>::ConstMatrix x,
-    typename TTypes<T>::ConstMatrix y,
+    typename TTypes<T>::ConstScalar y,
     typename TTypes<T>::ConstMatrix h_prev,
     typename TTypes<T>::ConstMatrix w_xh,
     typename TTypes<T>::ConstMatrix w_hh,
@@ -138,7 +138,7 @@ struct VanillaRNNBprop : public VanillaRNNCell {
   void operator()(
       OpKernelContext* ctx, const Device& d, const int64 t,                      
       typename TTypes<T>::ConstMatrix x,                                      
-      typename TTypes<T>::ConstMatrix y,                                      
+      typename TTypes<T>::ConstScalar y,                                      
       typename TTypes<T>::ConstMatrix p,                                 
       typename TTypes<T>::ConstMatrix h,                                 
       typename TTypes<T>::ConstMatrix w_hh,                                 

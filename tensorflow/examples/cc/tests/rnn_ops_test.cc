@@ -246,9 +246,6 @@ int main() {
   }
 #endif
 
-  // Global content index
-  int content_index = 0;
-
   // Prepare hidden tensor
   tensorflow::Tensor h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
   typename tensorflow::TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
@@ -302,7 +299,7 @@ int main() {
 
   // Placeholders
   auto x = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
-  auto y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE, 1}));
+  auto y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH}));
   auto h_prev = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
 
   // VanillaRNN Node
@@ -320,7 +317,7 @@ int main() {
   }
 
   // Gradient
-  auto lr = tensorflow::ops::Cast(root, 0.01, tensorflow::DT_FLOAT);
+  auto lr = tensorflow::ops::Cast(root, 0.1, tensorflow::DT_FLOAT);
 
   // alternative of tensorflow::ops::ApplyAdagrad
   tensorflow::Output  apply_w_xh;
@@ -344,87 +341,102 @@ int main() {
                           nullptr));
 
   // Train and eval
-  for(int step = 0; step < 10000; step++) {
+  int step = 0;
+  while(step < 10000) {
     // Train
 
-    // Batch input with batch size of SEQ_LENGTH
-    tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({SEQ_LENGTH, VOCAB_SIZE, 1}));
+    // content index
+    int content_index = 0;
 
-    // batch one-hot processing
-    auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, VOCAB_SIZE * 1});
-    for (int i = 0; i < SEQ_LENGTH; i++) {
-      // Ref: tensor_test.cc
+    int seq_batches = strlen(test_content) / SEQ_LENGTH;
+    for(int bidx = 0; bidx < seq_batches; bidx++) {
+      // Batch input with batch size of SEQ_LENGTH
+      tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({SEQ_LENGTH, VOCAB_SIZE, 1}));
 
-      // Assign a 1 x VOCAB_SIZE * 1 matrix (really vector) to a slice of size
-      Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, VOCAB_SIZE * 1);
-      m.setZero();
+      // batch one-hot processing
+      auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, VOCAB_SIZE * 1});
+      int x_index = content_index;
+      for (int i = 0; i < SEQ_LENGTH; i++) {
+        // Ref: tensor_test.cc
 
-      // one-hot processing for one character
-      char test_char = test_content[content_index++];
-      auto search = vocab_index_dic.find(test_char);
-      int vocab_index = search->second;
-      m(0, vocab_index) = 1.0f;
+        // Assign a 1 x VOCAB_SIZE * 1 matrix (really vector) to a slice of size
+        Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, VOCAB_SIZE * 1);
+        m.setZero();
 
-      // set e_2d
-      Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
-      Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, VOCAB_SIZE * 1);
-      e_2d.slice(indices, sizes) = m;
+        // one-hot processing for one character
+        char test_char = test_content[x_index++];
+        auto search = vocab_index_dic.find(test_char);
+        int vocab_index = search->second;
+        m(0, vocab_index) = 1.0f;
+
+        // set e_2d
+        Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+        Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, VOCAB_SIZE * 1);
+        e_2d.slice(indices, sizes) = m;
+      }
+
+  #ifdef VERBOSE
+      // Check e_2d for funfor i in range(len(data)/seq_length):
+      LOG(INFO) << __FUNCTION__ << "----------------e_2d: " << std::endl << e_2d;  
+
+      // Check x_tensor for fun
+      auto e_t = x_tensor.tensor<float, 3>();
+      LOG(INFO) << __FUNCTION__ << "----------------e_t: " << std::endl << e_t;  
+  #endif
+
+      // Prepare y
+      tensorflow::Tensor y_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({SEQ_LENGTH}));
+      typename tensorflow::TTypes<float>::Vec y_t = y_tensor.vec<float>();
+
+      // Prepare y
+      int y_index = content_index + 1;
+      for (int i = 0; i < SEQ_LENGTH; i++) {
+        char test_char = test_content[y_index++];
+        auto search = vocab_index_dic.find(test_char);
+        int vocab_index = search->second;
+
+        y_t(i) = vocab_index;
+      }
+
+      // 
+      content_index += SEQ_LENGTH;
+      
+  #ifdef VERBOSE  
+      LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
+  #endif
+
+      // Run 
+      TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
+                              {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
+                                tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
+                                tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2),
+                                apply_w_xh, apply_w_hh, apply_w_hy, apply_b_h, apply_b_y}, 
+                              {}, 
+                              &outputs));
+  #ifdef VERBOSE  
+      LOG(INFO) << "Print output: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape() 
+                                      << ", " << outputs[3].shape() << ", " << outputs[4].shape()
+                                      << ", " << outputs[5].shape() << ", " << outputs[6].shape();
+      LOG(INFO) << "Print step: " << step << ", output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
+                                      << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString()
+                                      << ", " << outputs[5].DebugString() << ", " << outputs[6].DebugString();
+  #endif
+      if(step % 100 == 0)
+        LOG(INFO) << "Print step: " << step << ", loss: " << outputs[6].DebugString();
+
+      // Update h_prev
+      CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
+  #ifdef VERBOSE  
+      LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
+  #endif
+
+      step++;
     }
-
-#ifdef VERBOSE
-    // Check e_2d for fun
-    LOG(INFO) << __FUNCTION__ << "----------------e_2d: " << std::endl << e_2d;  
-
-    // Check x_tensor for fun
-    auto e_t = x_tensor.tensor<float, 3>();
-    LOG(INFO) << __FUNCTION__ << "----------------e_t: " << std::endl << e_t;  
-#endif
-
-    // Prepare y
-    tensorflow::Tensor y_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({VOCAB_SIZE, 1}));
-    typename tensorflow::TTypes<float>::Matrix y_t = y_tensor.matrix<float>();
-
-    // Prepare y: one hot processing for one character
-    y_t.setZero();
-    char test_char = test_content[content_index];
-    auto search = vocab_index_dic.find(test_char);
-    int vocab_index = search->second;
-    y_t(vocab_index, 0) = 1.0f;
-#ifdef VERBOSE  
-    LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
-#endif
-
-    // Run 
-    TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
-                            {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
-                              tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
-                              tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2),
-                              apply_w_xh, apply_w_hh, apply_w_hy, apply_b_h, apply_b_y}, 
-                            {}, 
-                            &outputs));
-#ifdef VERBOSE  
-    LOG(INFO) << "Print output: " << outputs[0].shape() << ", " << outputs[1].shape() << ", " << outputs[2].shape() 
-                                    << ", " << outputs[3].shape() << ", " << outputs[4].shape()
-                                    << ", " << outputs[5].shape() << ", " << outputs[6].shape();
-    LOG(INFO) << "Print step: " << step << ", output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
-                                    << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString()
-                                    << ", " << outputs[5].DebugString() << ", " << outputs[6].DebugString();
-#endif
-    LOG(INFO) << "Print step: " << step << ", loss: " << outputs[6].DebugString();
-
-    // Update h_prev
-    CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
-#ifdef VERBOSE  
-    LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
-#endif
 
     // Evaluate
 
 
 
-    // start over
-    if(content_index > 350)
-      content_index = 0;
   }
 
   return 0;

@@ -58,7 +58,7 @@ template <typename T>
 void VanillaRNNCellFpropWithEigen(
     const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
     typename TTypes<T>::ConstMatrix x,
-    typename TTypes<T>::ConstMatrix y,
+    typename TTypes<T>::ConstScalar y,
     typename TTypes<T>::ConstMatrix h_prev,
     typename TTypes<T>::ConstMatrix w_xh,
     typename TTypes<T>::ConstMatrix w_hh,
@@ -69,22 +69,18 @@ void VanillaRNNCellFpropWithEigen(
 
   // Note that that Tensorflow uses Eigen::RowMajor, don't mix it with Eigen::ColMajor
 
+  int y_index = static_cast<int>(y());
+
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "---------------------------------------------------------sequence number:" << std::endl << t;
   LOG(INFO) << __FUNCTION__ << "----------------------------x:" << std::endl << x;
   LOG(INFO) << __FUNCTION__ << "----------------------------y:" << std::endl << y;
+  LOG(INFO) << __FUNCTION__ << "----------------------------y_index:" << std::endl << y_index;
   LOG(INFO) << __FUNCTION__ << "----------------------------h_prev:" << std::endl << h_prev;
   LOG(INFO) << __FUNCTION__ << "----------------------------w_xh:" << std::endl << w_xh;
   LOG(INFO) << __FUNCTION__ << "----------------------------w_hh:" << std::endl << w_hh;
   LOG(INFO) << __FUNCTION__ << "----------------------------b_h:" << std::endl << b_h;
 #endif
-  int y_index = 0;
-  int insize = y.dimension(0);
-  for(; y_index < insize; y_index++) {
-    T scalar = y(y_index, 0);
-    if(scalar > 0.0f)
-      break;
-  }
 
   // LOG(INFO) << __FUNCTION__ << "----------------------------y_index:" << std::endl << y_index;
 
@@ -98,7 +94,7 @@ void VanillaRNNCellFpropWithEigen(
   auto y_c_exp = y_c.exp();
 
   Eigen::array<Eigen::DenseIndex, 2> b_shape({1, 1});
-  Eigen::array<Eigen::DenseIndex, 2> bcast({insize, 1});
+  Eigen::array<Eigen::DenseIndex, 2> bcast({cell.input_size(), 1});
   auto p = y_c_exp / y_c_exp.sum().reshape(b_shape).broadcast(bcast);
 
 #ifdef VERBOSE
@@ -174,7 +170,7 @@ template <typename T>
 void VanillaRNNBpropWithEigen(
     const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
     typename TTypes<T>::ConstMatrix x,                                      
-      typename TTypes<T>::ConstMatrix y,                                      
+      typename TTypes<T>::ConstScalar y,                                      
       typename TTypes<T>::ConstMatrix p,                                 
       typename TTypes<T>::ConstMatrix h,                                 
       typename TTypes<T>::ConstMatrix w_hh,                                 
@@ -190,13 +186,7 @@ void VanillaRNNBpropWithEigen(
   // Note that that Tensorflow uses Eigen::RowMajor, don't mix it with Eigen::ColMajor
 
   // Get y index
-  int y_index = 0;
-  int insize = y.dimension(0);
-  for(; y_index < insize; y_index++) {
-    T scalar = y(y_index, 0);
-    if(scalar > 0.0f)
-      break;
-  }
+  int y_index = static_cast<int>(y());
 
   // Python code:
   //   dy = np.copy(p[t])
@@ -211,6 +201,7 @@ void VanillaRNNBpropWithEigen(
   LOG(INFO) << __FUNCTION__ << "---------------------------------------------------------sequence number:" << std::endl << t;
   LOG(INFO) << __FUNCTION__ << "----------------------------x:" << std::endl << x;
   LOG(INFO) << __FUNCTION__ << "----------------------------y:" << std::endl << y;
+  LOG(INFO) << __FUNCTION__ << "----------------------------y_index:" << std::endl << y_index;
   LOG(INFO) << __FUNCTION__ << "----------------------------p:" << std::endl << p;
   LOG(INFO) << __FUNCTION__ << "----------------------------h:" << std::endl << h;
   LOG(INFO) << __FUNCTION__ << "----------------------------h_prev:" << std::endl << h_prev;
@@ -342,7 +333,7 @@ void VanillaRNNBpropWithEigen(
   void VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
       OpKernelContext* ctx, const CPUDevice& d, const int64 t,                      \
       typename TTypes<T>::ConstMatrix x,                                      \
-      typename TTypes<T>::ConstMatrix y,                                      \
+      typename TTypes<T>::ConstScalar y,                                      \
       typename TTypes<T>::ConstMatrix h_prev,                                 \
       typename TTypes<T>::ConstMatrix w_xh,                                      \
       typename TTypes<T>::ConstMatrix w_hh,                                      \
@@ -358,7 +349,7 @@ void VanillaRNNBpropWithEigen(
   void VanillaRNNBprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
       OpKernelContext* ctx, const CPUDevice& d, const int64 t,                      \
       typename TTypes<T>::ConstMatrix x,                                      \
-      typename TTypes<T>::ConstMatrix y,                                      \
+      typename TTypes<T>::ConstScalar y,                                      \
       typename TTypes<T>::ConstMatrix p,                                 \
       typename TTypes<T>::ConstMatrix h,                                 \
       typename TTypes<T>::ConstMatrix w_hh,                                 \
@@ -513,7 +504,7 @@ class VanillaRNNOp : public OpKernel {
     // check the shape of y
     const Tensor* y_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("y", &y_tensor));
-    OP_REQUIRES(ctx, y_tensor->dims() == 2, errors::InvalidArgument("y must be 2D"));
+    OP_REQUIRES(ctx, y_tensor->dims() == 1, errors::InvalidArgument("y must be 1D"));
 
     // check the shape of h_prev
     const Tensor* h_prev_tensor = nullptr;
@@ -622,10 +613,16 @@ class VanillaRNNOp : public OpKernel {
      
     for (int64 t = 0; t < seq_length; ++t) {
       const Tensor x_t_tensor = slicer.InputSlice(*x_tensor, t, "x");
-      
+
+      // y
+      float data[1];
+      data[0] = y_tensor->vec<T>()(t);
+      typename TTypes<T>::ConstScalar y_t(data, 0);
+
       Tensor p_tensor = slicer.OutputSlice(p_out, t, "p_out");
       Tensor h_tensor = slicer.OutputSlice(h_out, t, "h_out");
 
+      // 
       if(t > 0) {
         Tensor h_t_1_tensor = slicer.OutputSlice(h_out, t - 1, "h_out");
 
@@ -634,7 +631,7 @@ class VanillaRNNOp : public OpKernel {
 
       functor::VanillaRNNCellFprop<Device, T, USE_CUBLAS>(seq_length, insize)(
           ctx, device, t,
-          x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), tmp_h_prev->matrix<T>(), 
+          x_t_tensor.matrix<T>(), y_t, tmp_h_prev->matrix<T>(), 
           w_xh_tensor->matrix<T>(), w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(),
           b_h_tensor->matrix<T>(), b_y_tensor->matrix<T>(), 
           p_tensor.matrix<T>(), h_tensor.matrix<T>(), loss_tensor->scalar<T>());
@@ -714,7 +711,7 @@ class VanillaRNNGradOp : public OpKernel {
     // check the shape of y
     const Tensor* y_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("y", &y_tensor));
-    OP_REQUIRES(ctx, y_tensor->dims() == 2, errors::InvalidArgument("y must be 2D"));
+    OP_REQUIRES(ctx, y_tensor->dims() == 1, errors::InvalidArgument("y must be 1D"));
 
     // check the shape of p
     const Tensor* p_tensor = nullptr;
@@ -833,6 +830,10 @@ class VanillaRNNGradOp : public OpKernel {
       const Tensor h_t_tensor = slicer.InputSlice(*h_tensor, t, "h");
       const Tensor h_prev_t_tensor = slicer.InputSlice(*h_tensor, t == 0 ? t : t - 1, "h");
 
+      float data[1];
+      data[0] = y_tensor->vec<T>()(t);
+      typename TTypes<T>::ConstScalar y_t(data, 0);
+
       const Tensor *h_prev_p = h_prev_tensor;
       if(t != 0) {
         h_prev_p = &h_prev_t_tensor;
@@ -840,7 +841,7 @@ class VanillaRNNGradOp : public OpKernel {
       
       functor::VanillaRNNBprop<Device, T, USE_CUBLAS>(seq_length, insize)(
           ctx, device, t,
-          x_t_tensor.matrix<T>(), y_tensor->matrix<T>(), 
+          x_t_tensor.matrix<T>(), y_t, 
           p_t_tensor.matrix<T>(), h_t_tensor.matrix<T>(), 
           w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(), h_prev_p->matrix<T>(), dh_next.matrix<T>(), 
           d_w_xh_tensor->matrix<T>(), d_w_hh_tensor->matrix<T>(), d_w_hy_tensor->matrix<T>(),

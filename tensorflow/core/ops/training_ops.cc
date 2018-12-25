@@ -270,6 +270,31 @@ REGISTER_OP("ResourceApplyAdagrad")
       return ApplyAdagradShapeFn(c, false /* sparse */);
     });
 
+REGISTER_OP("ApplyAdagradTrick")
+    .Input("var: Ref(T)")
+    .Input("accum: Ref(T)")
+    .Input("lr: T")
+    .Input("grad: T")
+    .Output("out: Ref(T)")
+    .Attr("T: numbertype")
+    .Attr("use_locking: bool = false")
+    .Attr("update_slots: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      return ApplyAdagradShapeFn(c, false /* sparse */);
+    });
+
+REGISTER_OP("ResourceApplyAdagradTrick")
+    .Input("var: resource")
+    .Input("accum: resource")
+    .Input("lr: T")
+    .Input("grad: T")
+    .Attr("T: numbertype")
+    .Attr("use_locking: bool = false")
+    .Attr("update_slots: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      return ApplyAdagradShapeFn(c, false /* sparse */);
+    });
+
 static Status ApplyProximalAdagradShapeFn(InferenceContext* c, bool sparse) {
   ShapeHandle unused;
   ShapeHandle s = ShapeOrHandleShape(c, 0);                       // var

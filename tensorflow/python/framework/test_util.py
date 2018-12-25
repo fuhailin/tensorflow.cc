@@ -75,7 +75,6 @@ from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import server_lib
 from tensorflow.python.util import compat
 from tensorflow.python.util import deprecation
-from tensorflow.python.util import memory
 from tensorflow.python.util import nest
 from tensorflow.python.util import tf_decorator
 from tensorflow.python.util import tf_inspect
@@ -907,6 +906,10 @@ def run_in_graph_and_eager_modes(func=None,
   eager execution enabled as it does when constructing a TensorFlow graph and
   executing the `z` tensor in a session.
 
+  `deprecated_graph_mode_only`, `run_v1_only`, `run_v2_only`, and
+  `run_in_graph_and_eager_modes` are available decorators for different
+  v1/v2/eager/graph combinations.
+
 
   Args:
     func: function to be annotated. If `func` is None, this method returns a
@@ -1023,23 +1026,29 @@ def also_run_as_tf_function(f):
   """
 
   def decorated(*args, **kwds):
+    def bound_f():
+      f(*args, **kwds)
     with context.eager_mode():
       # Running in eager mode
-      f(*args, **kwds)
-
-      defun_f = def_function.function(f)
-      defun_f(*args, **kwds)
+      bound_f()
+      # Running as TF function
+      # TODO(b/121143941): Remove the autograph override.
+      def_function.function(bound_f, autograph=False)()
 
   return decorated
 
 
-def run_deprecated_v1(func=None):
+def deprecated_graph_mode_only(func=None):
   """Execute the decorated test in graph mode.
 
-  This function returns a decorator intended to be applied to tests that have
-  not been updated to a style that is compatible with both TensorFlow 1.x and
-  2.x. When this decorated is applied, the test body will be run in
-  an environment where API calls construct graphs instead of executing eagerly.
+  This function returns a decorator intended to be applied to tests that are not
+  compatible with eager mode. When this decorator is applied, the test body will
+  be run in an environment where API calls construct graphs instead of executing
+  eagerly.
+
+  `deprecated_graph_mode_only`, `run_v1_only`, `run_v2_only`, and
+  `run_in_graph_and_eager_modes` are available decorators for different
+  v1/v2/eager/graph combinations.
 
   Args:
     func: function to be annotated. If `func` is None, this method returns a
@@ -1051,7 +1060,16 @@ def run_deprecated_v1(func=None):
 
   def decorator(f):
     if tf_inspect.isclass(f):
-      raise ValueError("`run_deprecated_v1` only supports test methods.")
+      setup = f.__dict__.get("setUp")
+      if setup is not None:
+        setattr(f, "setUp", decorator(setup))
+
+      for name, value in f.__dict__.copy().items():
+        if (callable(value) and
+            name.startswith(unittest.TestLoader.testMethodPrefix)):
+          setattr(f, name, decorator(value))
+
+      return f
 
     def decorated(self, *args, **kwargs):
       if tf2.enabled():
@@ -1068,11 +1086,18 @@ def run_deprecated_v1(func=None):
   return decorator
 
 
+run_deprecated_v1 = deprecated_graph_mode_only
+
+
 def run_v1_only(reason, func=None):
   """Execute the decorated test only if running in v1 mode.
 
   This function is intended to be applied to tests that exercise v1 only
   functionality. If the test is run in v2 mode it will simply be skipped.
+
+  `deprecated_graph_mode_only`, `run_v1_only`, `run_v2_only`, and
+  `run_in_graph_and_eager_modes` are available decorators for different
+  v1/v2/eager/graph combinations.
 
   Args:
     reason: string giving a reason for limiting the test to v1 only.
@@ -1116,6 +1141,10 @@ def run_v2_only(func=None):
 
   This function is intended to be applied to tests that exercise v2 only
   functionality. If the test is run in v1 mode it will simply be skipped.
+
+  `deprecated_graph_mode_only`, `run_v1_only`, `run_v2_only`, and
+  `run_in_graph_and_eager_modes` are available decorators for different
+  v1/v2/eager/graph combinations.
 
   Args:
     func: function to be annotated. If `func` is None, this method returns a
@@ -2589,42 +2618,3 @@ def set_producer_version(graph, producer_version):
   with graph.as_default():
     importer.import_graph_def(graph_def)
   assert graph.graph_def_versions.producer, producer_version
-
-
-def dismantle_func_graph(func_graph):
-  """Removes reference cycles in `func_graph` FuncGraph.
-
-  Helpful for making sure the garbage collector doesn't need to run when
-  the FuncGraph goes out of scope, e.g. in tests using defun with
-  @test_util.run_in_graph_and_eager_modes(assert_no_eager_garbage=True).
-
-  Args:
-    func_graph: A `FuncGraph` object to destroy. `func_graph` is unusable
-      after this function.
-  """
-  # TODO(b/115366440): Delete this method when a custom OrderedDict is added.
-  # Clearing captures using clear() leaves some cycles around.
-  while func_graph.captures:
-    func_graph.captures.popitem()
-  memory.dismantle_ordered_dict(func_graph.captures)
-  ops.dismantle_graph(func_graph)
-
-
-def dismantle_polymorphic_function(func):
-  """Removes reference cycles in PolymorphicFunction `func`.
-
-  Helpful for making sure the garbage collector doesn't need to run when
-  PolymorphicFunction goes out of scope, e.g. in tests using defun with
-  @test_util.run_in_graph_and_eager_modes(assert_no_eager_garbage=True).
-
-  Args:
-    func: A `PolymorphicFunction` object to destroy. `func` is unusable
-      after this function.
-  """
-  # TODO(b/115366440): Delete this method when a custom OrderedDict is added
-  cache = func._function_cache  # pylint: disable=protected-access
-  for concrete_func in cache.values():
-    dismantle_func_graph(concrete_func.graph)
-  while cache:
-    cache.popitem()
-  memory.dismantle_ordered_dict(cache)

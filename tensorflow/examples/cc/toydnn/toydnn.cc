@@ -10,7 +10,7 @@
 // Rock Zhuang: I like to put it here as an example for training with tensorflow C++
 // 
 // Instructions:
-//  $ cp -r tensorflow/examples/cc/dnn/data /tmp/
+//  $ cp -r tensorflow/examples/cc/toydnn/data /tmp/
 //  $ bazel run -c opt //tensorflow/examples/cc/toydnn:toydnn
 //
 

@@ -1,12 +1,13 @@
-Tensorflow C++ Examples
+<p>Tensorflow C++ Examples</p>
+<p>----------------------------------------------------------------------------------------------</p>
+<p>1. TFRecordDataset and Iterator</p>
+<p>bazel run -c opt //tensorflow/examples/cc/tool:tfrecord_test</p>
+<p>bazel run -c opt //tensorflow/examples/cc/tests:tfrecord_test</p>
 
-1) TFRecordDataset and Iterator
-bazel run -c opt //tensorflow/examples/cc/tool:tfrecord_test
-bazel run -c opt //tensorflow/examples/cc/tests:tfrecord_test
+<p>2. toydnn</p>
+<p>cp -r tensorflow/examples/cc/toydnn/data /tmp/</p>
+<p>bazel run -c opt //tensorflow/examples/cc/toydnn:toydnn</p>
 
-2) toydnn from https://github.com/theflofly/dnn_tensorflow_cpp
-cp -r tensorflow/examples/cc/toydnn/data /tmp/
-bazel run -c opt //tensorflow/examples/cc/toydnn:toydnn
+<p>3. Vanalli RNN</p>
+<p>bazel run -c opt //tensorflow/examples/cc/tests:rnn_ops_test</p>
 
-3) Vanalli RNN
-bazel run -c opt //tensorflow/examples/cc/tests:rnn_ops_test

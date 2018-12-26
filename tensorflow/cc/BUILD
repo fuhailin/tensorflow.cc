@@ -501,6 +501,8 @@ tf_gen_op_wrappers_cc(
         "state_ops",
         "string_ops",
         "training_ops",
+        "rnn_ops",
+        "dataset_ops",
         "user_ops",
     ],
     other_hdrs = [

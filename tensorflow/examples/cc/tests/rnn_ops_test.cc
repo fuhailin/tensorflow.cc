@@ -38,6 +38,7 @@ const char test_content[] = "hello world hello world hello world hello world hel
 #define HIDDEN_SIZE 16
 #define SEQ_LENGTH 10
 #define VOCAB_SIZE 8 // "helo wrd"
+#define TEST_SEQ_LENGTH 1
 
 // #define VERBOSE 1
 // #define TESTING 1
@@ -326,7 +327,6 @@ int main() {
 
   auto ada_b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
   auto assign_ada_b_y = tensorflow::ops::Assign(root, ada_b_y, tensorflow::ops::ZerosLike(root, b_y));
-
   // Gradient accum parameters end here 
 
   // Placeholders
@@ -382,11 +382,10 @@ int main() {
     int content_index = 0;
 
     int seq_batches = strlen(test_content) / SEQ_LENGTH;
+    // Loop in test content
     for(int bidx = 0; bidx < seq_batches; bidx++) {
        // Evaluate
       if(step % 100 == 0) {
-
-        #define TEST_SEQ_LENGTH 1
         // Batch input with batch size of TEST_SEQ_LENGTH
         tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_SEQ_LENGTH, VOCAB_SIZE, 1}));
         auto e_2d = x_tensor.shaped<float, 2>({TEST_SEQ_LENGTH, VOCAB_SIZE * 1});
@@ -455,10 +454,8 @@ int main() {
 
           // update eval_h_prev_tensor
           CHECK(eval_h_prev_tensor.CopyFrom(outputs[1].Slice(0, 1), {outputs[1].dim_size(1), outputs[1].dim_size(2)}));
-
-        }
-
-      }
+        } // for(int i = 0; i < 20; i++) {
+      } // Evaluate
 
       // Train
       {
@@ -537,16 +534,14 @@ int main() {
 
         // Update h_prev
         CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
-#ifdef VERBOSE  
+#ifdef VERBOSE
         LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
 #endif
-      }
+      } // Train
 
       step++;
-    }
-
-
-  }
+    } // for(int bidx = 0; bidx < seq_batches; bidx++) {
+  } // while(step < 10000) {
 
   return 0;
 }

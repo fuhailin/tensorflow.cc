@@ -97,25 +97,27 @@ struct TensorZeroPadding {
 };
 
 struct VanillaRNNCell {
-  VanillaRNNCell(const int64 seq_length, const int64 input_size)
+  VanillaRNNCell(const int64 seq_length, const int64 input_size, const int64 hidden_size)
       : seq_length_(seq_length),
-        input_size_(input_size) {}
+        input_size_(input_size),
+        hidden_size_(hidden_size) {}
 
   int64 seq_length() const { return seq_length_; }
-
   int64 input_size() const { return input_size_; }
+  int64 hidden_size() const { return hidden_size_; }
 
  protected:
   const int64 seq_length_;
   const int64 input_size_;
+  const int64 hidden_size_;
 };
 
 // See rnn_ops.cc for CPUDevice implementation and rnn_ops_gpu.cu.cc (TODO) for
 // GPUDevice implementation.
 template <typename Device, typename T, bool USE_CUBLAS>
 struct VanillaRNNCellFprop : public VanillaRNNCell {
-  VanillaRNNCellFprop(const int64 seq_length, const int64 input_size)
-      : VanillaRNNCell(seq_length, input_size) {}
+  VanillaRNNCellFprop(const int64 seq_length, const int64 input_size, const int64 hidden_size)
+      : VanillaRNNCell(seq_length, input_size, hidden_size) {}
 
   void operator()(OpKernelContext* ctx, const Device& d, const int64 t,
     typename TTypes<T>::ConstMatrix x,
@@ -131,9 +133,9 @@ struct VanillaRNNCellFprop : public VanillaRNNCell {
 };
 
 template <typename Device, typename T, bool USE_CUBLAS>
-struct VanillaRNNBprop : public VanillaRNNCell {
-  VanillaRNNBprop(const int64 seq_length, const int64 input_size)
-      : VanillaRNNCell(seq_length, input_size) {}
+struct VanillaRNNCellBprop : public VanillaRNNCell {
+  VanillaRNNCellBprop(const int64 seq_length, const int64 input_size, const int64 hidden_size)
+      : VanillaRNNCell(seq_length, input_size, hidden_size) {}
 
   void operator()(
       OpKernelContext* ctx, const Device& d, const int64 t,                      

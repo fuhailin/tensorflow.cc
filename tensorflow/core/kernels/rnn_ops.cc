@@ -25,9 +25,9 @@ limitations under the License.
 //   and https://eigen.tuxfamily.org/dox-devel/unsupported/eigen_tensors.html#title0
 // 
 
-#if GOOGLE_CUDA_TODO // GPU not supported yet
+#if GOOGLE_CUDA
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA_TODO
+#endif  // GOOGLE_CUDA
 
 // #define VERBOSE 1
 // #define TESTING 1
@@ -130,7 +130,7 @@ void VanillaRNNCellFpropWithEigen(
     b.setValues({{1, 2}, {4, 5}, {5, 6}});
 
     const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0});
-    Eigen::Tensor<int, 2> output = a.shuffle(matrix_transpose); // transposlosse
+    Eigen::Tensor<int, 2> output = a.shuffle(matrix_transpose); // transpose
 
     // LOG(INFO) << __FUNCTION__ << "----------------------------output:" << std::endl << output;
 
@@ -167,7 +167,7 @@ void VanillaRNNCellFpropWithEigen(
 
 // Backward pass for one input character of the input sequence
 template <typename T>
-void VanillaRNNBpropWithEigen(
+void VanillaRNNCellBpropWithEigen(
     const VanillaRNNCell& cell, OpKernelContext* ctx, const CPUDevice& d, const int64 t,
     typename TTypes<T>::ConstMatrix x,                                      
       typename TTypes<T>::ConstScalar y,                                      
@@ -244,7 +244,7 @@ void VanillaRNNBpropWithEigen(
   d_b_h_out.device(d) += dh_raw;
 
   //   dh_next = np.dot(self.W_hh.T, dh_raw)
-  dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);;
+  dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);
 #ifdef VERBOSE
   LOG(INFO) << __FUNCTION__ << "----------------------------d_w_xh_out:" << std::endl << d_w_xh_out;
 
@@ -283,10 +283,18 @@ void VanillaRNNBpropWithEigen(
     // LOG(INFO) << __FUNCTION__ << "----------------------------contract ColMajor:" << std::endl << AB;
 
     float storage[2];  
+    storage[0] = 2,
+    storage[1] = 3;
     Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor>> t_2d(storage, 2, 1);
     auto pow_result = t_2d.pow(2);
-    // LOG(INFO) << __FUNCTION__ << "----------------------------pow_result:" << std::endl << pow_result;
+    LOG(INFO) << __FUNCTION__ << "----------------------------pow_result:" << std::endl << pow_result;
 
+    float storage2[2];  
+    storage2[0] = 3,
+    storage2[1] = 4;
+    Eigen::TensorMap<Eigen::Tensor<float, 2, Eigen::RowMajor>> t_2d2(storage2, 2, 1);
+    auto mul_result = t_2d * t_2d2;
+    LOG(INFO) << __FUNCTION__ << "----------------------------mul_result:" << std::endl << mul_result;
 
   }
 
@@ -346,7 +354,7 @@ void VanillaRNNBpropWithEigen(
         *this, ctx, d, t, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, p_out, h_out, loss_out);       \
   }                                                                           \
   template <>                                                                 \
-  void VanillaRNNBprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
+  void VanillaRNNCellBprop<CPUDevice, T, false /* USE_CUBLAS */>::operator()(  \
       OpKernelContext* ctx, const CPUDevice& d, const int64 t,                      \
       typename TTypes<T>::ConstMatrix x,                                      \
       typename TTypes<T>::ConstScalar y,                                      \
@@ -361,11 +369,11 @@ void VanillaRNNBpropWithEigen(
       typename TTypes<T>::Matrix d_w_hy_out,                                      \
       typename TTypes<T>::Matrix d_b_h_out,                                       \
       typename TTypes<T>::Matrix d_b_y_out) {                                      \
-    VanillaRNNBpropWithEigen<T>(                                           \
+    VanillaRNNCellBpropWithEigen<T>(                                           \
         *this, ctx, d, t, x, y, p, h, w_hh, w_hy, h_prev, dh_next, d_w_xh_out, d_w_hh_out, d_w_hy_out, d_b_h_out, d_b_y_out); \
   }                                                                           \
   template struct VanillaRNNCellFprop<CPUDevice, T, false /* USE_CUBLAS */>;  \
-  template struct VanillaRNNBprop<CPUDevice, T, false /* USE_CUBLAS */>; 
+  template struct VanillaRNNCellBprop<CPUDevice, T, false /* USE_CUBLAS */>; 
 
 DEFINE_CPU_SPECS(float);
 #undef DEFINE_CPU_SPECS
@@ -590,7 +598,6 @@ class VanillaRNNOp : public OpKernel {
                     "b_y.dims(1) != 1: ", b_y_tensor->dim_size(1),
                     " vs. ", 1));
 
-
     // set shape of outputs
     TensorShape p_shape({seq_length, insize, 1});
     Tensor* p_out;
@@ -603,21 +610,20 @@ class VanillaRNNOp : public OpKernel {
     TensorShape loss_shape({});
     Tensor* loss_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("loss", loss_shape, &loss_tensor));
-    loss_tensor->scalar<T>().setZero();
 
     // 
     const Device& device = ctx->eigen_device<Device>();
+
+    functor::TensorZero<Device, T>()(device, p_out->flat<T>());
+    functor::TensorZero<Device, T>()(device, h_out->flat<T>());
+    functor::TensorZero<Device, T>()(device, loss_tensor->flat<T>());
+
     SliceHelper<Device, T> slicer(ctx);
 
     const Tensor *tmp_h_prev = h_prev_tensor;
-     
+    
     for (int64 t = 0; t < seq_length; ++t) {
       const Tensor x_t_tensor = slicer.InputSlice(*x_tensor, t, "x");
-
-      // y
-      float data[1];
-      data[0] = y_tensor->vec<T>()(t);
-      typename TTypes<T>::ConstScalar y_t(data, 0);
 
       Tensor p_tensor = slicer.OutputSlice(p_out, t, "p_out");
       Tensor h_tensor = slicer.OutputSlice(h_out, t, "h_out");
@@ -629,25 +635,28 @@ class VanillaRNNOp : public OpKernel {
         tmp_h_prev = &h_t_1_tensor;
       }
 
-      functor::VanillaRNNCellFprop<Device, T, USE_CUBLAS>(seq_length, insize)(
+      // y
+      typename TTypes<T>::ConstScalar y_t(&(y_tensor->vec<T>()(t)), 0);
+
+      functor::VanillaRNNCellFprop<Device, T, USE_CUBLAS>(seq_length, insize, hidsize)(
           ctx, device, t,
           x_t_tensor.matrix<T>(), y_t, tmp_h_prev->matrix<T>(), 
           w_xh_tensor->matrix<T>(), w_hh_tensor->matrix<T>(), w_hy_tensor->matrix<T>(),
           b_h_tensor->matrix<T>(), b_y_tensor->matrix<T>(), 
           p_tensor.matrix<T>(), h_tensor.matrix<T>(), loss_tensor->scalar<T>());
 
-#ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------------------loss cumulated:" << std::endl << loss_tensor->scalar<T>()();
-#endif
+// #ifdef VERBOSE
+//   LOG(INFO) << __FUNCTION__ << "----------------------------loss cumulated:" << std::endl << loss_tensor->scalar<T>()();
+// #endif
       slicer.FinishTimeStep();
     }
 
 
-#ifdef VERBOSE
-  Tensor h_tensorxxx = slicer.OutputSlice(h_out, seq_length - 1, "h_out");
+// #ifdef VERBOSE
+//   Tensor h_tensorxxx = slicer.OutputSlice(h_out, seq_length - 1, "h_out");
 
-  LOG(INFO) << __FUNCTION__ << "----------------------------h_tensor xxx 111:" << std::endl << h_tensorxxx.matrix<T>();
-#endif
+//   LOG(INFO) << __FUNCTION__ << "----------------------------h_tensor xxx 111:" << std::endl << h_tensorxxx.matrix<T>();
+// #endif
   }
 
  private:
@@ -661,37 +670,40 @@ class VanillaRNNOp : public OpKernel {
 REGISTER_KERNEL(float);
 #undef REGISTER_KERNEL
 
-#if GOOGLE_CUDA_TODO
+#if GOOGLE_CUDA
 namespace functor {
-#define DECLARE_GPU_SPEC(T)                                              \
-  template <>                                                            \
-  void TensorZero<GPUDevice, T>::operator()(const GPUDevice& d,          \
-                                            typename TTypes<T>::Flat t); \
-                                                                         \
-  extern template struct TensorZero<GPUDevice, T>;                       \
-                                                                         \
-  template <>                                                            \
-  void TensorUnalignedZero<GPUDevice, T>::operator()(                    \
-      const GPUDevice& d, typename TTypes<T>::UnalignedFlat t);          \
-                                                                         \
-  extern template struct TensorUnalignedZero<GPUDevice, T>;
+#define DECLARE_GPU_SPEC(T)                                                \
+  template <>                                                              \
+  void VanillaRNNCellFprop<GPUDevice, T, true>::operator()(                 \
+      OpKernelContext* ctx, const GPUDevice& d, const int64 t,                      \
+      typename TTypes<T>::ConstMatrix x,                                      \
+      typename TTypes<T>::ConstScalar y,                                      \
+      typename TTypes<T>::ConstMatrix h_prev,                                 \
+      typename TTypes<T>::ConstMatrix w_xh,                                      \
+      typename TTypes<T>::ConstMatrix w_hh,                                      \
+      typename TTypes<T>::ConstMatrix w_hy,                                      \
+      typename TTypes<T>::ConstMatrix b_h,                                       \
+      typename TTypes<T>::ConstMatrix b_y,                                       \
+      typename TTypes<T>::Matrix p_out, typename TTypes<T>::Matrix h_out,        \
+      typename TTypes<T>::Scalar loss_out);                                      \
+                                                                           \
+  extern template struct VanillaRNNCellFprop<GPUDevice, T, true>;
 
 DECLARE_GPU_SPEC(float);
-// DECLARE_GPU_SPEC(double);
+// DECLARE_GPU_SPEC(Eigen::half);
 #undef DECLARE_GPU_SPEC
 }  // end namespace functor
 
 #define REGISTER_GPU_KERNEL(T)                           \
   REGISTER_KERNEL_BUILDER(Name("VanillaRNN")              \
                               .Device(DEVICE_GPU)        \
-                              .HostMemory("seq_len_max") \
                               .TypeConstraint<T>("T"),   \
                           VanillaRNNOp<GPUDevice, T, true>);
 
 REGISTER_GPU_KERNEL(float);
 // REGISTER_GPU_KERNEL(double);
 #undef REGISTER_GPU_KERNEL
-#endif  // GOOGLE_CUDA_TODO
+#endif  // GOOGLE_CUDA
 
 template <typename Device, typename T, bool USE_CUBLAS>
 class VanillaRNNGradOp : public OpKernel {
@@ -795,33 +807,37 @@ class VanillaRNNGradOp : public OpKernel {
     TensorShape d_w_xh_shape({hidsize, insize});
     Tensor* d_w_xh_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_xh", d_w_xh_shape, &d_w_xh_tensor));
-    d_w_xh_tensor->matrix<T>().setZero();
 
     TensorShape d_w_hh_shape({hidsize, hidsize});
     Tensor* d_w_hh_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hh", d_w_hh_shape, &d_w_hh_tensor));
-    d_w_hh_tensor->matrix<T>().setZero();
 
     TensorShape d_w_hy_shape({insize, hidsize});
     Tensor* d_w_hy_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_w_hy", d_w_hy_shape, &d_w_hy_tensor));
-    d_w_hy_tensor->matrix<T>().setZero();
 
     TensorShape d_b_h_shape({hidsize, 1});
     Tensor* d_b_h_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_h", d_b_h_shape, &d_b_h_tensor));
-    d_b_h_tensor->matrix<T>().setZero();
 
     TensorShape d_b_y_shape({insize, 1});
     Tensor* d_b_y_tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("d_b_y", d_b_y_shape, &d_b_y_tensor));
-    d_b_y_tensor->matrix<T>().setZero();
 
-    Tensor dh_next(DT_FLOAT, TensorShape({hidsize, 1}));
-    dh_next.matrix<float>().setZero();
+    Tensor dh_next;
+    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
+                                           TensorShape({hidsize, 1}), &dh_next));
+
+    const Device& device = ctx->eigen_device<Device>();
+
+    functor::TensorZero<Device, T>()(device, d_w_xh_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, d_w_hh_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, d_w_hy_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, d_b_h_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, d_b_y_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, dh_next.flat<T>());
 
     // 
-    const Device& device = ctx->eigen_device<Device>();
     SliceHelper<Device, T> slicer(ctx);
 
     for (int64 t = seq_length - 1; t >= 0; --t) {
@@ -830,16 +846,14 @@ class VanillaRNNGradOp : public OpKernel {
       const Tensor h_t_tensor = slicer.InputSlice(*h_tensor, t, "h");
       const Tensor h_prev_t_tensor = slicer.InputSlice(*h_tensor, t == 0 ? t : t - 1, "h");
 
-      float data[1];
-      data[0] = y_tensor->vec<T>()(t);
-      typename TTypes<T>::ConstScalar y_t(data, 0);
+      typename TTypes<T>::ConstScalar y_t(&(y_tensor->vec<T>()(t)), 0);
 
       const Tensor *h_prev_p = h_prev_tensor;
       if(t != 0) {
         h_prev_p = &h_prev_t_tensor;
       }
       
-      functor::VanillaRNNBprop<Device, T, USE_CUBLAS>(seq_length, insize)(
+      functor::VanillaRNNCellBprop<Device, T, USE_CUBLAS>(seq_length, insize, hidsize)(
           ctx, device, t,
           x_t_tensor.matrix<T>(), y_t, 
           p_t_tensor.matrix<T>(), h_t_tensor.matrix<T>(), 
@@ -863,7 +877,7 @@ class VanillaRNNGradOp : public OpKernel {
 REGISTER_KERNEL(float);
 #undef REGISTER_KERNEL
 
-#if GOOGLE_CUDA_TODO
+#if GOOGLE_CUDA
 namespace functor {
 #define DECLARE_GPU_SPEC(T)                                                    \
   template <>                                                                  \
@@ -886,33 +900,36 @@ namespace functor {
       const GPUDevice& d, typename TTypes<T>::ConstFlat a,                     \
       typename TTypes<T>::ConstFlat b, typename TTypes<T>::Flat c);            \
                                                                                \
+  template <>                                                            \
+  void TensorZero<GPUDevice, T>::operator()(const GPUDevice& d,          \
+                                            typename TTypes<T>::Flat t); \
+                                                                         \
+  extern template struct TensorZero<GPUDevice, T>;                       \
+                                                                         \
+  template <>                                                            \
+  void TensorUnalignedZero<GPUDevice, T>::operator()(                    \
+      const GPUDevice& d, typename TTypes<T>::UnalignedFlat t);          \
+                                                                         \
+  extern template struct TensorUnalignedZero<GPUDevice, T>;               \
+                                                                          \
   template <>                                                                  \
-  void VanillaRNNBprop<GPUDevice, T, true>::operator()(                         \
-      OpKernelContext* ctx, const GPUDevice& d, bool use_peephole,             \
-      typename TTypes<T>::ConstMatrix x,                                       \
-      typename TTypes<T>::ConstMatrix cs_prev,                                 \
-      typename TTypes<T>::ConstMatrix h_prev,                                  \
-      typename TTypes<T>::ConstMatrix w, typename TTypes<T>::ConstVec wci,     \
-      typename TTypes<T>::ConstVec wcf, typename TTypes<T>::ConstVec wco,      \
-      typename TTypes<T>::ConstVec b, typename TTypes<T>::Matrix xh,           \
-      typename TTypes<T>::ConstMatrix i, typename TTypes<T>::ConstMatrix cs,   \
-      typename TTypes<T>::ConstMatrix f, typename TTypes<T>::ConstMatrix o,    \
-      typename TTypes<T>::ConstMatrix ci, typename TTypes<T>::ConstMatrix co,  \
-      typename TTypes<T>::ConstMatrix cs_grad,                                 \
-      typename TTypes<T>::ConstMatrix h_grad, typename TTypes<T>::Matrix do_,  \
-      typename TTypes<T>::Matrix dcs, typename TTypes<T>::Matrix dci,          \
-      typename TTypes<T>::Matrix df, typename TTypes<T>::Matrix di,            \
-      typename TTypes<T>::Matrix dicfo,                                        \
-      typename TTypes<T>::Matrix cs_prev_grad,                                 \
-      typename TTypes<T>::Matrix h_prev_grad,                                  \
-      typename TTypes<T>::Matrix xh_grad, typename TTypes<T>::Matrix x_grad,   \
-      typename TTypes<T>::Matrix w_grad, typename TTypes<T>::Vec wci_grad,     \
-      typename TTypes<T>::Vec wcf_grad, typename TTypes<T>::Vec wco_grad,      \
-      typename TTypes<T>::Vec b_grad);                                         \
+  void VanillaRNNCellBprop<GPUDevice, T, true>::operator()(                         \
+      OpKernelContext* ctx, const GPUDevice& d, const int64 t,                      \
+      typename TTypes<T>::ConstMatrix x,                                      \
+      typename TTypes<T>::ConstScalar y,                                      \
+      typename TTypes<T>::ConstMatrix p,                                 \
+      typename TTypes<T>::ConstMatrix h,                                 \
+      typename TTypes<T>::ConstMatrix w_hh,                                 \
+      typename TTypes<T>::ConstMatrix w_hy,                              \
+      typename TTypes<T>::ConstMatrix h_prev,                             \
+      typename TTypes<T>::Matrix dh_next,                                \
+      typename TTypes<T>::Matrix d_w_xh_out,                                      \
+      typename TTypes<T>::Matrix d_w_hh_out,                                      \
+      typename TTypes<T>::Matrix d_w_hy_out,                                      \
+      typename TTypes<T>::Matrix d_b_h_out,                                       \
+      typename TTypes<T>::Matrix d_b_y_out);                                      \
                                                                                \
-  extern template struct TensorCopy<GPUDevice, T>;                             \
-  extern template struct TensorAdd<GPUDevice, T>;                              \
-  extern template struct VanillaRNNBprop<GPUDevice, T, true>;
+  extern template struct VanillaRNNCellBprop<GPUDevice, T, true>;
 
 DECLARE_GPU_SPEC(float);
 // DECLARE_GPU_SPEC(double);
@@ -922,13 +939,12 @@ DECLARE_GPU_SPEC(float);
 #define REGISTER_GPU_KERNEL(T)                           \
   REGISTER_KERNEL_BUILDER(Name("VanillaRNNGrad")          \
                               .Device(DEVICE_GPU)        \
-                              .HostMemory("seq_len_max") \
                               .TypeConstraint<T>("T"),   \
                           VanillaRNNGradOp<GPUDevice, T, true>);
 
 REGISTER_GPU_KERNEL(float);
 // REGISTER_GPU_KERNEL(double);
 #undef REGISTER_GPU_KERNEL
-#endif  // GOOGLE_CUDA_TODO
+#endif  // GOOGLE_CUDA
 
 }  // end namespace tensorflow

@@ -169,9 +169,18 @@ int main() {
   // VanillaRNN
   auto vanilla_rnn = VanillaRNN(root, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, VanillaRNN::Attrs().Hidsize(HIDDEN_SIZE));
 
+  // VanillaRNN and TopK For Eval begins
+  // Placeholders
+  auto x_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_SEQ_LENGTH, VOCAB_SIZE, 1}));
+  auto y_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_SEQ_LENGTH}));
+
+  // VanillaRNN
+  auto vanilla_rnn_eval = VanillaRNN(root, x_eval, y_eval, h_prev, w_xh, w_hh, w_hy, b_h, b_y, VanillaRNN::Attrs().Hidsize(HIDDEN_SIZE));
+
   // Top 1
   auto topk_input = Placeholder(root, DT_FLOAT, Placeholder::Shape({VOCAB_SIZE}));
   auto topk = TopK(root, topk_input, Cast(root, 1, DT_INT32));
+  // VanillaRNN and TopK For Eval ends
 
   // VanillaRNNGrad
   auto vanilla_rnn_grad = VanillaRNNGrad(root, x, y, vanilla_rnn.p, vanilla_rnn.h, w_hh, w_hy, h_prev, VanillaRNNGrad::Attrs().Hidsize(HIDDEN_SIZE));
@@ -217,8 +226,7 @@ int main() {
 
         // Prepare y
         Tensor y_tensor(DT_FLOAT, TensorShape({TEST_SEQ_LENGTH}));
-        typename TTypes<float>::Vec y_t = y_tensor.vec<float>();
-        y_t(0) = 0; // y value make no sense in the evaluation process
+        y_tensor.vec<float>()(0) = 0; // y value make no sense in the evaluation process
 
         Tensor eval_h_prev_tensor(DT_FLOAT, TensorShape({HIDDEN_SIZE, 1}));
         eval_h_prev_tensor = h_prev_tensor;
@@ -226,7 +234,7 @@ int main() {
         for(int i = 0; i < 20; i++) {
 
           // set e_2d
-          Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+          Eigen::DSizes<Eigen::DenseIndex, 2> indices(0, 0);
           Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, VOCAB_SIZE * 1);
           e_2d.slice(indices, sizes) = mat;
 
@@ -234,12 +242,12 @@ int main() {
           std::vector<Tensor> outputs_topk;
 
           // Run 
-          TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, eval_h_prev_tensor}}, 
-                                  {vanilla_rnn.p, vanilla_rnn.h}, 
+          TF_CHECK_OK(session.Run({{x_eval, x_tensor}, {y_eval, y_tensor}, {h_prev, eval_h_prev_tensor}}, 
+                                  {vanilla_rnn_eval.p, vanilla_rnn_eval.h}, 
                                   {}, 
                                   &outputs));
   #ifdef VERBOSE  
-          LOG(INFO) << "Print vanilla_rnn_output, step: " << step << ", debug: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
+          LOG(INFO) << "Print vanilla_rnn_eval, step: " << step << ", debug: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
   #endif
 
           // top 1

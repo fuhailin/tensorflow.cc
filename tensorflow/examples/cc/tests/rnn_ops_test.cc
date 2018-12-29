@@ -341,9 +341,22 @@ int main() {
     return root.status().code();
   }
 
+  // VanillaRNN and TopK For Eval begins
+  // Placeholders
+  auto x_eval = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH, VOCAB_SIZE, 1}));
+  auto y_eval = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH}));
+
+  // VanillaRNN Node
+  tensorflow::Output vanilla_rnn_output_eval;
+  if (!VanillaRNN(root, x_eval, y_eval, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output_eval).ok()) {
+    LOG(ERROR) << "-----------------------------------------status: " << root.status();
+    return root.status().code();
+  }
+
   // Top 1
   auto topk_input = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE}));
   auto topk = tensorflow::ops::TopK(root, topk_input, tensorflow::ops::Cast(root, 1, tensorflow::DT_INT32));
+  // VanillaRNN and TopK For Eval ends
 
   // VanillaRNNGrad Node
   tensorflow::Output vanilla_rnn_grad_output;
@@ -396,8 +409,7 @@ int main() {
 
         // Prepare y
         tensorflow::Tensor y_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_SEQ_LENGTH}));
-        typename tensorflow::TTypes<float>::Vec y_t = y_tensor.vec<float>();
-        y_t(0) = 0; // y value make no sense in the evaluation process
+        y_tensor.vec<float>()(0) = 0; // y value make no sense in the evaluation process
 
         tensorflow::Tensor eval_h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
         eval_h_prev_tensor = h_prev_tensor;
@@ -416,7 +428,7 @@ int main() {
             m(0, vocab_index) = 1.0f;
 
             // set e_2d
-            Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+            Eigen::DSizes<Eigen::DenseIndex, 2> indices(0, 0); // should be (0, 0) all the time
             Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, VOCAB_SIZE * 1);
             e_2d.slice(indices, sizes) = m;
           }
@@ -425,12 +437,12 @@ int main() {
           std::vector<tensorflow::Tensor> outputs_topk;
 
           // Run 
-          TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, eval_h_prev_tensor}}, 
-                                  {tensorflow::Output(vanilla_rnn_output.node(), 0), tensorflow::Output(vanilla_rnn_output.node(), 1)}, 
+          TF_CHECK_OK(session.Run({{x_eval, x_tensor}, {y_eval, y_tensor}, {h_prev, eval_h_prev_tensor}}, 
+                                  {tensorflow::Output(vanilla_rnn_output_eval.node(), 0), tensorflow::Output(vanilla_rnn_output_eval.node(), 1)}, 
                                   {}, 
                                   &outputs));
   #ifdef VERBOSE  
-          LOG(INFO) << "Print vanilla_rnn_output, step: " << step << ", debug: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
+          LOG(INFO) << "Print vanilla_rnn_output_eval, step: " << step << ", debug: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
   #endif
 
           // top 1

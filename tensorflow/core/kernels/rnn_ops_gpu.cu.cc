@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 //
-// rnn ops, Vanalli RNN for now
+// rnn ops GPU support, Vanalli RNN for now
 // Author: Rock Zhuang
 // Date  : Dec 20, 2018
 // 
@@ -30,8 +30,10 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/util/cuda_kernel_helper.h"
 
-#define VERBOSE 1
-#define TESTING 1
+// #define VERBOSE 1
+// #define TESTING 1
+
+// #define PREFER_EIGEN_DEVICE 1
 
 namespace tensorflow {
 namespace functor {
@@ -100,14 +102,20 @@ struct Matrix
     T *elements;
 };
 
-//
+// Get
 template <typename T> 
 __device__ T getElement(ConstMatrix<T> *A, int row, int col)
 {
     return A->elements[row * A->width + col];
 }
 
-// 
+template <typename T> 
+__device__ T getElement(Matrix<T> *A, int row, int col)
+{
+    return A->elements[row * A->width + col];
+}
+
+// Set
 template <typename T>
 __device__ void setElement(Matrix<T> *A, int row, int col, T value)
 {
@@ -128,15 +136,15 @@ __global__ void computeH_1D(const T *d1, int w1, int h1,
     w_xh_mat.width = w1;
     w_xh_mat.elements = d1;
 
-    ConstMatrix<T> w_hh_mat;
-    w_hh_mat.height = h2;
-    w_hh_mat.width = w2;
-    w_hh_mat.elements = d2;
-
     ConstMatrix<T> x_mat;
-    x_mat.height = h3;
-    x_mat.width = w3;
-    x_mat.elements = d3;
+    x_mat.height = h2;
+    x_mat.width = w2;
+    x_mat.elements = d2;
+
+    ConstMatrix<T> w_hh_mat;
+    w_hh_mat.height = h3;
+    w_hh_mat.width = w3;
+    w_hh_mat.elements = d3;
 
     ConstMatrix<T> h_prev_mat;
     h_prev_mat.height = h4;
@@ -163,10 +171,8 @@ __global__ void computeH_1D(const T *d1, int w1, int h1,
     int col = 0;
 
     // not in range
-    if(row >= b_h_mat.height)
+    if(row >= h_mat.height)
       return;
-
-    // printf("--------------computeH: row:%d, col:%d\n", row, col);
 
     // w_xh[row] .* x[col]
     for (int i = 0; i < w_xh_mat.width; ++i)
@@ -174,15 +180,11 @@ __global__ void computeH_1D(const T *d1, int w1, int h1,
         w_xh__x += getElement(&w_xh_mat, row, i) * getElement(&x_mat, i, col);
     }
 
-    // printf("--------------computeH: w_xh__x:%f\n", w_xh__x);
-
     // w_hh[row] * h_prev[col]
     for (int i = 0; i < w_hh_mat.width; ++i)
     {
         w_hh__h_prev += getElement(&w_hh_mat, row, i) * getElement(&h_prev_mat, i, col);
     }
-
-    // printf("--------------computeH: w_hh__h_prev:%f\n", w_hh__h_prev);
 
     h_value = tanh_op(w_xh__x + w_hh__h_prev + getElement(&b_h_mat, row, col));
 
@@ -225,18 +227,14 @@ __global__ void computeYCExp_1D(const T *d1, int w1, int h1,
     int col = 0;
 
     // not in range
-    if(row >= b_y_mat.height)
+    if(row >= y_c_exp_mat.height)
       return;
 
-    // printf("--------------computeYCExp_1D: row:%d, col:%d\n", row, col);
-
-    // w_hy[row] .* x[col]
+    // w_hy[row] .* h[col]
     for (int i = 0; i < w_hy_mat.width; ++i)
     {
         w_hy__h += getElement(&w_hy_mat, row, i) * getElement(&h_mat, i, col);
     }
-
-    // printf("--------------computeH: w_hh__h_prev:%f\n", w_hh__h_prev);
 
     y_c_exp_value = exp_op(w_hy__h + getElement(&b_y_mat, row, col));
 
@@ -265,10 +263,8 @@ __global__ void computeP_1D(const T *d1, int w1, int h1,
     int col = 0;
 
     // not in range
-    if(row >= y_c_exp_mat.height)
+    if(row >= p_mat.height)
       return;
-
-    // printf("--------------computeP_1D: row:%d, col:%d\n", row, col);
 
     div_value = getElement(&y_c_exp_mat, row, col) / sum_value[0];
 
@@ -292,14 +288,14 @@ void VanillaRNNCellFpropWithCUDA(
   T y_index;
   d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);
 
+  // Corresponding Python code:
+  //  h[t] = np.tanh(np.dot(self.W_xh, xhat[t]) + np.dot(self.W_hh, h[t-1]) + self.b_h)#find new hidden state
   {
   // 1D
   dim3 blockSize(32);
   dim3 gridSize((b_h.dimension(0) + blockSize.x - 1) / blockSize.x);
 
-  // Corresponding Python code:
-  //  h[t] = np.tanh(np.dot(self.W_xh, xhat[t]) + np.dot(self.W_hh, h[t-1]) + self.b_h)#find new hidden state
-  computeH_1D<T><<<gridSize, blockSize>>>(w_xh.data(), w_xh.dimension(1), w_xh.dimension(0),
+  computeH_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(w_xh.data(), w_xh.dimension(1), w_xh.dimension(0),
                                        x.data(), x.dimension(1), x.dimension(0),
                                        w_hh.data(), w_hh.dimension(1), w_hh.dimension(0),
                                        h_prev.data(), h_prev.dimension(1), h_prev.dimension(0),
@@ -308,6 +304,7 @@ void VanillaRNNCellFpropWithCUDA(
   }
 
   //  yhat[t] = np.dot(self.W_hy, h[t]) + self.b_y#find unnormalized log probabilities for next chars
+  //  y_c_exp = np.exp(yhat[t])
   Tensor y_c_exp_tensor;   // temporary variable y_c_exp
   OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
                                            TensorShape({cell.input_size(), 1}), &y_c_exp_tensor));
@@ -317,27 +314,35 @@ void VanillaRNNCellFpropWithCUDA(
   // 1D
   dim3 blockSize(32);
   dim3 gridSize((b_y.dimension(0) + blockSize.x - 1) / blockSize.x);
-  computeYCExp_1D<T><<<gridSize, blockSize>>>(w_hy.data(), w_hy.dimension(1), w_hy.dimension(0),
+  computeYCExp_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(w_hy.data(), w_hy.dimension(1), w_hy.dimension(0),
                                        h_out.data(), h_out.dimension(1), h_out.dimension(0),
                                        b_y.data(), b_y.dimension(1), b_y.dimension(0),
                                        y_c_exp.data(), y_c_exp.dimension(1), y_c_exp.dimension(0));
   }
 
   //  p[t] = np.exp(yhat[t]) / np.sum(np.exp(yhat[t]))#find probabilities for next chars
+#ifdef PREFER_EIGEN_DEVICE
   Eigen::array<Eigen::DenseIndex, 2> b_shape({1, 1});
   Eigen::array<Eigen::DenseIndex, 2> bcast({cell.input_size(), 1});
   p_out.device(d) = y_c_exp / y_c_exp.sum().reshape(b_shape).broadcast(bcast);
+#else
+  {
+  Tensor sum_tensor;   // temporary variable dh_tensor
+  OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
+                                           TensorShape({1}), &sum_tensor));
+  typename TTypes<T>::Scalar sum_t = sum_tensor.scalar<T>();
+  sum_t.device(d) = y_c_exp.sum();
 
-  // // Not used for now
-  // Eigen::Tensor<T, 0, Eigen::RowMajor> sum_t;
-  // sum_t.device(d) = y_c_exp.sum();
-  // computeP_1D<T><<<gridSize, blockSize>>>(y_c_exp.data(), y_c_exp.dimension(1), y_c_exp.dimension(0),
-  //                                      sum_t.data(),
-  //                                      p_out.data(), p_out.dimension(1), p_out.dimension(0));
-  
+  dim3 blockSize(32);
+  dim3 gridSize((p_out.dimension(0) + blockSize.x - 1) / blockSize.x);
+  computeP_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(y_c_exp.data(), y_c_exp.dimension(1), y_c_exp.dimension(0),
+                                       sum_t.data(),
+                                       p_out.data(), p_out.dimension(1), p_out.dimension(0));
+  }
+#endif
+
   // Corresponding Python code:
   //  loss += -np.log(p[t][y[t],0])#softmax (cross-entropy loss)
-  //  
   loss_out.device(d) += -p_out.chip(static_cast<int>(y_index), 0).log();
 }
 
@@ -362,10 +367,8 @@ __global__ void computeDY_1D(const T *d1, int w1, int h1,
     int col = 0;
 
     // not in range
-    if(row >= p_mat.height)
+    if(row >= dy_mat.height)
       return;
-
-    // printf("--------------computeDY_1D: row:%d, col:%d\n", row, col);
 
     T out_value = getElement(&p_mat, row, col);
 
@@ -375,6 +378,112 @@ __global__ void computeDY_1D(const T *d1, int w1, int h1,
     setElement(&dy_mat, row, col, out_value);
 }
 
+// kernel of computing dot product of matrices, 2-D, one output scalar once
+template <typename T>
+__global__ void computeDotProd_Accum_2D(const T *d1, int w1, int h1,
+                           const T *d2, int w2, int h2,
+                           T *d3, int w3, int h3,
+                           const bool transpose_a, const bool transpose_b, const bool accumulate)
+{
+    ConstMatrix<T> a_mat;
+    a_mat.height = h1;
+    a_mat.width = w1;
+    a_mat.elements = d1;
+
+    ConstMatrix<T> b_mat;
+    b_mat.height = h2;
+    b_mat.width = w2;
+    b_mat.elements = d2;
+
+    Matrix<T> out_mat;
+    out_mat.height = h3;
+    out_mat.width = w3;
+    out_mat.elements = d3;
+
+    T a__b = 0.0f;
+
+    int row = threadIdx.y + blockIdx.y * blockDim.y;
+    int col = threadIdx.x + blockIdx.x * blockDim.x;
+
+    // not in range
+    if(row >= out_mat.height || col >= out_mat.width)
+      return;
+
+    // dy[row] .* h[col](###Transpose###)
+    int count = transpose_a ? a_mat.height : a_mat.width;
+    for (int i = 0; i < count; ++i)
+    {
+        int rowA = row;
+        int colA = i;
+        int rowB = i;
+        int colB = col;
+
+        if(transpose_a) {
+          rowA = i;
+          colA = row;
+        }
+
+        if(transpose_b) {
+          rowB = col;
+          colB = i;
+        }
+
+        a__b += getElement(&a_mat, rowA, colA) * getElement(&b_mat, rowB, colB);
+    }
+
+    if(accumulate)
+        a__b += getElement(&out_mat, row, col);
+
+    setElement(&out_mat, row, col, a__b);
+}
+
+
+// kernel of computing d_w_hy, 1-D, one output scalar once
+template <typename T>
+__global__ void computeDh_1D(const T *d1, int w1, int h1,
+                           const T *d2, int w2, int h2,
+                           const T *d3, int w3, int h3,
+                           T *d4, int w4, int h4)
+{
+    ConstMatrix<T> w_hy_mat;
+    w_hy_mat.height = h1;
+    w_hy_mat.width = w1;
+    w_hy_mat.elements = d1;
+
+    ConstMatrix<T> dy_mat;
+    dy_mat.height = h2;
+    dy_mat.width = w2;
+    dy_mat.elements = d2;
+
+    ConstMatrix<T> dh_next_mat;
+    dh_next_mat.height = h3;
+    dh_next_mat.width = w3;
+    dh_next_mat.elements = d3;
+
+    Matrix<T> dh_mat;
+    dh_mat.height = h4;
+    dh_mat.width = w4;
+    dh_mat.elements = d4;
+
+    T w_hy__dy = 0.0f;
+
+    int row = threadIdx.x + blockIdx.x * blockDim.x;
+    int col = 0;
+
+    // not in range
+    if(row >= dh_mat.height)
+      return;
+
+    // w_hy[row](###Transpose###) .* dy[col]
+    for (int i = 0; i < w_hy_mat.height; ++i)
+    {
+        w_hy__dy += getElement(&w_hy_mat, i, row) * getElement(&dy_mat, i, col);
+    }
+
+    w_hy__dy += getElement(&dh_next_mat, row, col);
+
+    setElement(&dh_mat, row, col, w_hy__dy);
+}
 
 // kernel of computing h, 1-D, one output scalar once
 template <typename T>
@@ -397,7 +506,7 @@ __global__ void computeDhRaw_1D(const T *d1, int w1, int h1,
     dh_raw_mat.width = w3;
     dh_raw_mat.elements = d3;
 
-    T out_value = 0.0;
+    T out_value = 0.0f;
 
     int row = threadIdx.x + blockIdx.x * blockDim.x;
     int col = 0;
@@ -405,8 +514,6 @@ __global__ void computeDhRaw_1D(const T *d1, int w1, int h1,
     // not in range
     if(row >= h_mat.height)
       return;
-
-    // printf("--------------computeDhRaw_1D: row:%d, col:%d\n", row, col);
 
     T h_value = getElement(&h_mat, row, col);
 
@@ -449,7 +556,7 @@ void VanillaRNNCellBpropWithCUDA(
   dim3 blockSize(32);
   dim3 gridSize((p.dimension(0) + blockSize.x - 1) / blockSize.x);  
 
-  computeDY_1D<T><<<gridSize, blockSize>>>(p.data(), p.dimension(1), p.dimension(0),
+  computeDY_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(p.data(), p.dimension(1), p.dimension(0),
                                        static_cast<int>(y_index),
                                        dy.data(), dy.dimension(1), dy.dimension(0));
 
@@ -458,8 +565,23 @@ void VanillaRNNCellBpropWithCUDA(
   Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) }; // for dot product
   const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0}); // For matrix transpose
 
-  //   dW_hy += np.dot(dy, h[t].T)
+  //   python: dW_hy += np.dot(dy, h[t].T)
+#ifdef PREFER_EIGEN_DEVICE  
   d_w_hy_out.device(d) += dy.contract(h.shuffle(matrix_transpose), product_dims);
+#else  
+  {
+  // 2D
+  dim3 blockSize(32, 32);
+  dim3 gridSize((d_w_hy_out.dimension(1) + blockSize.x - 1) / blockSize.x, 
+        (d_w_hy_out.dimension(0) + blockSize.y - 1) / blockSize.y);
+
+  computeDotProd_Accum_2D<T><<<gridSize, blockSize, 0, cu_stream>>>(dy.data(), dy.dimension(1), dy.dimension(0),
+                                       h.data(), h.dimension(1), h.dimension(0),
+                                       d_w_hy_out.data(), d_w_hy_out.dimension(1), d_w_hy_out.dimension(0),
+                                       false, true, true);
+
+  }
+#endif
 
   //   db_y += dy
   d_b_y_out.device(d) += dy;
@@ -469,7 +591,21 @@ void VanillaRNNCellBpropWithCUDA(
   OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
                                            TensorShape({h.dimension(0), h.dimension(1)}), &dh_tensor));
   typename TTypes<T>::Matrix dh = dh_tensor.matrix<T>();
+#ifdef PREFER_EIGEN_DEVICE
   dh.device(d) = w_hy.shuffle(matrix_transpose).contract(dy, product_dims) + dh_next;
+#else
+  {
+  // 1D
+  dim3 blockSize(32);
+  dim3 gridSize((dh.dimension(0) + blockSize.x - 1) / blockSize.x);  
+
+  computeDh_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(w_hy.data(), w_hy.dimension(1), w_hy.dimension(0),
+                                       dy.data(), dy.dimension(1), dy.dimension(0),
+                                       dh_next.data(), dh_next.dimension(1), dh_next.dimension(0),
+                                       dh.data(), dh.dimension(1), dh.dimension(0));
+
+  }
+#endif
 
   //   dh_raw = (1 - h[t]**2) * dh
   Tensor dh_raw_tensor;   // temporary variable dh_raw_tensor
@@ -482,21 +618,68 @@ void VanillaRNNCellBpropWithCUDA(
   dim3 blockSize(32);
   dim3 gridSize((h.dimension(0) + blockSize.x - 1) / blockSize.x);  
 
-  computeDhRaw_1D<T><<<gridSize, blockSize>>>(h.data(), h.dimension(1), h.dimension(0),
+  computeDhRaw_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(h.data(), h.dimension(1), h.dimension(0),
                                        dh.data(), dh.dimension(1), dh.dimension(0),
                                        dh_raw.data(), dh_raw.dimension(1), dh_raw.dimension(0));
 
   }
 
   //   dW_xh += np.dot(dh_raw, xhat[t].T)
-  //   dW_hh += np.dot(dh_raw, h[t-1].T)
-  //   db_h += dh_raw
+#ifdef PREFER_EIGEN_DEVICE  
   d_w_xh_out.device(d) += dh_raw.contract(x.shuffle(matrix_transpose), product_dims);
+#else
+  {
+  // 2D
+  dim3 blockSize(32, 32);
+  dim3 gridSize((d_w_xh_out.dimension(1) + blockSize.x - 1) / blockSize.x, 
+        (d_w_xh_out.dimension(0) + blockSize.y - 1) / blockSize.y);
+
+  computeDotProd_Accum_2D<T><<<gridSize, blockSize, 0, cu_stream>>>(dh_raw.data(), dh_raw.dimension(1), dh_raw.dimension(0),
+                                       x.data(), x.dimension(1), x.dimension(0),
+                                       d_w_xh_out.data(), d_w_xh_out.dimension(1), d_w_xh_out.dimension(0),
+                                       false, true, true);
+
+  }
+#endif
+
+  //   dW_hh += np.dot(dh_raw, h[t-1].T)
+#ifdef PREFER_EIGEN_DEVICE
   d_w_hh_out.device(d) += dh_raw.contract(h_prev.shuffle(matrix_transpose), product_dims);
+#else
+  {
+  // 2D
+  dim3 blockSize(32, 32);
+  dim3 gridSize((d_w_hh_out.dimension(1) + blockSize.x - 1) / blockSize.x, 
+        (d_w_hh_out.dimension(0) + blockSize.y - 1) / blockSize.y);
+
+  computeDotProd_Accum_2D<T><<<gridSize, blockSize, 0, cu_stream>>>(dh_raw.data(), dh_raw.dimension(1), dh_raw.dimension(0),
+                                       h_prev.data(), h_prev.dimension(1), h_prev.dimension(0),
+                                       d_w_hh_out.data(), d_w_hh_out.dimension(1), d_w_hh_out.dimension(0),
+                                       false, true, true);
+
+  }
+#endif
+
+  //   db_h += dh_raw
   d_b_h_out.device(d) += dh_raw;
 
   //   dh_next = np.dot(self.W_hh.T, dh_raw)
+#ifdef PREFER_EIGEN_DEVICE
   dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);  
+#else
+  {
+  // 2D
+  dim3 blockSize(32, 32);
+  dim3 gridSize((dh_next.dimension(1) + blockSize.x - 1) / blockSize.x, 
+        (dh_next.dimension(0) + blockSize.y - 1) / blockSize.y);
+
+  computeDotProd_Accum_2D<T><<<gridSize, blockSize, 0, cu_stream>>>(w_hh.data(), w_hh.dimension(1), w_hh.dimension(0),
+                                       dh_raw.data(), dh_raw.dimension(1), dh_raw.dimension(0),
+                                       dh_next.data(), dh_next.dimension(1), dh_next.dimension(0),
+                                       true, false, false);
+
+  }
+#endif  
 }
 
 }  // namespace

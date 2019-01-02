@@ -54,6 +54,24 @@ struct ApplyAdagrad<GPUDevice, T> {
 };
 
 template <typename T>
+struct ApplyAdagradTrick<GPUDevice, T> {
+  void operator()(const GPUDevice& d, typename TTypes<T>::Flat var,
+                  typename TTypes<T>::Flat accum,
+                  typename TTypes<T>::ConstScalar lr,
+                  typename TTypes<T>::ConstFlat grad, bool update_slots) {
+    if (update_slots) {
+      accum.device(d) += grad.square();
+    }
+    Eigen::array<typename TTypes<T>::Tensor::Index, 1> bcast;
+    bcast[0] = grad.dimension(0);
+    Eigen::Sizes<1> single;
+
+    T addition = static_cast<T>(1e-8);
+    var.device(d) -= lr.reshape(single).broadcast(bcast) * grad * (accum + addition).rsqrt();
+  }
+};
+
+template <typename T>
 struct ApplyAdadelta<GPUDevice, T> {
   void operator()(const GPUDevice& d, typename TTypes<T>::Flat var,
                   typename TTypes<T>::Flat accum,
@@ -347,6 +365,10 @@ template struct functor::ApplyGradientDescent<GPUDevice, double>;
 template struct functor::ApplyAdagrad<GPUDevice, Eigen::half>;
 template struct functor::ApplyAdagrad<GPUDevice, float>;
 template struct functor::ApplyAdagrad<GPUDevice, double>;
+
+template struct functor::ApplyAdagradTrick<GPUDevice, Eigen::half>;
+template struct functor::ApplyAdagradTrick<GPUDevice, float>;
+template struct functor::ApplyAdagradTrick<GPUDevice, double>;
 
 template struct functor::ApplyAdadelta<GPUDevice, Eigen::half>;
 template struct functor::ApplyAdadelta<GPUDevice, float>;

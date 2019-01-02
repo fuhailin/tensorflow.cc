@@ -532,20 +532,22 @@ int main() {
         TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
                                 {tensorflow::Output(vanilla_rnn_grad_output.node(), 0), tensorflow::Output(vanilla_rnn_grad_output.node(), 1), 
                                   tensorflow::Output(vanilla_rnn_grad_output.node(), 2), tensorflow::Output(vanilla_rnn_grad_output.node(), 3), 
-                                  tensorflow::Output(vanilla_rnn_grad_output.node(), 4), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2),
+                                  tensorflow::Output(vanilla_rnn_grad_output.node(), 4), 
+                                  tensorflow::Output(vanilla_rnn_output.node(), 0), tensorflow::Output(vanilla_rnn_output.node(), 1), tensorflow::Output(vanilla_rnn_output.node(), 2),
                                   apply_w_xh, apply_w_hh, apply_w_hy, apply_b_h, apply_b_y}, 
                                 {}, 
                                 &outputs));
 #ifdef VERBOSE  
         LOG(INFO) << "Print step: " << step << ", output: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString() 
                                         << ", " << outputs[3].DebugString() << ", " << outputs[4].DebugString()
-                                        << ", " << outputs[5].DebugString() << ", " << outputs[6].DebugString();
+                                        << ", " << outputs[5].DebugString() << ", " << outputs[6].DebugString()
+                                        << ", " << outputs[7].DebugString();
 #endif
         if(step % 100 == 0)
-          LOG(INFO) << "Print step: " << step << ", loss: " << outputs[6].DebugString();
+          LOG(INFO) << "Print step: " << step << ", loss: " << outputs[7].DebugString();
 
         // Update h_prev
-        CHECK(h_prev_tensor.CopyFrom(outputs[5].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[5].dim_size(1), outputs[5].dim_size(2)}));
+        CHECK(h_prev_tensor.CopyFrom(outputs[6].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[6].dim_size(1), outputs[6].dim_size(2)}));
 #ifdef VERBOSE
         LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
 #endif

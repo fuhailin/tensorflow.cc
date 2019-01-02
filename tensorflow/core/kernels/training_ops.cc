@@ -1309,7 +1309,7 @@ TF_CALL_bfloat16(REGISTER_CPU_KERNELS);
 TF_CALL_float(REGISTER_CPU_KERNELS);
 TF_CALL_double(REGISTER_CPU_KERNELS);
 
-#if GOOGLE_CUDA_TODO
+#if GOOGLE_CUDA
 // Forward declarations of the functor specializations for GPU.
 namespace functor {
 #define DECLARE_GPU_SPEC(T)                                               \

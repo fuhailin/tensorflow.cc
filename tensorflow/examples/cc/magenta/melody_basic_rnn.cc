@@ -116,7 +116,7 @@ int main() {
   typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
   h_prev_t.setZero();
 #ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
+  LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << endl << h_prev_t;  
 #endif
 
   // Trainable parameters start here, to be improved
@@ -238,8 +238,8 @@ int main() {
           Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, VOCAB_SIZE * 1);
           e_2d.slice(indices, sizes) = mat;
 
-          std::vector<Tensor> outputs;
-          std::vector<Tensor> outputs_topk;
+          vector<Tensor> outputs;
+          vector<Tensor> outputs_topk;
 
           // Run 
           TF_CHECK_OK(session.Run({{x_eval, x_tensor}, {y_eval, y_tensor}, {h_prev, eval_h_prev_tensor}}, 
@@ -297,11 +297,11 @@ int main() {
 
 #ifdef VERBOSE
         // Check e_2d for funfor i in range(len(data)/seq_length):
-        LOG(INFO) << __FUNCTION__ << "----------------e_2d: " << std::endl << e_2d;  
+        LOG(INFO) << __FUNCTION__ << "----------------e_2d: " << endl << e_2d;  
 
         // Check x_tensor for fun
         auto e_t = x_tensor.tensor<float, 3>();
-        LOG(INFO) << __FUNCTION__ << "----------------e_t: " << std::endl << e_t;  
+        LOG(INFO) << __FUNCTION__ << "----------------e_t: " << endl << e_t;  
 #endif
 
         // Prepare y
@@ -318,10 +318,10 @@ int main() {
         content_index += SEQ_LENGTH;
         
 #ifdef VERBOSE  
-        LOG(INFO) << __FUNCTION__ << "----------------y_t: " << std::endl << y_t;  
+        LOG(INFO) << __FUNCTION__ << "----------------y_t: " << endl << y_t;  
 #endif
   
-        std::vector<Tensor> outputs;
+        vector<Tensor> outputs;
 
         // Run 
         TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}}, 
@@ -336,7 +336,7 @@ int main() {
         // Update h_prev
         CHECK(h_prev_tensor.CopyFrom(outputs[0].Slice(SEQ_LENGTH - 1, SEQ_LENGTH), {outputs[0].dim_size(1), outputs[0].dim_size(2)}));
 #ifdef VERBOSE
-        LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << std::endl << h_prev_tensor.matrix<float>();
+        LOG(INFO) << __FUNCTION__ << "----------------------------h_prev_tensor updated:" << endl << h_prev_tensor.matrix<float>();
 #endif
       } // Train
 

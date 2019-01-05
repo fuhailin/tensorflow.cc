@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 //
-// Example for using rnn ops in C++, Vanallia RNN for now
+// Example for using rnn ops in C++, Vanilla RNN for now
 // Check vanilla_rnn.py for python numpy implementation
 // Author: Rock Zhuang
 // Date  : Dec 20, 2018
@@ -39,6 +39,7 @@ const char test_content[] = "hello world hello world hello world hello world hel
 #define SEQ_LENGTH 10
 #define VOCAB_SIZE 8 // "helo wrd"
 #define TEST_SEQ_LENGTH 1
+#define TRAINING_STEPS 1000
 
 // #define VERBOSE 1
 // #define TESTING 1
@@ -279,83 +280,75 @@ int main() {
   }
 #endif
 
-  // Prepare hidden tensor
-  tensorflow::Tensor h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
-  typename tensorflow::TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
-  h_prev_t.setZero();
-#ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
-#endif
-
   // Trainable parameters start here, to be improved
-  auto w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
+  auto w_xh = tensorflow::ops::Variable(root.WithOpName("w_xh"), {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
   auto rate = tensorflow::ops::Const(root, {0.01f});
   auto random_value = tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
   auto assign_w_xh = tensorflow::ops::Assign(root, w_xh, tensorflow::ops::Multiply(root, random_value, rate));
 
-  auto w_hh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto w_hh = tensorflow::ops::Variable(root.WithOpName("w_hh"), {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto random_value2 = tensorflow::ops::RandomNormal(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto assign_w_hh = tensorflow::ops::Assign(root, w_hh, tensorflow::ops::Multiply(root, random_value2, rate));
 
-  auto w_hy = tensorflow::ops::Variable(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto w_hy = tensorflow::ops::Variable(root.WithOpName("w_hy"), {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto random_value3 = tensorflow::ops::RandomNormal(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto assign_w_hy = tensorflow::ops::Assign(root, w_hy, tensorflow::ops::Multiply(root, random_value3, rate));
 
-  auto b_h = tensorflow::ops::Variable(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto b_h = tensorflow::ops::Variable(root.WithOpName("b_h"), {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
   tensorflow::Tensor b_h_zero_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
   b_h_zero_tensor.matrix<float>().setZero();
   auto assign_b_h = tensorflow::ops::Assign(root, b_h, tensorflow::ops::ZerosLike(root, b_h_zero_tensor));
 
-  auto b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto b_y = tensorflow::ops::Variable(root.WithOpName("b_y"), {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
   tensorflow::Tensor b_y_zero_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({VOCAB_SIZE, 1}));
   b_y_zero_tensor.matrix<float>().setZero();  
   auto assign_b_y = tensorflow::ops::Assign(root, b_y, tensorflow::ops::ZerosLike(root, b_y_zero_tensor));
   // Trainable parameters end here 
 
   // Gradient accum parameters start here
-  auto ada_w_xh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
+  auto ada_w_xh = tensorflow::ops::Variable(root.WithOpName("ada_w_xh"), {HIDDEN_SIZE, VOCAB_SIZE}, tensorflow::DT_FLOAT);
   auto assign_ada_w_xh = tensorflow::ops::Assign(root, ada_w_xh, tensorflow::ops::ZerosLike(root, w_xh));
 
-  auto ada_w_hh = tensorflow::ops::Variable(root, {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto ada_w_hh = tensorflow::ops::Variable(root.WithOpName("ada_w_hh"), {HIDDEN_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto assign_ada_w_hh = tensorflow::ops::Assign(root, ada_w_hh, tensorflow::ops::ZerosLike(root, w_hh));
 
-  auto ada_w_hy = tensorflow::ops::Variable(root, {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
+  auto ada_w_hy = tensorflow::ops::Variable(root.WithOpName("ada_w_hy"), {VOCAB_SIZE, HIDDEN_SIZE}, tensorflow::DT_FLOAT);
   auto assign_ada_w_hy = tensorflow::ops::Assign(root, ada_w_hy, tensorflow::ops::ZerosLike(root, w_hy));
 
-  auto ada_b_h = tensorflow::ops::Variable(root, {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto ada_b_h = tensorflow::ops::Variable(root.WithOpName("ada_b_h"), {HIDDEN_SIZE, 1}, tensorflow::DT_FLOAT);
   auto assign_ada_b_h = tensorflow::ops::Assign(root, ada_b_h, tensorflow::ops::ZerosLike(root, b_h));
 
-  auto ada_b_y = tensorflow::ops::Variable(root, {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
+  auto ada_b_y = tensorflow::ops::Variable(root.WithOpName("ada_b_y"), {VOCAB_SIZE, 1}, tensorflow::DT_FLOAT);
   auto assign_ada_b_y = tensorflow::ops::Assign(root, ada_b_y, tensorflow::ops::ZerosLike(root, b_y));
   // Gradient accum parameters end here 
 
   // Placeholders
-  auto x = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
-  auto y = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH}));
-  auto h_prev = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
+  auto x = tensorflow::ops::Placeholder(root.WithOpName("x"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH, VOCAB_SIZE, 1}));
+  auto y = tensorflow::ops::Placeholder(root.WithOpName("y"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({SEQ_LENGTH}));
+  auto h_prev = tensorflow::ops::Placeholder(root.WithOpName("h_prev"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({HIDDEN_SIZE, 1}));
 
   // VanillaRNN Node
   tensorflow::Output vanilla_rnn_output;
-  if (!VanillaRNN(root, x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output).ok()) {
+  if (!VanillaRNN(root.WithOpName("vanilla_rnn_output"), x, y, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output).ok()) {
     LOG(ERROR) << "-----------------------------------------status: " << root.status();
     return root.status().code();
   }
 
   // VanillaRNN and TopK For Eval begins
   // Placeholders
-  auto x_eval = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH, VOCAB_SIZE, 1}));
-  auto y_eval = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH}));
+  auto x_eval = tensorflow::ops::Placeholder(root.WithOpName("x_eval"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH, VOCAB_SIZE, 1}));
+  auto y_eval = tensorflow::ops::Placeholder(root.WithOpName("y_eval"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({TEST_SEQ_LENGTH}));
 
   // VanillaRNN Node
   tensorflow::Output vanilla_rnn_output_eval;
-  if (!VanillaRNN(root, x_eval, y_eval, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output_eval).ok()) {
+  if (!VanillaRNN(root.WithOpName("vanilla_rnn_output_eval"), x_eval, y_eval, h_prev, w_xh, w_hh, w_hy, b_h, b_y, vanilla_rnn_output_eval).ok()) {
     LOG(ERROR) << "-----------------------------------------status: " << root.status();
     return root.status().code();
   }
 
   // Top 1
-  auto topk_input = tensorflow::ops::Placeholder(root, tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE}));
-  auto topk = tensorflow::ops::TopK(root, topk_input, tensorflow::ops::Cast(root, 1, tensorflow::DT_INT32));
+  auto topk_input = tensorflow::ops::Placeholder(root.WithOpName("topk_input"), tensorflow::DT_FLOAT, tensorflow::ops::Placeholder::Shape({VOCAB_SIZE}));
+  auto topk = tensorflow::ops::TopK(root.WithOpName("topk"), topk_input, tensorflow::ops::Cast(root, 1, tensorflow::DT_INT32));
   // VanillaRNN and TopK For Eval ends
 
   // VanillaRNNGrad Node
@@ -370,15 +363,15 @@ int main() {
 
   // alternative of tensorflow::ops::ApplyAdagrad
   tensorflow::Output  apply_w_xh;
-  ApplyAdagradTrick(root, w_xh, ada_w_xh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 0), apply_w_xh);
+  ApplyAdagradTrick(root.WithOpName("apply_w_xh"), w_xh, ada_w_xh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 0), apply_w_xh);
   tensorflow::Output  apply_w_hh;
-  ApplyAdagradTrick(root, w_hh, ada_w_hh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 1), apply_w_hh);
+  ApplyAdagradTrick(root.WithOpName("apply_w_hh"), w_hh, ada_w_hh, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 1), apply_w_hh);
   tensorflow::Output  apply_w_hy;
-  ApplyAdagradTrick(root, w_hy, ada_w_hy, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 2), apply_w_hy);
+  ApplyAdagradTrick(root.WithOpName("apply_w_hy"), w_hy, ada_w_hy, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 2), apply_w_hy);
   tensorflow::Output  apply_b_h;
-  ApplyAdagradTrick(root, b_h, ada_b_h, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 3), apply_b_h);
+  ApplyAdagradTrick(root.WithOpName("apply_b_h"), b_h, ada_b_h, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 3), apply_b_h);
   tensorflow::Output  apply_b_y;
-  ApplyAdagradTrick(root, b_y, ada_b_y, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 4), apply_b_y);
+  ApplyAdagradTrick(root.WithOpName("apply_b_y"), b_y, ada_b_y, lr, tensorflow::Output(vanilla_rnn_grad_output.node(), 4), apply_b_y);
 
   tensorflow::ClientSession session(root);
 
@@ -390,9 +383,17 @@ int main() {
 
   // Train and eval
   int step = 0;
-  while(step < 10000) {
+  while(step < TRAINING_STEPS) {
     // content index
     int content_index = 0;
+
+    // Prepare hidden tensor
+    tensorflow::Tensor h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({HIDDEN_SIZE, 1}));
+    typename tensorflow::TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
+    h_prev_t.setZero();
+#ifdef VERBOSE
+    LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << std::endl << h_prev_t;  
+#endif
 
     int seq_batches = strlen(test_content) / SEQ_LENGTH;
     // Loop in test content

@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 //
-// rnn ops, Vanalli RNN for now
+// rnn ops, Vanilla RNN for now
 // Author: Rock Zhuang
 // Date  : Dec 20, 2018
 // 

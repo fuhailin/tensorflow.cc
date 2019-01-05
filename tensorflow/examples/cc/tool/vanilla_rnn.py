@@ -16,8 +16,9 @@ class RNN(object):
 
     def __init__(self, insize, outsize, hidsize, learning_rate):        
         self.insize = insize
+        self.hidsize = hidsize
 
-        self.h = np.zeros((hidsize , 1))#a [h x 1] hidden state stored from last batch of inputs
+        self.h = np.zeros((self.hidsize , 1))#a [h x 1] hidden state stored from last batch of inputs
 
         #parameters
         self.W_xh = np.random.randn(hidsize, insize)*0.01#[h x x]
@@ -34,6 +35,9 @@ class RNN(object):
         self.adab_y = np.zeros((outsize, 1))
 
         self.learning_rate = learning_rate
+
+    def reset_h(self):
+        self.h = np.zeros((self.hidsize , 1))#a [h x 1] hidden state stored from last batch of inputs
 
     #give the RNN a sequence of inputs and outputs (seq_length long), and use
     #them to adjust the internal state
@@ -229,6 +233,8 @@ def test():
     g_i = 0
 
     while g_i < 10000:
+        rnn.reset_h()
+
         for i in range(len(data)/seq_length):
             x = [char_to_ix[c] for c in data[i*seq_length:(i+1)*seq_length]]#inputs to the RNN
             y = [char_to_ix[c] for c in data[i*seq_length+1:(i+1)*seq_length+1]]#the targets it should be outputting

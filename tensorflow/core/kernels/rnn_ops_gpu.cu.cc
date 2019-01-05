@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 //
-// rnn ops GPU support, Vanalli RNN for now
+// rnn ops GPU support, Vanilla RNN for now
 // Author: Rock Zhuang
 // Date  : Dec 20, 2018
 // 

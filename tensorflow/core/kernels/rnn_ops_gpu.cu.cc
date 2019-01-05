@@ -285,8 +285,10 @@ void VanillaRNNCellFpropWithCUDA(
     typename TTypes<T>::Matrix p_out, typename TTypes<T>::Matrix h_out, typename TTypes<T>::Scalar loss_out) {
   const cudaStream_t& cu_stream = GetCudaStream(ctx);
 
-  T y_index;
-  d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);
+  // With "HostMemory("y")" when REGISTER_GPU_KERNEL, copy is not needed.
+  // T y_index;
+  // d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);
+  int y_index = static_cast<int>(y());
 
   // Corresponding Python code:
   //  h[t] = np.tanh(np.dot(self.W_xh, xhat[t]) + np.dot(self.W_hh, h[t-1]) + self.b_h)#find new hidden state
@@ -343,7 +345,7 @@ void VanillaRNNCellFpropWithCUDA(
 
   // Corresponding Python code:
   //  loss += -np.log(p[t][y[t],0])#softmax (cross-entropy loss)
-  loss_out.device(d) += -p_out.chip(static_cast<int>(y_index), 0).log();
+  loss_out.device(d) += -p_out.chip(y_index, 0).log();
 }
 
 
@@ -540,8 +542,9 @@ void VanillaRNNCellBpropWithCUDA(
       typename TTypes<T>::Matrix d_b_y_out) {
   const cudaStream_t& cu_stream = GetCudaStream(ctx);
 
-  T y_index;
-  d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);
+  // T y_index;
+  // d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);
+  int y_index = static_cast<int>(y());
 
   // Python code:
   //   dy = np.copy(p[t])
@@ -557,7 +560,7 @@ void VanillaRNNCellBpropWithCUDA(
   dim3 gridSize((p.dimension(0) + blockSize.x - 1) / blockSize.x);  
 
   computeDY_1D<T><<<gridSize, blockSize, 0, cu_stream>>>(p.data(), p.dimension(1), p.dimension(0),
-                                       static_cast<int>(y_index),
+                                       y_index,
                                        dy.data(), dy.dimension(1), dy.dimension(0));
 
   }

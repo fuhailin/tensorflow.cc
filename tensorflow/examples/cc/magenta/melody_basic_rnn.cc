@@ -37,6 +37,7 @@ using namespace std;
 #define SEQ_LENGTH 64 // batch_size
 #define VOCAB_SIZE 38 // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define TEST_SEQ_LENGTH 1
+#define TRAINING_STEPS 10000
 
 int main() {
 
@@ -110,14 +111,6 @@ int main() {
   //
   // Train and Eval
   //
-
-  // Prepare hidden tensor
-  Tensor h_prev_tensor(DT_FLOAT, TensorShape({HIDDEN_SIZE, 1}));
-  typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
-  h_prev_t.setZero();
-#ifdef VERBOSE
-  LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << endl << h_prev_t;  
-#endif
 
   // Trainable parameters start here, to be improved
   auto w_xh = Variable(root, {HIDDEN_SIZE, VOCAB_SIZE}, DT_FLOAT);
@@ -203,9 +196,17 @@ int main() {
 
   // Train and eval
   int step = 0;
-  while(step < 10000) {
+  while(step < TRAINING_STEPS) {
     // content index
     int content_index = 0;
+
+    // Prepare hidden tensor
+    Tensor h_prev_tensor(DT_FLOAT, TensorShape({HIDDEN_SIZE, 1}));
+    typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
+    h_prev_t.setZero();
+#ifdef VERBOSE
+    LOG(INFO) << __FUNCTION__ << "----------------h_prev_t: " << endl << h_prev_t;  
+#endif
 
     int seq_batches = dataset_outputs[0].NumElements() / SEQ_LENGTH;
     // Loop in test content
@@ -342,8 +343,7 @@ int main() {
 
       step++;
     } // for(int bidx = 0; bidx < seq_batches; bidx++) {
-  } // while(step < 10000) {
-
+  } // while(step < TRAINING_STEPS) {
 
   return 0;
 }

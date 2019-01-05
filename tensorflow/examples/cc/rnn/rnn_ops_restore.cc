@@ -15,7 +15,7 @@ limitations under the License.
 
 //
 // Example for using rnn ops in C++, Vanilla RNN for now
-// Load graph from frozen model file
+// Load graph from a frozen model file
 //
 // Author: Rock Zhuang
 // Date  : Jan 05, 2019
@@ -90,12 +90,12 @@ int main(int argc, char* argv[]) {
   port::InitMain(argv[0], &argc, &argv);
 
   // vocabulary vs index
-  const std::map<int, char> index_vocab_dic = {{0, ' '}, {1, 'e'}, {2, 'd'}, {3, 'h'}, {4, 'l'}, {5, 'o'}, {6, 'r'}, {7, 'w'}};
-  std::map<char, int> vocab_index_dic;
+  const map<int, char> index_vocab_dic = {{0, ' '}, {1, 'e'}, {2, 'd'}, {3, 'h'}, {4, 'l'}, {5, 'o'}, {6, 'r'}, {7, 'w'}};
+  map<char, int> vocab_index_dic;
   for(auto iter = index_vocab_dic.begin(); iter != index_vocab_dic.end(); iter++) {
     // LOG(INFO) << "----------------index_vocab_dic: " << iter->first <<' ' << iter->second;  
 
-    vocab_index_dic.insert(std::pair<char, int>(iter->second, iter->first));
+    vocab_index_dic.insert(pair<char, int>(iter->second, iter->first));
   }
 
   // First we load and initialize the model.
@@ -162,6 +162,7 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef VERBOSE  
+    // output[0] => p, outputs[1] => h
     LOG(INFO) << "Print vanilla_rnn_output_eval: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
 #endif
 
@@ -187,6 +188,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 #ifdef VERBOSE  
+    // outputs_topk[0] => topk.values, outputs_topk[1] => topk.indices
     LOG(INFO) << "Print topk: " << outputs_topk[0].DebugString() << ", " << outputs_topk[1].DebugString();
 #endif
 

@@ -695,8 +695,9 @@ DECLARE_GPU_SPEC(float);
 }  // end namespace functor
 
 #define REGISTER_GPU_KERNEL(T)                           \
-  REGISTER_KERNEL_BUILDER(Name("VanillaRNN")              \
+  REGISTER_KERNEL_BUILDER(Name("VanillaRNN")             \
                               .Device(DEVICE_GPU)        \
+                              .HostMemory("y")           \
                               .TypeConstraint<T>("T"),   \
                           VanillaRNNOp<GPUDevice, T, true>);
 
@@ -937,8 +938,9 @@ DECLARE_GPU_SPEC(float);
 }  // end namespace functor
 
 #define REGISTER_GPU_KERNEL(T)                           \
-  REGISTER_KERNEL_BUILDER(Name("VanillaRNNGrad")          \
+  REGISTER_KERNEL_BUILDER(Name("VanillaRNNGrad")         \
                               .Device(DEVICE_GPU)        \
+                              .HostMemory("y")           \
                               .TypeConstraint<T>("T"),   \
                           VanillaRNNGradOp<GPUDevice, T, true>);
 

@@ -22,8 +22,6 @@ limitations under the License.
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/protobuf/config.pb.h"
-#include "tensorflow/core/public/session.h"
-#include "tensorflow/core/public/session_options.h"
 
 namespace tensorflow {
 
@@ -127,6 +125,16 @@ Status ClientSession::Run(const RunOptions& run_options, const FeedType& inputs,
                                target_node_names, outputs, run_metadata);
 }
 
+Status ClientSession::Run(const std::vector<std::pair<string, Tensor>> feeds,
+                          const std::vector<string>& output_tensor_names,
+                          const std::vector<string>& target_node_names,
+                          std::vector<Tensor>* outputs) const {
+
+  TF_RETURN_IF_ERROR(impl()->MaybeExtendGraph());
+  return impl()->session_->Run(RunOptions(), feeds, output_tensor_names,
+                               target_node_names, outputs, nullptr);
+}
+
 Status ClientSession::MakeCallable(const CallableOptions& callable_options,
                                    CallableHandle* out_handle) {
   TF_RETURN_IF_ERROR(impl()->MaybeExtendGraph());
@@ -143,6 +151,10 @@ Status ClientSession::RunCallable(CallableHandle handle,
 
 Status ClientSession::ReleaseCallable(CallableHandle handle) {
   return impl()->session_->ReleaseCallable(handle);
+}
+
+Session* ClientSession::GetSession() {
+  return impl()->session_.get();
 }
 
 }  // end namespace tensorflow

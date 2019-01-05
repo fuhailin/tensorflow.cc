@@ -29,6 +29,11 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/iterator_ops.h"
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/lib/strings/stringprintf.h"
+#include "tensorflow/core/public/session.h"
+#include "tensorflow/core/public/session_options.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/cc/saved_model/loader.h"
+#include "tensorflow/cc/tools/freeze_saved_model.h"
 
 // using namespace tensorflow;
 // using namespace tensorflow::ops;
@@ -43,6 +48,17 @@ const char test_content[] = "hello world hello world hello world hello world hel
 
 // #define VERBOSE 1
 // #define TESTING 1
+
+namespace tensorflow {
+
+class InternalClientSession {
+public:
+  static tensorflow::Session* GetSession(tensorflow::ClientSession& session) {
+    return session.GetSession();
+  }
+};
+
+}
 
 // VanillaRNN node builder 
 static tensorflow::Status VanillaRNN(const tensorflow::Scope& scope, 
@@ -557,6 +573,40 @@ int main() {
       step++;
     } // for(int bidx = 0; bidx < seq_batches; bidx++) {
   } // while(step < 10000) {
+
+  //
+  // SAVE model
+  //
+
+  tensorflow::GraphDef graph_def;
+  TF_CHECK_OK(root.ToGraphDef(&graph_def));
+
+  // Write raw graph
+  const std::string filename = tensorflow::strings::StrCat("/tmp/", "vanilla_rnn_raw.pb");
+  TF_CHECK_OK(tensorflow::WriteTextProto(tensorflow::Env::Default(), filename, graph_def));
+
+  // Freeze graph
+  tensorflow::SavedModelBundle saved_model_bundle;
+  tensorflow::GraphDef frozen_graph_def;
+  std::unordered_set<std::string> inputs;
+  std::unordered_set<std::string> outputs;
+  TF_CHECK_OK(tensorflow::AddGraphDefWithOutputsToSavedModelBundle(tensorflow::InternalClientSession::GetSession(session), graph_def, 
+                              // {"apply_w_xh:0", "apply_w_hh:0", "apply_w_hy:0", "apply_b_h:0", "apply_b_y:0"}, 
+                              {"vanilla_rnn_output_eval:0", "topk:0"}, 
+                              "", 
+                              &saved_model_bundle));
+  TF_CHECK_OK(tensorflow::FreezeSavedModel(saved_model_bundle, &frozen_graph_def, &inputs, &outputs));
+
+  // Need to release session ownership
+  saved_model_bundle.session.release();
+
+#ifdef VERBOSE
+  LOG(INFO) << __FUNCTION__ << "----------------------------frozen_graph_def.ShortDebugString():" << std::endl << frozen_graph_def.ShortDebugString();
+#endif
+
+  // Save frozen graph, or WriteBinaryProto
+  const std::string filename_frozen = tensorflow::strings::StrCat("/tmp/", "vanilla_rnn_frozen.pb");
+  TF_CHECK_OK(tensorflow::WriteTextProto(tensorflow::Env::Default(), filename_frozen, frozen_graph_def));
 
   return 0;
 }

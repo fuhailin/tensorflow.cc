@@ -38,6 +38,10 @@ Status FreezeSavedModel(const SavedModelBundle& saved_model_bundle,
                         std::unordered_set<string>* inputs,
                         std::unordered_set<string>* outputs);
 
+Status AddGraphDefWithOutputsToSavedModelBundle(Session* session,
+    const GraphDef& graph_def, const std::unordered_set<string>& outputs,
+    const string& init_node, SavedModelBundle* saved_model_bundle);
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CC_TOOLS_FREEZE_SAVED_MODEL_H_

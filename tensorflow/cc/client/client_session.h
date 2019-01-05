@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
+#include "tensorflow/core/public/session.h"
 #include "tensorflow/core/public/session_options.h"
 
 namespace tensorflow {
@@ -87,6 +88,12 @@ class ClientSession {
              const std::vector<Operation>& run_outputs,
              std::vector<Tensor>* outputs, RunMetadata* run_metadata) const;
 
+  // Directly pass parameters to Session.Run
+  Status Run(const std::vector<std::pair<string, Tensor>> feeds,
+                          const std::vector<string>& output_tensor_names,
+                          const std::vector<string>& target_node_names,
+                          std::vector<Tensor>* outputs) const;
+
   /// \brief A handle to a subgraph, created with
   /// `ClientSession::MakeCallable()`.
   typedef int64 CallableHandle;
@@ -117,9 +124,11 @@ class ClientSession {
 
  private:
   class Impl;
+  friend class InternalClientSession;
   std::unique_ptr<Impl> impl_;
   Impl* impl() { return impl_.get(); }
   const Impl* impl() const { return impl_.get(); }
+  Session* GetSession();
 };
 
 /// @}

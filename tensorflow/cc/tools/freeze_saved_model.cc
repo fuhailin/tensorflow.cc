@@ -212,6 +212,54 @@ Status FreezeGraphDef(const SavedModelBundle& saved_model_bundle,
   return Status::OK();
 }
 
+
+// Builds a SignatureDef with the provided `inputs` and `outputs`.
+SignatureDef BuildSignatureDef(const std::unordered_set<string>& inputs,
+                               const std::unordered_set<string>& outputs) {
+  SignatureDef signature_def;
+  for (const string& input : inputs) {
+    (*signature_def.mutable_inputs())[input].set_name(input);
+  }
+  for (const string& output : outputs) {
+    (*signature_def.mutable_outputs())[output].set_name(output);
+  }
+  return signature_def;
+}
+
+// Adds `signature_def` to `saved_model_bundle` under `key`.
+void AddSignatureDefToSavedModelBundle(const SignatureDef& signature_def,
+                                       const string& key,
+                                       SavedModelBundle* saved_model_bundle) {
+  MetaGraphDef* meta_graph_def = &saved_model_bundle->meta_graph_def;
+  (*meta_graph_def->mutable_signature_def())[key] = signature_def;
+}
+
+// Adds an initialized session to `saved_model_bundle` using `graph_def` and
+// initializing with `init_node`.
+Status InitializeSavedModelBundleSession(Session* session,
+    const GraphDef& graph_def, const string& init_node,
+    SavedModelBundle* saved_model_bundle) {
+  SessionOptions session_options;
+  saved_model_bundle->session.reset(session);
+  if (!init_node.empty()) {
+    std::vector<Tensor> outputs;
+    return saved_model_bundle->session->Run(
+        /* inputs */ {}, /* output_tensors */ {}, {init_node}, &outputs);
+  }
+  return Status::OK();
+}
+
+// Adds `graph_def` to `saved_model_bundle` and initializes a session with
+// `init_node`.
+Status AddGraphDefToSavedModelBundle(Session* session, const GraphDef& graph_def,
+                                     const string& init_node,
+                                     SavedModelBundle* saved_model_bundle) {
+  MetaGraphDef* meta_graph_def = &saved_model_bundle->meta_graph_def;
+  *meta_graph_def->mutable_graph_def() = graph_def;
+  return InitializeSavedModelBundleSession(session, graph_def, init_node,
+                                           saved_model_bundle);
+}
+
 }  // namespace
 
 Status FreezeSavedModel(const SavedModelBundle& saved_model_bundle,
@@ -222,6 +270,19 @@ Status FreezeSavedModel(const SavedModelBundle& saved_model_bundle,
   TF_RETURN_IF_ERROR(
       FreezeGraphDef(saved_model_bundle, *outputs, frozen_graph_def));
   return Status::OK();
+}
+
+// Adds `graph_def` and `outputs` as the GraphDef and SignatureDef in
+// `saved_model_bundle` and initializes a session with `init_node`.
+Status AddGraphDefWithOutputsToSavedModelBundle(Session* session,
+    const GraphDef& graph_def, const std::unordered_set<string>& outputs,
+    const string& init_node, SavedModelBundle* saved_model_bundle) {
+  SignatureDef signature_def =
+      BuildSignatureDef(std::unordered_set<string>(), outputs);
+  AddSignatureDefToSavedModelBundle(signature_def, "signature_def",
+                                    saved_model_bundle);
+  return AddGraphDefToSavedModelBundle(session, graph_def, init_node,
+                                       saved_model_bundle);
 }
 
 }  // namespace tensorflow

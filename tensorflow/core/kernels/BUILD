@@ -2478,7 +2478,6 @@ tf_kernel_library(
     prefix = "encode_wav_op",
     deps = [
         ":bounds_check",
-        "//tensorflow/core:audio_ops_op_lib",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
@@ -2490,7 +2489,6 @@ tf_kernel_library(
     name = "decode_wav_op",
     prefix = "decode_wav_op",
     deps = [
-        "//tensorflow/core:audio_ops_op_lib",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
@@ -2513,6 +2511,7 @@ tf_cc_tests(
         ":eigen_helpers",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -3110,7 +3109,7 @@ tf_kernel_library(
         "//conditions:default": [],
     }),
     prefix = "sparse_matmul_op",
-    deps = MATH_DEPS + select({
+    deps = MATH_DEPS + [":eigen_contraction_kernel"] + select({
         ":xsmm": [
             "@libxsmm_archive//:xsmm_avx",
         ],
@@ -3696,7 +3695,15 @@ tf_kernel_library(
 
 tf_kernel_library(
     name = "depthwise_conv_op",
-    prefix = "depthwise_conv_op",
+    srcs = ["depthwise_conv_op.cc"],
+    hdrs = ["depthwise_conv_op.h"],
+    gpu_srcs = [
+        "depthwise_conv_op.h",
+        "depthwise_conv_op_gpu.h",
+        "depthwise_conv_op_gpu_double.cu.cc",
+        "depthwise_conv_op_gpu_float.cu.cc",
+        "depthwise_conv_op_gpu_half.cu.cc",
+    ],
     deps = [
         ":bounds_check",
         ":conv_ops",
@@ -4571,6 +4578,7 @@ cc_library(
     srcs = ["sdca_internal.cc"],
     hdrs = ["sdca_internal.h"],
     deps = [
+        ":eigen_contraction_kernel",
         ":loss_updaters",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -5098,7 +5106,6 @@ tf_kernel_library(
     prefix = "spectrogram_op",
     deps = [
         ":spectrogram",
-        "//tensorflow/core:audio_ops_op_lib",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -5216,7 +5223,6 @@ tf_kernel_library(
     prefix = "mfcc_op",
     deps = [
         ":mfcc",
-        "//tensorflow/core:audio_ops_op_lib",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -6878,14 +6884,14 @@ tf_kernel_library(
     name = "summary_kernels",
     srcs = ["summary_kernels.cc"],
     deps = [
-        "//tensorflow/contrib/tensorboard/db:schema",
-        "//tensorflow/contrib/tensorboard/db:summary_db_writer",
-        "//tensorflow/contrib/tensorboard/db:summary_file_writer",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:summary_ops_op_lib",
         "//tensorflow/core/lib/db:sqlite",
+        "//tensorflow/core/summary:schema",
+        "//tensorflow/core/summary:summary_db_writer",
+        "//tensorflow/core/summary:summary_file_writer",
     ],
 )
 

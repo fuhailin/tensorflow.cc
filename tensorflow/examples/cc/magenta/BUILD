@@ -8,6 +8,8 @@ tf_cc_binary(
         "//tensorflow/cc:cc_ops_internal",
         "//tensorflow/cc:client_session",
         "//tensorflow/core:tensorflow",
+        "//tensorflow/cc:queue_runner",
+        "//tensorflow/cc:coordinator",
     ],
     linkopts = ["-g"],
 )

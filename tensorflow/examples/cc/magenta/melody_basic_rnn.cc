@@ -24,6 +24,8 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/training/queue_runner.h"
+#include "tensorflow/core/protobuf/queue_runner.pb.h"
 
 using namespace tensorflow;
 using namespace tensorflow::ops;
@@ -38,6 +40,35 @@ using namespace std;
 #define VOCAB_SIZE 38 // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define TEST_SEQ_LENGTH 1
 #define TRAINING_STEPS 10000
+
+namespace tensorflow {
+
+class InternalClientSession {
+public:
+  static tensorflow::Session* GetSession(tensorflow::ClientSession& session) {
+    return session.GetSession();
+  }
+};
+
+}
+
+QueueRunnerDef BuildQueueRunnerDef(
+    const std::string& queue_name, const std::vector<std::string>& enqueue_ops,
+    const std::string& close_op, const std::string& cancel_op,
+    const std::vector<tensorflow::error::Code>& queue_closed_error_codes) {
+  QueueRunnerDef queue_runner_def;
+  *queue_runner_def.mutable_queue_name() = queue_name;
+  for (const std::string& enqueue_op : enqueue_ops) {
+    *queue_runner_def.mutable_enqueue_op_name()->Add() = enqueue_op;
+  }
+  *queue_runner_def.mutable_close_op_name() = close_op;
+  *queue_runner_def.mutable_cancel_op_name() = cancel_op;
+  for (const auto& error_code : queue_closed_error_codes) {
+    *queue_runner_def.mutable_queue_closed_exception_types()->Add() =
+        error_code;
+  }
+  return queue_runner_def;
+}
 
 int main() {
 
@@ -62,12 +93,6 @@ int main() {
   Output iterator_output = Iterator(root, "iterator1", "", vector<DataType>({DT_STRING}), vector<PartialTensorShape>({{}}));
   Operation make_iterator_op = MakeIterator(root, dataset_output, iterator_output);
   auto iterator_get_next = IteratorGetNext(root, iterator_output, vector<DataType>({DT_STRING}), vector<PartialTensorShape>({{}}));
-  
-  vector<Tensor> dataset_outputs;
-  ClientSession session(root);
-
-  // Run make_iterator_output first
-  TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
 
   // Input for ParseExample  
   Tensor feature_list_dense_missing_assumed_empty(DT_STRING, TensorShape({0}));
@@ -98,9 +123,43 @@ int main() {
                             Const<string>(root, "melody_rnn_training sequence parsing", TensorShape({})),
                             ParseSingleSequenceExample::Attrs().FeatureListDenseTypes(feature_list_dense_types).FeatureListDenseShapes(feature_list_dense_shapes));
 
-  while(session.Run(parse_single_sequence_example.feature_list_dense_values, &dataset_outputs).ok()) {
+  // QueueRunner 
+  constexpr char kCancelOp[] = "cancel0";
+  constexpr char kCloseOp[] = "close0";
+  constexpr char kDequeueOp[] = "dequeue0";
+  constexpr char kDequeueOp1[] = "dequeue0:1";
+  constexpr char kEnqueueOp[] = "enqueue0";
+  constexpr char kQueueName[] = "fifoqueue";
+
+  auto pfq = FIFOQueue(root.WithOpName(kQueueName), {DataType::DT_INT64, DataType::DT_FLOAT});
+  auto enqueue = QueueEnqueue(root.WithOpName(kEnqueueOp), pfq, InputList(parse_single_sequence_example.feature_list_dense_values));
+  auto closequeue = QueueClose(root.WithOpName(kCloseOp), pfq);
+  auto cancelqueue = QueueClose(root.WithOpName(kCancelOp), pfq,
+                            QueueClose::CancelPendingEnqueues(true));
+  // QueueDequeueMany to deque multiple items as a batch
+  auto dequeue = QueueDequeue(root.WithOpName(kDequeueOp), pfq, {DataType::DT_INT64, DataType::DT_FLOAT});
+
+  // Session
+  // Note that ClientSession can extend graph before running, Session cannot.
+  vector<Tensor> dataset_outputs;
+  ClientSession session(root);
+
+  // Run make_iterator_output first
+  TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
+  
+  // Coordinator and QueueRunner
+  QueueRunnerDef queue_runner =
+      BuildQueueRunnerDef(kQueueName, {kEnqueueOp}, kCloseOp, kCancelOp,
+                          {tensorflow::error::Code::OUT_OF_RANGE, tensorflow::error::Code::CANCELLED});  
+  Coordinator coord;
+  std::unique_ptr<QueueRunner> qr;
+  TF_CHECK_OK(QueueRunner::New(queue_runner, &coord, &qr));
+  TF_CHECK_OK(qr->Start(InternalClientSession::GetSession(session)));
+  TF_CHECK_OK(coord.RegisterRunner(std::move(qr)));
+
+  while(session.Run(RunOptions(), {}, {kDequeueOp, kDequeueOp1}, {}, &dataset_outputs).ok()) {
 #ifdef VERBOSE
-    LOG(INFO) << "Print parse_single_sequence_example: " << dataset_outputs[0].DebugString() << ", " << dataset_outputs[1].DebugString();    
+    LOG(INFO) << "Print deque: " << dataset_outputs[0].DebugString() << ", " << dataset_outputs[1].DebugString();    
     // for(int i = 0; i < dataset_outputs[0].NumElements(); i++) {
     //   LOG(INFO) << "Print labels: " << dataset_outputs[0].vec<int64>()(i);
     // }
@@ -344,6 +403,10 @@ int main() {
       step++;
     } // for(int bidx = 0; bidx < seq_batches; bidx++) {
   } // while(step < TRAINING_STEPS) {
+
+  // Stop
+  TF_CHECK_OK(coord.RequestStop());
+  TF_CHECK_OK(coord.Join());
 
   return 0;
 }

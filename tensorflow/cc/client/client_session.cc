@@ -125,13 +125,14 @@ Status ClientSession::Run(const RunOptions& run_options, const FeedType& inputs,
                                target_node_names, outputs, run_metadata);
 }
 
-Status ClientSession::Run(const std::vector<std::pair<string, Tensor>> feeds,
+Status ClientSession::Run(const RunOptions& run_options,
+                          const std::vector<std::pair<string, Tensor>> feeds,
                           const std::vector<string>& output_tensor_names,
                           const std::vector<string>& target_node_names,
                           std::vector<Tensor>* outputs) const {
 
   TF_RETURN_IF_ERROR(impl()->MaybeExtendGraph());
-  return impl()->session_->Run(RunOptions(), feeds, output_tensor_names,
+  return impl()->session_->Run(run_options, feeds, output_tensor_names,
                                target_node_names, outputs, nullptr);
 }
 

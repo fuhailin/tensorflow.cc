@@ -89,9 +89,15 @@ int main() {
   Tensor compression_type("");
   Tensor buffer_size((int64)1024);
   
-  Output dataset_output = TFRecordDataset(root, filenames, compression_type, buffer_size);
+  Output tfrecord_dataset = TFRecordDataset(root, filenames, compression_type, buffer_size);
+  auto shuffle_and_repeat_dataset = ShuffleAndRepeatDataset(root, tfrecord_dataset, 
+                        Cast(root, 5, DT_INT64),                                          // buffer_size
+                        Cast(root, 0, DT_INT64), Cast(root, 0, DT_INT64),                 // seedX
+                        Cast(root, 10, DT_INT64),                                         // count, -1 for infinite repetition
+                        std::initializer_list<DataType>{DT_STRING}, 
+                        std::initializer_list<PartialTensorShape>{{}});
   Output iterator_output = Iterator(root, "iterator1", "", vector<DataType>({DT_STRING}), vector<PartialTensorShape>({{}}));
-  Operation make_iterator_op = MakeIterator(root, dataset_output, iterator_output);
+  Operation make_iterator_op = MakeIterator(root, shuffle_and_repeat_dataset, iterator_output);
   auto iterator_get_next = IteratorGetNext(root, iterator_output, vector<DataType>({DT_STRING}), vector<PartialTensorShape>({{}}));
 
   // Input for ParseExample  

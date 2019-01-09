@@ -22,3 +22,15 @@ tf_cc_binary(
     ],
     linkopts = ["-g"],
 )
+
+tf_cc_binary(
+    name = "generatordataset_test",
+    srcs = ["generatordataset_test.cc"],
+    deps = [
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:tensorflow",
+    ],
+    linkopts = ["-g"],
+)

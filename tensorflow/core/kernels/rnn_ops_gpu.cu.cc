@@ -33,8 +33,6 @@ limitations under the License.
 // #define VERBOSE 1
 // #define TESTING 1
 
-// #define PREFER_EIGEN_DEVICE 1
-
 namespace tensorflow {
 namespace functor {
 
@@ -323,11 +321,6 @@ void VanillaRNNCellFpropWithCUDA(
   }
 
   //  p[t] = np.exp(yhat[t]) / np.sum(np.exp(yhat[t]))#find probabilities for next chars
-#ifdef PREFER_EIGEN_DEVICE
-  Eigen::array<Eigen::DenseIndex, 2> b_shape({1, 1});
-  Eigen::array<Eigen::DenseIndex, 2> bcast({cell.input_size(), 1});
-  p_out.device(d) = y_c_exp / y_c_exp.sum().reshape(b_shape).broadcast(bcast);
-#else
   {
   Tensor sum_tensor;   // temporary variable dh_tensor
   OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
@@ -341,7 +334,6 @@ void VanillaRNNCellFpropWithCUDA(
                                        sum_t.data(),
                                        p_out.data(), p_out.dimension(1), p_out.dimension(0));
   }
-#endif
 
   // Corresponding Python code:
   //  loss += -np.log(p[t][y[t],0])#softmax (cross-entropy loss)
@@ -568,10 +560,7 @@ void VanillaRNNCellBpropWithCUDA(
   Eigen::array<Eigen::IndexPair<int>, 1> product_dims = { Eigen::IndexPair<int>(1, 0) }; // for dot product
   const Eigen::array<Eigen::DenseIndex, 2> matrix_transpose({1, 0}); // For matrix transpose
 
-  //   python: dW_hy += np.dot(dy, h[t].T)
-#ifdef PREFER_EIGEN_DEVICE  
-  d_w_hy_out.device(d) += dy.contract(h.shuffle(matrix_transpose), product_dims);
-#else  
+  //   python: dW_hy += np.dot(dy, h[t].T) 
   {
   // 2D
   dim3 blockSize(32, 32);
@@ -584,7 +573,6 @@ void VanillaRNNCellBpropWithCUDA(
                                        false, true, true);
 
   }
-#endif
 
   //   db_y += dy
   d_b_y_out.device(d) += dy;
@@ -594,9 +582,6 @@ void VanillaRNNCellBpropWithCUDA(
   OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::v(),
                                            TensorShape({h.dimension(0), h.dimension(1)}), &dh_tensor));
   typename TTypes<T>::Matrix dh = dh_tensor.matrix<T>();
-#ifdef PREFER_EIGEN_DEVICE
-  dh.device(d) = w_hy.shuffle(matrix_transpose).contract(dy, product_dims) + dh_next;
-#else
   {
   // 1D
   dim3 blockSize(32);
@@ -608,7 +593,6 @@ void VanillaRNNCellBpropWithCUDA(
                                        dh.data(), dh.dimension(1), dh.dimension(0));
 
   }
-#endif
 
   //   dh_raw = (1 - h[t]**2) * dh
   Tensor dh_raw_tensor;   // temporary variable dh_raw_tensor
@@ -628,9 +612,6 @@ void VanillaRNNCellBpropWithCUDA(
   }
 
   //   dW_xh += np.dot(dh_raw, xhat[t].T)
-#ifdef PREFER_EIGEN_DEVICE  
-  d_w_xh_out.device(d) += dh_raw.contract(x.shuffle(matrix_transpose), product_dims);
-#else
   {
   // 2D
   dim3 blockSize(32, 32);
@@ -643,12 +624,8 @@ void VanillaRNNCellBpropWithCUDA(
                                        false, true, true);
 
   }
-#endif
 
   //   dW_hh += np.dot(dh_raw, h[t-1].T)
-#ifdef PREFER_EIGEN_DEVICE
-  d_w_hh_out.device(d) += dh_raw.contract(h_prev.shuffle(matrix_transpose), product_dims);
-#else
   {
   // 2D
   dim3 blockSize(32, 32);
@@ -661,15 +638,11 @@ void VanillaRNNCellBpropWithCUDA(
                                        false, true, true);
 
   }
-#endif
 
   //   db_h += dh_raw
   d_b_h_out.device(d) += dh_raw;
 
   //   dh_next = np.dot(self.W_hh.T, dh_raw)
-#ifdef PREFER_EIGEN_DEVICE
-  dh_next.device(d) = w_hh.shuffle(matrix_transpose).contract(dh_raw, product_dims);  
-#else
   {
   // 2D
   dim3 blockSize(32, 32);
@@ -682,7 +655,6 @@ void VanillaRNNCellBpropWithCUDA(
                                        true, false, false);
 
   }
-#endif  
 }
 
 }  // namespace

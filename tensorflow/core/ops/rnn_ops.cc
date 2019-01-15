@@ -125,4 +125,41 @@ REGISTER_OP("VanillaRNNGrad")
 Computes the Vanilla RNN back propagation for all time step.
 )doc");
 
+REGISTER_OP("RNNSoftmaxLossHGrad")
+    .Input("h: T")
+    .Input("labels: Tlabels")
+    .Input("w_y: T")
+    .Input("b_y: T")
+    .Output("loss: T")
+    .Output("h_grad: T")
+    .Output("dw_y: T")
+    .Output("db_y: T")
+    .Attr("T: {half, bfloat16, float, double}")
+    .Attr("Tlabels: {int32, int64} = DT_INT64")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle h;
+      ShapeHandle labels;      
+      ShapeHandle w_y;
+      ShapeHandle b_y;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 3, &h));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &labels));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 2, &w_y));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &b_y));
+
+      DimensionHandle time_len = c->Dim(h, 0);
+      DimensionHandle batch_size = c->Dim(h, 1);
+      DimensionHandle input_size = c->Dim(w_y, 0);
+      DimensionHandle num_units = c->Dim(h, 2);
+
+      c->set_output(0, c->Matrix(time_len, batch_size));
+      c->set_output(1, c->MakeShape({time_len, batch_size, num_units}));
+      c->set_output(2, c->Matrix(input_size, num_units));
+      c->set_output(3, c->Vector(input_size));
+      
+      return Status::OK();
+    })
+    .Doc(R"doc(
+Computes the softmax loss and h_grad for (time_len x batch_size), also return dw_y and db_y.
+)doc");
+
 }  // end namespace tensorflow

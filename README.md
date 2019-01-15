@@ -16,4 +16,8 @@
 <p>4) C++ implementation of Magenta melody basic_rnn module</p>
 <p>cp -r tensorflow/examples/cc/magenta/data /tmp/</p>
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_basic_rnn</p>
+<p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_lstm_train</p>
+<br/>
+<p>5) GeneratorDataset</p>
+<p>bazel run -c opt //tensorflow/examples/cc/dataset:generatordataset_test</p> 
 <br/>

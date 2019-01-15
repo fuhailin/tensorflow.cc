@@ -6956,6 +6956,7 @@ cc_library(
     name = "rnn",
     deps = [
         ":rnn_ops",
+        ":rnn_softmaxloss_hgrad_op",
     ],
 )
 
@@ -6964,6 +6965,38 @@ tf_kernel_library(
     prefix = "rnn_ops",
     deps = [
         ":bounds_check",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/kernels:eigen_helpers",
+        "//third_party/eigen3",
+    ],
+)
+
+tf_kernel_library(
+    name = "blas_gemm",
+    srcs = [
+        "blas_gemm.cc",
+    ],
+    hdrs = ["blas_gemm.h"],
+    gpu_srcs = [
+        "blas_gemm.h",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/kernels:eigen_contraction_kernel",
+        "//tensorflow/core/kernels:eigen_helpers",
+        "//third_party/eigen3",
+    ],
+)
+
+tf_kernel_library(
+    name = "rnn_softmaxloss_hgrad_op",
+    prefix = "rnn_softmaxloss_hgrad_op",
+    deps = [
+        ":bounds_check",
+        ":blas_gemm",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core/kernels:eigen_helpers",

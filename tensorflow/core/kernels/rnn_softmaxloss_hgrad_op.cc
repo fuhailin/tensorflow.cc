@@ -24,12 +24,19 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
+#if GOOGLE_CUDA
+#define EIGEN_USE_GPU
+#endif  // GOOGLE_CUDA
+
 #include "tensorflow/core/kernels/rnn_softmaxloss_hgrad_op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
+
+// #define VERBOSE 1
+// #define TESTING 1
 
 namespace tensorflow {
 
@@ -191,6 +198,27 @@ class SliceHelper {
 
 }  // namespace
 
+namespace functor {
+#define DECLARE_GPU_SPEC(T)                                              \
+  template <>                                                            \
+  void TensorZero<GPUDevice, T>::operator()(const GPUDevice& d,          \
+                                            typename TTypes<T>::Flat t); \
+                                                                         \
+  extern template struct TensorZero<GPUDevice, T>;                       \
+                                                                         \
+  template <>                                                            \
+  void TensorUnalignedZero<GPUDevice, T>::operator()(                    \
+      const GPUDevice& d, typename TTypes<T>::UnalignedFlat t);          \
+                                                                         \
+  extern template struct TensorUnalignedZero<GPUDevice, T>;
+
+DECLARE_GPU_SPEC(float);
+DECLARE_GPU_SPEC(Eigen::half);
+DECLARE_GPU_SPEC(int64);
+#undef DECLARE_GPU_SPEC
+}  // end namespace functor
+
+
 template <typename Device, typename T, typename Index>
 class RNNSoftmaxLossHGradOp : public OpKernel {
  public:
@@ -249,33 +277,31 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
     Tensor* db_y_tensor;
     OP_REQUIRES_OK(context, context->allocate_output("db_y", db_y_shape, &db_y_tensor));
 
-    SliceHelper<Device, T> slicer(context);
+    Tensor* p_out = nullptr; // p
+    TensorShape p_shape({time_len, batch_size, input_size});
+    OP_REQUIRES_OK(context, context->allocate_output("p", p_shape, &p_out));
 
-    // TODO: this is bad
-#if !GOOGLE_CUDA
+    SliceHelper<Device, T> slicer(context);
     SliceHelper<Device, Index> slicer2(context);
-#endif
 
     for(int t = 0; t < time_len; t++) {  
       const Tensor h_sub_tensor = slicer.InputSlice(h_tensor, t, "h_sub");
-#if GOOGLE_CUDA      
-      const Tensor labels_sub_tensor = slicer.InputSliceFromTwoDims(labels, t, "labels_sub");
-#else
       const Tensor labels_sub_tensor = slicer2.InputSliceFromTwoDims(labels, t, "labels_sub");
-#endif      
+  
       Tensor loss_out_tensor = slicer.OutputSliceFromTwoDims(loss_out, t, "loss_sub");
       Tensor hgrad_tensor = slicer.OutputSlice(h_grad, t, "h_grad_sub");
+      Tensor p_out_tensor = slicer.OutputSlice(p_out, t, "p_sub");
 
       functor::SparseXentFunctor<Device, T, Index> functor;
       functor(context, context->eigen_device<Device>(), h_sub_tensor.matrix<T>(),
               labels_sub_tensor.vec<Index>(), w_y_tensor.matrix<T>(), b_y_tensor.vec<T>(), 
               logits.matrix<T>(), scratch.vec<T>(), backprop.matrix<T>(),
-              loss_out_tensor.vec<T>(), hgrad_tensor.matrix<T>(), dw_y_tensor->matrix<T>(), db_y_tensor->vec<T>());
+              p_out_tensor.matrix<T>(), loss_out_tensor.vec<T>(), 
+              hgrad_tensor.matrix<T>(), dw_y_tensor->matrix<T>(), db_y_tensor->vec<T>());
 
       slicer.FinishTimeStep();
-#if !GOOGLE_CUDA
       slicer2.FinishTimeStep();
-#endif
+
     }
   }
 };
@@ -289,7 +315,7 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
                   typename TTypes<Index>::ConstVec labels,
                   typename TTypes<T>::ConstMatrix w_y, typename TTypes<T>::ConstVec b_y, 
                   typename TTypes<T>::Matrix logits, typename TTypes<T>::Vec scratch, typename TTypes<T>::Matrix backprop, 
-                  typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
+                  typename TTypes<T>::Matrix p, typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
                   typename TTypes<T>::Matrix dw_y, typename TTypes<T>::Vec db_y) {
     // const int kBatchDim = 0;
     const int kClassDim = 1;
@@ -311,6 +337,11 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
 
     TensorBlasGemm<CPUDevice, T, false>::compute(
         ctx, d, false, true, 1.f, h, w_y, 1.f, logits);
+#ifdef VERBOSE
+  // LOG(INFO) << __FUNCTION__ << "----------------------------h:" << std::endl << h;
+  // LOG(INFO) << __FUNCTION__ << "----------------------------w_y:" << std::endl << w_y;
+  // LOG(INFO) << __FUNCTION__ << "----------------------------logits:" << std::endl << logits;
+#endif
     
 // These arrays are used to reduce along the class dimension, and broadcast
 // the resulting value to all classes.
@@ -346,6 +377,10 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
     // scratch = sum(exp(logits - max_logits)) along classes.
     To32Bit(scratch).device(d) = To32Bit(backprop).exp().sum(along_class);
 
+    Eigen::array<Eigen::DenseIndex, 2> b_shape({batch_size, 1});
+    Eigen::array<Eigen::DenseIndex, 2> bcast({1, num_classes});
+    p.device(d) = backprop.exp() / scratch.reshape(b_shape).broadcast(bcast);
+
     //  sum(-labels *
     //     ((logits - max_logits) - log(sum(exp(logits - max_logits)))))
     //  along classes
@@ -366,6 +401,10 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
     To32Bit(backprop).device(d) =
         To32Bit(backprop).generate(sparse_xent_grad_gen);
 
+#ifdef VERBOSE
+  // LOG(INFO) << __FUNCTION__ << "----------------------------loss:" << std::endl << loss;
+  // LOG(INFO) << __FUNCTION__ << "----------------------------backprop:" << std::endl << backprop;
+#endif
     // dW_y += np.dot(dy, h.T), for a batch
     
     // CPU Version
@@ -388,7 +427,11 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
     // To32Bit(h_grad).device(d) = To32Bit(backprop).contract(To32Bit(w_y), contract_pairs3);
     TensorBlasGemm<CPUDevice, T, false>::compute(
         ctx, d, false, false, 1.f, const_backprop, w_y, 0.f, h_grad);
-
+#ifdef VERBOSE
+  // LOG(INFO) << __FUNCTION__ << "----------------------------dw_y:" << std::endl << dw_y;
+  // LOG(INFO) << __FUNCTION__ << "----------------------------db_y:" << std::endl << db_y;
+  // LOG(INFO) << __FUNCTION__ << "----------------------------h_grad:" << std::endl << h_grad;
+#endif
   }
 };
 
@@ -441,7 +484,8 @@ namespace functor {
 
 DECLARE_GPU_SPEC(float);
 DECLARE_GPU_SPEC(Eigen::half);
-// DECLARE_GPU_SPEC(double);
+DECLARE_GPU_SPEC(int64);
+DECLARE_GPU_SPEC(int32);
 #undef DECLARE_GPU_SPEC
 }  // end namespace functor
 

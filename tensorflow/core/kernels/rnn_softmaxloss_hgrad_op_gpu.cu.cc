@@ -62,11 +62,32 @@ strict_cast<Eigen::half, float>(float t) {
   return FloatToHalf()(t);
 }
 
+// template <>
+// __host__ __device__ EIGEN_STRONG_INLINE int64
+// strict_cast<int64, float>(float t) {
+//   return static_cast<int64>(t);
+// }
+
 }  // namespace
 
 // Partial specialization for a GPUDevice, that uses the Eigen implementation
 // from XentEigenImpl.
 namespace functor {
+
+#define REGISTER_TENSOR_FUNCTOR(T)                                                      \
+  template struct TensorZero<GPUDevice, T>;                                    \
+  template struct TensorUnalignedZero<GPUDevice, T>;                           \
+  template struct TensorCopy<GPUDevice, T>;                                    \
+  template struct TensorCopyUnaligned<GPUDevice, T>;                           \
+  template struct TensorCopyToUnaligned<GPUDevice, T>;                         \
+  template struct TensorAdd<GPUDevice, T>; 
+
+REGISTER_TENSOR_FUNCTOR(float)
+REGISTER_TENSOR_FUNCTOR(Eigen::half)
+REGISTER_TENSOR_FUNCTOR(int64)
+REGISTER_TENSOR_FUNCTOR(int32)
+#undef REGISTER_TENSOR_FUNCTOR
+
 template <typename T>
 struct TensorZero<GPUDevice, T> {
   void operator()(const GPUDevice& d, typename TTypes<T>::Flat t) {
@@ -86,7 +107,7 @@ struct SparseXentFunctor<GPUDevice, T, Index> {
   void operator()(OpKernelContext* ctx, const GPUDevice& d, typename TTypes<T>::ConstMatrix h, typename TTypes<Index>::ConstVec labels,
                   typename TTypes<T>::ConstMatrix w_y, typename TTypes<T>::ConstVec b_y, 
                   typename TTypes<T>::Matrix logits, typename TTypes<T>::Vec scratch, typename TTypes<T>::Matrix backprop,
-                  typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
+                  typename TTypes<T>::Matrix p, typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
                   typename TTypes<T>::Matrix dw_y, typename TTypes<T>::Vec db_y) {
     // const int kBatchDim = 0;
     const int kClassDim = 1;
@@ -142,6 +163,10 @@ struct SparseXentFunctor<GPUDevice, T, Index> {
 
     // scratch = sum(exp(logits - max_logits)) along classes.
     To32Bit(scratch).device(d) = To32Bit(backprop).exp().sum(along_class);
+
+    Eigen::array<Eigen::DenseIndex, 2> b_shape({batch_size, 1});
+    Eigen::array<Eigen::DenseIndex, 2> bcast({1, num_classes});
+    p.device(d) = backprop.exp() / scratch.reshape(b_shape).broadcast(bcast);
 
     //  sum(-labels *
     //     ((logits - max_logits) - log(sum(exp(logits - max_logits)))))
@@ -201,18 +226,6 @@ struct SparseXentFunctor<GPUDevice, T, Index> {
 REGISTER(int32)
 REGISTER(int64)
 #undef REGISTER
-
-#define REGISTER_TENSOR_FUNCTOR(T)                                                      \
-  template struct functor::TensorZero<GPUDevice, T>;                                    \
-  template struct functor::TensorUnalignedZero<GPUDevice, T>;                           \
-  template struct functor::TensorCopy<GPUDevice, T>;                                    \
-  template struct functor::TensorCopyUnaligned<GPUDevice, T>;                           \
-  template struct functor::TensorCopyToUnaligned<GPUDevice, T>;                         \
-  template struct functor::TensorAdd<GPUDevice, T>; 
-
-REGISTER_TENSOR_FUNCTOR(float)
-REGISTER_TENSOR_FUNCTOR(Eigen::half)
-#undef REGISTER_TENSOR_FUNCTOR
 
 }  // end namespace tensorflow
 

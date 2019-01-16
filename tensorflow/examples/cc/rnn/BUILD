@@ -25,3 +25,22 @@ tf_cc_binary(
     ],
     linkopts = ["-g"],
 )
+
+tf_cc_binary(
+    name = "lstm_ops_test",
+    srcs = [
+            "lstm_ops_test.cc", 
+            "lstm/lstm_ops.cc",    
+            "lstm/lstm_ops.h",
+           ],
+    deps = [
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/cc:queue_runner",
+        "//tensorflow/cc:coordinator",
+        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
+    ],
+    linkopts = ["-g"],
+)

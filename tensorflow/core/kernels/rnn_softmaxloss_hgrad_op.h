@@ -215,7 +215,7 @@ struct SparseXentFunctor {
   void operator()(OpKernelContext* ctx, const Device& d, typename TTypes<T>::ConstMatrix h, typename TTypes<Index>::ConstVec labels,
                   typename TTypes<T>::ConstMatrix w_y, typename TTypes<T>::ConstVec b_y, 
                   typename TTypes<T>::Matrix logits, typename TTypes<T>::Vec scratch, typename TTypes<T>::Matrix backprop,
-                  typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
+                  typename TTypes<T>::Matrix p, typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
                   typename TTypes<T>::Matrix dw_y, typename TTypes<T>::Vec db_y);
 };
 

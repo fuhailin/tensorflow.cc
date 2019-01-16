@@ -134,6 +134,7 @@ REGISTER_OP("RNNSoftmaxLossHGrad")
     .Output("h_grad: T")
     .Output("dw_y: T")
     .Output("db_y: T")
+    .Output("p: T")
     .Attr("T: {half, bfloat16, float, double}")
     .Attr("Tlabels: {int32, int64} = DT_INT64")
     .SetShapeFn([](InferenceContext* c) {
@@ -155,6 +156,7 @@ REGISTER_OP("RNNSoftmaxLossHGrad")
       c->set_output(1, c->MakeShape({time_len, batch_size, num_units}));
       c->set_output(2, c->Matrix(input_size, num_units));
       c->set_output(3, c->Vector(input_size));
+      c->set_output(4, c->MakeShape({time_len, batch_size, input_size}));
       
       return Status::OK();
     })

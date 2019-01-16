@@ -37,8 +37,8 @@ using namespace std;
 // #define TESTING 1
 
 #define NUM_UNIT 128             // HIDDEN_SIZE
-#define TIME_LEN 6               // NUM_STEPS, For training_melodies.tfrecord, it's (403 / BATCH_SIZE)
-#define BATCH_SIZE 64            // 
+#define TIME_LEN 384               // NUM_STEPS, For training_melodies.tfrecord, it's (403 / BATCH_SIZE)
+#define BATCH_SIZE 1            // 
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define TRAINING_STEPS 10000
 
@@ -330,7 +330,7 @@ int main() {
                               );
 
   // Gradient
-  auto lr = Cast(root, 0.03, DT_FLOAT);
+  auto lr = Cast(root, 0.06, DT_FLOAT);
 
   // alternative of ApplyAdagrad
   auto apply_w = ApplyAdagradTrick(root, w, ada_w, lr, block_lstm_grad.w_grad);
@@ -383,8 +383,9 @@ int main() {
                               &outputs));
 
       if(step % 100 == 0) {
+#ifdef VERBOSE  
         LOG(INFO) << "Print step: " << step << ", loss: " << outputs[0].DebugString();
-
+#endif
         Eigen::Tensor<float, 0, Eigen::RowMajor> total_loss = outputs[0].flat<float>().sum();
         LOG(INFO) << "Print step: " << step << ", total_loss: " << total_loss();
       }

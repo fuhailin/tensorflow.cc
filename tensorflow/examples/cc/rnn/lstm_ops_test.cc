@@ -33,15 +33,15 @@ using namespace tensorflow::ops;
 using namespace tensorflow::ops::internal;
 using namespace std;
 
-#define VERBOSE 1
-#define TESTING 1
+// #define VERBOSE 1
+// #define TESTING 1
 
 const char test_content[] = "hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world";
 #define NUM_UNIT 16             // HIDDEN_SIZE
-#define TIME_LEN 6              // NUM_STEPS
-#define BATCH_SIZE 10           // 
+#define TIME_LEN 20             // NUM_STEPS
+#define BATCH_SIZE 1            // 
 #define INPUT_SIZE 8            // "helo wrd"
-#define TRAINING_STEPS 1001
+#define TRAINING_STEPS 10001
 #define SEQ_LENGTH TIME_LEN * BATCH_SIZE
 #define TEST_TIME_LEN 1
 #define TEST_SEQ_LENGTH TEST_TIME_LEN * BATCH_SIZE
@@ -258,6 +258,10 @@ int main() {
                               b_y);
 
 
+  // Top 1
+  auto topk_input = Placeholder(root, DT_FLOAT, Placeholder::Shape({INPUT_SIZE}));
+  auto topk = TopK(root, topk_input, Cast(root, 1, DT_INT32));
+
   ClientSession session(root);
 
   // Initialize variables
@@ -277,11 +281,9 @@ int main() {
         // Batch input with batch size of TEST_SEQ_LENGTH
         tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
         auto e_2d = x_tensor.shaped<float, 2>({TEST_SEQ_LENGTH, INPUT_SIZE});
-        char test_str[TEST_SEQ_LENGTH];
+        char test_str[TEST_SEQ_LENGTH + 1]; 
+        test_str[TEST_SEQ_LENGTH] = '\0';
         std::copy_n(&test_content[content_index], TEST_SEQ_LENGTH, test_str);
-  // #ifdef VERBOSE  
-        LOG(INFO) << __FUNCTION__ << "----------------Evaluate test_str: " << test_str;  
-  // #endif
 
         // Prepare y, y value make no sense in the evaluation process
         tensorflow::Tensor y_tensor(tensorflow::DT_INT64, tensorflow::TensorShape({TEST_TIME_LEN, BATCH_SIZE}));
@@ -296,7 +298,9 @@ int main() {
         typename TTypes<float>::Matrix eval_cs_prev_t = eval_cs_prev_tensor.matrix<float>();
         eval_cs_prev_t.setZero();
 
-        for(int i = 0; i < 1; i++) {
+        for(int i = 0; i < 20; i++) 
+        {
+          LOG(INFO) << __FUNCTION__ << "----------------Evaluate test_str: " << test_str;  
 
           {
              // batch one-hot processing
@@ -328,12 +332,26 @@ int main() {
                                               block_lstm_eval.h, block_lstm_eval.cs}, 
                                   {}, 
                                   &outputs));
-  #ifdef VERBOSE  
+#ifdef VERBOSE  
           LOG(INFO) << "Print rnn_softmax_loss_hgrad, step: " << step << ", p: " << std::endl << DetailedDebugString(outputs[1]); 
-  #endif
+#endif
 
           // update test_str for x_tensor
-          
+          for(int i = 0; i < BATCH_SIZE; i++) {
+            vector<Tensor> outputs_topk;
+            Tensor topk_input_tensor(DT_FLOAT, TensorShape({INPUT_SIZE}));
+            topk_input_tensor.flat<float>() = outputs[1].SubSlice(i).flat<float>();
+            TF_CHECK_OK(session.Run({{topk_input, topk_input_tensor}}, 
+                                    {topk.values, topk.indices}, 
+                                    {}, 
+                                    &outputs_topk));
+#ifdef VERBOSE  
+            LOG(INFO) << "Print topk, step: " << step << ", debug: " << outputs_topk[0].DebugString() << ", " << outputs_topk[1].DebugString();
+#endif
+            int index = outputs_topk[1].scalar<int>()();
+            auto search = index_vocab_dic.find(index);
+            test_str[i] = search->second;
+          }
 
           // update eval_h_prev_tensor
           CHECK(eval_h_prev_tensor.CopyFrom(outputs[2].Slice(0, 1), {outputs[2].dim_size(1), outputs[2].dim_size(2)}));
@@ -412,8 +430,9 @@ int main() {
 
       if(step % 100 == 0) 
       {
-        // LOG(INFO) << "Print step: " << step << ", loss: " << std::endl << DetailedDebugString(outputs[0]);
-
+#ifdef VERBOSE  
+        LOG(INFO) << "Print step: " << step << ", loss: " << std::endl << DetailedDebugString(outputs[0]);
+#endif
         Eigen::Tensor<float, 0, Eigen::RowMajor> total_loss = outputs[0].flat<float>().sum();
         LOG(INFO) << "Print step: " << step << ", total_loss: " << total_loss();
       }

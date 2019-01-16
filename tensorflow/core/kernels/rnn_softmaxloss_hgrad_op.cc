@@ -281,10 +281,17 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
     TensorShape p_shape({time_len, batch_size, input_size});
     OP_REQUIRES_OK(context, context->allocate_output("p", p_shape, &p_out));
 
+    const Device& device = context->eigen_device<Device>();
+
+    functor::TensorZero<Device, T>()(device, h_grad->flat<T>());
+    functor::TensorZero<Device, T>()(device, dw_y_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, db_y_tensor->flat<T>());
+
     SliceHelper<Device, T> slicer(context);
     SliceHelper<Device, Index> slicer2(context);
 
-    for(int t = 0; t < time_len; t++) {  
+    // Reverse order
+    for(int t = time_len - 1; t >= 0; t--) {  
       const Tensor h_sub_tensor = slicer.InputSlice(h_tensor, t, "h_sub");
       const Tensor labels_sub_tensor = slicer2.InputSliceFromTwoDims(labels, t, "labels_sub");
   
@@ -293,7 +300,7 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
       Tensor p_out_tensor = slicer.OutputSlice(p_out, t, "p_sub");
 
       functor::SparseXentFunctor<Device, T, Index> functor;
-      functor(context, context->eigen_device<Device>(), h_sub_tensor.matrix<T>(),
+      functor(context, device, h_sub_tensor.matrix<T>(),
               labels_sub_tensor.vec<Index>(), w_y_tensor.matrix<T>(), b_y_tensor.vec<T>(), 
               logits.matrix<T>(), scratch.vec<T>(), backprop.matrix<T>(),
               p_out_tensor.matrix<T>(), loss_out_tensor.vec<T>(), 
@@ -337,11 +344,6 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
 
     TensorBlasGemm<CPUDevice, T, false>::compute(
         ctx, d, false, true, 1.f, h, w_y, 1.f, logits);
-#ifdef VERBOSE
-  // LOG(INFO) << __FUNCTION__ << "----------------------------h:" << std::endl << h;
-  // LOG(INFO) << __FUNCTION__ << "----------------------------w_y:" << std::endl << w_y;
-  // LOG(INFO) << __FUNCTION__ << "----------------------------logits:" << std::endl << logits;
-#endif
     
 // These arrays are used to reduce along the class dimension, and broadcast
 // the resulting value to all classes.
@@ -401,10 +403,6 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
     To32Bit(backprop).device(d) =
         To32Bit(backprop).generate(sparse_xent_grad_gen);
 
-#ifdef VERBOSE
-  // LOG(INFO) << __FUNCTION__ << "----------------------------loss:" << std::endl << loss;
-  // LOG(INFO) << __FUNCTION__ << "----------------------------backprop:" << std::endl << backprop;
-#endif
     // dW_y += np.dot(dy, h.T), for a batch
     
     // CPU Version
@@ -427,11 +425,7 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
     // To32Bit(h_grad).device(d) = To32Bit(backprop).contract(To32Bit(w_y), contract_pairs3);
     TensorBlasGemm<CPUDevice, T, false>::compute(
         ctx, d, false, false, 1.f, const_backprop, w_y, 0.f, h_grad);
-#ifdef VERBOSE
-  // LOG(INFO) << __FUNCTION__ << "----------------------------dw_y:" << std::endl << dw_y;
-  // LOG(INFO) << __FUNCTION__ << "----------------------------db_y:" << std::endl << db_y;
-  // LOG(INFO) << __FUNCTION__ << "----------------------------h_grad:" << std::endl << h_grad;
-#endif
+
   }
 };
 

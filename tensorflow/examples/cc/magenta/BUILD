@@ -32,3 +32,21 @@ tf_cc_binary(
     ],
     linkopts = ["-g"],
 )
+
+tf_cc_binary(
+    name = "melody_cudnn_rnn",
+    srcs = [
+            "melody_cudnn_rnn.cc", 
+            "cudnn_rnn/cudnn_rnn_ops.cc",    
+            "cudnn_rnn/cudnn_rnn_ops.h",
+           ],
+    deps = [
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/cc:queue_runner",
+        "//tensorflow/cc:coordinator",
+    ],
+    linkopts = ["-g"],
+)

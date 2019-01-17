@@ -105,6 +105,25 @@ class SliceHelper {
     }
   }
 
+
+  const Tensor InputSliceKeepTwoDim(const Tensor& t, int pos, const string& name) {
+    Tensor res = UnalignedSliceKeepTwoDim(t, pos);
+    if (res.IsAligned()) {
+      return res;
+    } else {
+      return AlignTensor(res, name);
+    }
+  }
+
+  const Tensor InputSliceKeepOneDim(const Tensor& t, int pos, const string& name) {
+    Tensor res = UnalignedSliceKeepOneDim(t, pos);
+    if (res.IsAligned()) {
+      return res;
+    } else {
+      return AlignTensor(res, name);
+    }
+  }
+
   // Slice through an output tensor. This may copy unaligned slices, and
   // schedule copying back on destruction.
   Tensor OutputSlice(Tensor* t, int pos, const string& name) {
@@ -120,6 +139,28 @@ class SliceHelper {
 
   Tensor OutputSliceFromTwoDims(Tensor* t, int pos, const string& name) {
     Tensor res = UnalignedSliceFromTwoDims(*t, pos);
+    if (res.IsAligned()) {
+      return res;
+    } else {
+      Tensor aligned = AlignTensor(res, name);
+      copy_out_.emplace_back(res, aligned);
+      return aligned;
+    }
+  }
+
+  Tensor OutputSliceKeepTwoDim(Tensor* t, int pos, const string& name) {
+    Tensor res = UnalignedSliceKeepTwoDim(*t, pos);
+    if (res.IsAligned()) {
+      return res;
+    } else {
+      Tensor aligned = AlignTensor(res, name);
+      copy_out_.emplace_back(res, aligned);
+      return aligned;
+    }
+  }
+
+  Tensor OutputSliceKeepOneDim(Tensor* t, int pos, const string& name) {
+    Tensor res = UnalignedSliceKeepOneDim(*t, pos);
     if (res.IsAligned()) {
       return res;
     } else {
@@ -158,6 +199,20 @@ class SliceHelper {
     Tensor res;
     // CHECK should never fail here, since the number of elements must match
     CHECK(res.CopyFrom(t.Slice(pos, pos + 1), {t.dim_size(1)}));
+    return res;
+  }
+
+  Tensor UnalignedSliceKeepTwoDim(const Tensor& t, int pos) const {
+    Tensor res;
+    // CHECK should never fail here, since the number of elements must match
+    CHECK(res.CopyFrom(t.Slice(pos, pos + 1), {1, t.dim_size(1)}));
+    return res;
+  }
+
+  Tensor UnalignedSliceKeepOneDim(const Tensor& t, int pos) const {
+    Tensor res;
+    // CHECK should never fail here, since the number of elements must match
+    CHECK(res.CopyFrom(t.Slice(pos, pos + 1), {1}));
     return res;
   }
 
@@ -308,7 +363,6 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
 
       slicer.FinishTimeStep();
       slicer2.FinishTimeStep();
-
     }
   }
 };

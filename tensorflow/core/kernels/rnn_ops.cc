@@ -15,6 +15,8 @@ limitations under the License.
 
 //
 // rnn ops, Vanilla RNN for now
+// TODO: to comply with @tf_export("RegisterGradient")
+//
 // Author: Rock Zhuang
 // Date  : Dec 20, 2018
 // 

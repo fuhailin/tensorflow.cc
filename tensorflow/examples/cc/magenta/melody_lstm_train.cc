@@ -36,11 +36,15 @@ using namespace std;
 // #define VERBOSE 1
 // #define TESTING 1
 
+// Adjustable parameters
 #define NUM_UNIT 128             // HIDDEN_SIZE
-#define TIME_LEN 384               // NUM_STEPS, For training_melodies.tfrecord, it's (403 / BATCH_SIZE)
-#define BATCH_SIZE 1            // 
-#define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
+#define TIME_LEN 384             // NUM_STEPS
+#define BATCH_SIZE 10            // 
 #define TRAINING_STEPS 10000
+
+// Don't change
+#define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
+#define SEQ_LENGTH TIME_LEN * BATCH_SIZE
 
 #define LIBRARY_FILENAME "/../../../../../../tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
 
@@ -330,7 +334,7 @@ int main() {
                               );
 
   // Gradient
-  auto lr = Cast(root, 0.06, DT_FLOAT);
+  auto lr = Cast(root, 0.03, DT_FLOAT);
 
   // alternative of ApplyAdagrad
   auto apply_w = ApplyAdagradTrick(root, w, ada_w, lr, block_lstm_grad.w_grad);
@@ -357,20 +361,45 @@ int main() {
     typename TTypes<float>::Matrix cs_prev_t = cs_prev_tensor.matrix<float>();
     cs_prev_t.setZero();
 
+    Tensor cs_grad_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
+    typename TTypes<float, 3>::Tensor cs_grad_t = cs_grad_tensor.tensor<float, 3>();
+    cs_grad_t.setZero();
+
     // Train
     {
-      // {384, 38} to {6, 64, 38}
+      // Note that every input batch in BATCH_SIZE is from a different example
       Tensor x_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
-      CHECK(x_tensor.CopyFrom(dataset_outputs[1].Slice(0, 384), TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE})));
+      {
+        auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, INPUT_SIZE});
+
+        for (int i = 0; i < TIME_LEN; i++) {
+          Eigen::DSizes<Eigen::DenseIndex, 2> indices_dataset(i, 0);
+          Eigen::DSizes<Eigen::DenseIndex, 2> sizes_dataset(1, INPUT_SIZE);
+          Eigen::Tensor<float, 2, Eigen::RowMajor> mat = dataset_outputs[1].matrix<float>().slice(indices_dataset, sizes_dataset);
+
+          for(int b = 0; b < BATCH_SIZE; b++) {            
+            // set e_2d
+            Eigen::DSizes<Eigen::DenseIndex, 2> indices(i * BATCH_SIZE + b, 0);
+            Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+            e_2d.slice(indices, sizes) = mat;
+          }
+        }
+      }
 
       // y
       Tensor y_tensor(DT_INT64, TensorShape({TIME_LEN, BATCH_SIZE}));
-      CHECK(y_tensor.CopyFrom(dataset_outputs[0].Slice(1, 385), TensorShape({TIME_LEN, BATCH_SIZE})));
-      
-      // Always zero?
-      Tensor cs_grad_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
-      typename TTypes<float, 3>::Tensor cs_grad_t = cs_grad_tensor.tensor<float, 3>();
-      cs_grad_t.setZero();
+      {
+        typename TTypes<int64>::Vec y_t = y_tensor.shaped<int64, 1>({SEQ_LENGTH});
+
+        // Prepare y
+        for (int i = 0; i < TIME_LEN; i++) {
+          int64 label = dataset_outputs[0].vec<int64>()(i + 1); // i + 1 for the next one
+
+          for(int b = 0; b < BATCH_SIZE; b++) {
+            y_t(i * BATCH_SIZE + b) = label;
+          }
+        }
+      }
 
       // Run 
       vector<Tensor> outputs;
@@ -394,9 +423,7 @@ int main() {
     step++;
   }
 
-  // Update h_prev_tensor and cs_prev_tensor, 
-  // when one (timelen, batch_size, num_inputs) doesn't cover all test content
-
+  // Update h_prev_tensor and cs_prev_tensor, cs_grad_tensor for the next BATCH
 
   // Stop
   TF_CHECK_OK(coord.RequestStop());

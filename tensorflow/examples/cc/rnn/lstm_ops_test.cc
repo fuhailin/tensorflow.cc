@@ -37,14 +37,19 @@ using namespace std;
 // #define TESTING 1
 
 const char test_content[] = "hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world hello world";
+
+// Adjustable parameters
 #define NUM_UNIT 16             // HIDDEN_SIZE
 #define TIME_LEN 20             // NUM_STEPS
-#define BATCH_SIZE 1            // 
-#define INPUT_SIZE 8            // "helo wrd"
+#define BATCH_SIZE 4            // 
 #define TRAINING_STEPS 10001
+
+// Don't change
+#define INPUT_SIZE 8            // "helo wrd"
 #define SEQ_LENGTH TIME_LEN * BATCH_SIZE
 #define TEST_TIME_LEN 1
-#define TEST_SEQ_LENGTH TEST_TIME_LEN * BATCH_SIZE
+#define TEST_BATCH_SIZE 1            // 
+#define TEST_SEQ_LENGTH TEST_TIME_LEN * TEST_BATCH_SIZE
 
 #define LIBRARY_FILENAME "/../../../../../../tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
 
@@ -92,23 +97,6 @@ string DetailedDebugString(const Tensor &tensor) {
 }
 
 #ifdef TESTING
-
-// Constructs a flat tensor with 'vals'.
-template <typename T>
-Tensor AsTensor(gtl::ArraySlice<T> vals) {
-  Tensor ret(DataTypeToEnum<T>::value, {static_cast<int64>(vals.size())});
-  std::copy_n(vals.data(), vals.size(), ret.flat<T>().data());
-  return ret;
-}
-
-// Constructs a tensor of "shape" with values "vals".
-template <typename T>
-Tensor AsTensor(gtl::ArraySlice<T> vals, const TensorShape& shape) {
-  Tensor ret;
-  CHECK(ret.CopyFrom(AsTensor(vals), shape));
-  return ret;
-}
-
 void test() {
 
 }
@@ -220,7 +208,7 @@ int main() {
                               block_lstm.h,
                               cs_grad,
                               rnn_softmax_loss_hgrad.h_grad,
-                              false             // use_peephole
+                              false                                            // use_peephole
                               );
 
   // Gradient
@@ -232,13 +220,12 @@ int main() {
   auto apply_w_y = ApplyAdagradTrick(root, w_y, ada_w_y, lr, rnn_softmax_loss_hgrad.dw_y);
   auto apply_b_y = ApplyAdagradTrick(root, b_y, ada_b_y, lr, rnn_softmax_loss_hgrad.db_y);
 
-
   // BlockLSTM and RNNSoftmaxLossHGrad For Eval
   // Placeholders
-  auto x_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
-  auto y_eval = Placeholder(root, DT_INT64, Placeholder::Shape({TEST_TIME_LEN, BATCH_SIZE}));
-  auto cs_prev_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({BATCH_SIZE, NUM_UNIT})); // (batch_size, cell_size)
-  auto h_prev_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({BATCH_SIZE, NUM_UNIT}));
+  auto x_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_TIME_LEN, TEST_BATCH_SIZE, INPUT_SIZE}));
+  auto y_eval = Placeholder(root, DT_INT64, Placeholder::Shape({TEST_TIME_LEN, TEST_BATCH_SIZE}));
+  auto cs_prev_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_BATCH_SIZE, NUM_UNIT})); // (batch_size, cell_size)
+  auto h_prev_eval = Placeholder(root, DT_FLOAT, Placeholder::Shape({TEST_BATCH_SIZE, NUM_UNIT}));
 
   // BlockLSTM
   auto block_lstm_eval = BlockLSTM(root, 
@@ -279,22 +266,22 @@ int main() {
     if(step % 100 == 0) 
     {
         // Batch input with batch size of TEST_SEQ_LENGTH
-        tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
+        tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_TIME_LEN, TEST_BATCH_SIZE, INPUT_SIZE}));
         auto e_2d = x_tensor.shaped<float, 2>({TEST_SEQ_LENGTH, INPUT_SIZE});
         char test_str[TEST_SEQ_LENGTH + 1]; 
         test_str[TEST_SEQ_LENGTH] = '\0';
         std::copy_n(&test_content[content_index], TEST_SEQ_LENGTH, test_str);
 
         // Prepare y, y value make no sense in the evaluation process
-        tensorflow::Tensor y_tensor(tensorflow::DT_INT64, tensorflow::TensorShape({TEST_TIME_LEN, BATCH_SIZE}));
+        tensorflow::Tensor y_tensor(tensorflow::DT_INT64, tensorflow::TensorShape({TEST_TIME_LEN, TEST_BATCH_SIZE}));
         typename TTypes<int64>::Matrix y_t = y_tensor.matrix<int64>(); 
         y_t.setZero();
 
-        tensorflow::Tensor eval_h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({BATCH_SIZE, NUM_UNIT}));
+        tensorflow::Tensor eval_h_prev_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_BATCH_SIZE, NUM_UNIT}));
         typename TTypes<float>::Matrix eval_h_prev_t = eval_h_prev_tensor.matrix<float>();
         eval_h_prev_t.setZero();
 
-        Tensor eval_cs_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+        Tensor eval_cs_prev_tensor(DT_FLOAT, TensorShape({TEST_BATCH_SIZE, NUM_UNIT}));
         typename TTypes<float>::Matrix eval_cs_prev_t = eval_cs_prev_tensor.matrix<float>();
         eval_cs_prev_t.setZero();
 
@@ -337,10 +324,10 @@ int main() {
 #endif
 
           // update test_str for x_tensor
-          for(int i = 0; i < BATCH_SIZE; i++) {
+          for(int i = 0; i < TEST_BATCH_SIZE; i++) {
             vector<Tensor> outputs_topk;
             Tensor topk_input_tensor(DT_FLOAT, TensorShape({INPUT_SIZE}));
-            topk_input_tensor.flat<float>() = outputs[1].SubSlice(i).flat<float>();
+            topk_input_tensor.flat<float>() = outputs[1].SubSlice(0).SubSlice(i).unaligned_flat<float>();
             TF_CHECK_OK(session.Run({{topk_input, topk_input_tensor}}, 
                                     {topk.values, topk.indices}, 
                                     {}, 
@@ -376,13 +363,13 @@ int main() {
       typename TTypes<float, 3>::Tensor cs_grad_t = cs_grad_tensor.tensor<float, 3>();
       cs_grad_t.setZero();
 
+      // Note that every input batch in BATCH_SIZE is from a different example
       Tensor x_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
       {
-
          // batch one-hot processing
         auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, INPUT_SIZE});
         int x_index = content_index;
-        for (int i = 0; i < SEQ_LENGTH; i++) {
+        for (int i = 0; i < TIME_LEN; i++) {
           // Ref: tensor_test.cc
 
           // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
@@ -395,12 +382,17 @@ int main() {
           int vocab_index = search->second;
           m(0, vocab_index) = 1.0f;
 
-          // set e_2d
-          Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
-          Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
-          e_2d.slice(indices, sizes) = m;
+          for(int b = 0; b < BATCH_SIZE; b++) {
+            // set e_2d
+            Eigen::DSizes<Eigen::DenseIndex, 2> indices(i * BATCH_SIZE + b, 0);
+            Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+            e_2d.slice(indices, sizes) = m;
+          }
         }
       }
+#ifdef VERBOSE  
+      // LOG(INFO) << "-------------------------------x_tensor: " << std::endl << DetailedDebugString(x_tensor);
+#endif
 
       // y
       Tensor y_tensor(DT_INT64, TensorShape({TIME_LEN, BATCH_SIZE}));
@@ -409,15 +401,20 @@ int main() {
 
         // Prepare y
         int y_index = content_index + 1;
-        for (int i = 0; i < SEQ_LENGTH; i++) {
+        for (int i = 0; i < TIME_LEN; i++) {
           char test_char = test_content[y_index++];
           auto search = vocab_index_dic.find(test_char);
           int vocab_index = search->second;
 
-          y_t(i) = vocab_index;
+          for(int b = 0; b < BATCH_SIZE; b++) {
+            y_t(i * BATCH_SIZE + b) = vocab_index;
+          }
         }
       }
-      
+#ifdef VERBOSE  
+      // LOG(INFO) << "-------------------------------y_tensor: " << std::endl << DetailedDebugString(y_tensor);
+#endif
+
       // Run 
       vector<Tensor> outputs;
       TF_CHECK_OK(session.Run({{x, x_tensor}, {y, y_tensor}, {h_prev, h_prev_tensor}, {cs_prev, cs_prev_tensor}, 

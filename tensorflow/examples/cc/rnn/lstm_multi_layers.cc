@@ -317,8 +317,7 @@ int main() {
   // Initialize variables
   TF_CHECK_OK(session.Run({assign_w_layer1, assign_b_layer1, assign_w_layer2, assign_b_layer2, assign_w_y, assign_b_y}, 
                           nullptr));
-  TF_CHECK_OK(session.Run({assign_ada_w_layer1, assign_ada_b_layer1, assign_ada_w_layer2, assign_ada_b_layer2, assign_ada_w_y, assign_ada_b_y,
-                                  assign_h_grad_layer1}, 
+  TF_CHECK_OK(session.Run({assign_ada_w_layer1, assign_ada_b_layer1, assign_ada_w_layer2, assign_ada_b_layer2, assign_ada_w_y, assign_ada_b_y}, 
                           nullptr));
 
   // loop

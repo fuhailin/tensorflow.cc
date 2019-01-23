@@ -113,6 +113,30 @@ Status SoftmaxCrossEntropyWithLogitsGrad(const Scope& scope,
 REGISTER_GRADIENT_OP("SoftmaxCrossEntropyWithLogits",
                      SoftmaxCrossEntropyWithLogitsGrad);
 
+Status SparseSoftmaxCrossEntropyWithLogitsGrad(const Scope& scope, const Operation& op,
+                   const std::vector<Output>& grad_inputs,
+                   std::vector<Output>* grad_outputs) {
+  // The outputs of the network are at input index 0.
+  // auto logits = op.input(0);
+  // The "truth" labels are at index 1.
+  auto softmax_grad = op.output(1);
+
+  // The loss is the output at index 0, and backprop is the output at index 1.
+  auto grad_loss = grad_inputs[0];
+  // auto grad_grad = grad_inputs[1];
+
+  auto prevent_gradient = PreventGradient(scope, softmax_grad, 
+                                         PreventGradient::Message("Currently there is no way to take the second derivative of sparse_softmax_cross_entropy_with_logits"));
+
+  auto grad = BroadcastMul(scope, grad_loss, prevent_gradient);
+
+  grad_outputs->push_back(grad);
+  grad_outputs->push_back(NoGradient());
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("SparseSoftmaxCrossEntropyWithLogits", SparseSoftmaxCrossEntropyWithLogitsGrad);
+
 Status LogSoftmaxGrad(const Scope& scope, const Operation& op,
                       const std::vector<Output>& grad_inputs,
                       std::vector<Output>* grad_outputs) {

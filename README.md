@@ -27,4 +27,3 @@
 <p>6) CNN</p>
 <p>cp -r tensorflow/examples/cc/cnn/mnist/data /tmp/</p>
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist</p> 
-<br/>

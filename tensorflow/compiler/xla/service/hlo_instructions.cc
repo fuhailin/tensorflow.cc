@@ -383,6 +383,15 @@ HloInstructionProto HloAllReduceInstruction::ToProto() const {
   return proto;
 }
 
+bool HloAllReduceInstruction::IsNoop() const {
+  for (auto replica_group : replica_groups()) {
+    if (replica_group.replica_ids().size() != 1) {
+      return false;
+    }
+  }
+  return !all_reduce_id();
+}
+
 std::vector<string> HloAllReduceInstruction::ExtraAttributesToStringImpl(
     const HloPrintOptions& options) const {
   std::vector<string> result =
@@ -1700,6 +1709,10 @@ std::vector<string> HloConvolutionInstruction::ExtraAttributesToStringImpl(
                                             convolution_dimension_numbers_)));
   if (feature_group_count_ != 1) {
     extra.push_back(StrCat("feature_group_count=", feature_group_count_));
+  }
+
+  if (batch_group_count_ != 1) {
+    extra.push_back(StrCat("batch_group_count=", batch_group_count_));
   }
 
   string precision_config_string = PrecisionConfigToString(precision_config_);

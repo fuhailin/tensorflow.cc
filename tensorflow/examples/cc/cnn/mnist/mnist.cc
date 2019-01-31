@@ -45,7 +45,7 @@ using namespace std;
 #define EVAL_FREQUENCY 100     // Number of steps between evaluations.
 #define DECAY_RATE 0.95f
 #define MOMENTUM 0.9f
-#define BASE_LEARNING_RATE 0.1f
+#define BASE_LEARNING_RATE 0.01f
 
 // Not to change
 #define IMAGE_SIZE 28
@@ -63,12 +63,36 @@ using namespace std;
 const int DEFAULT_GRAPH_SEED = 87654321;
 const int MAXINT32 = std::pow(2, 31) - 1;
 
-int get_seed1(int seed) {
+static int get_seed1(int seed) {
   return DEFAULT_GRAPH_SEED;
 }
 
-int get_seed2(int seed) {
+static int get_seed2(int seed) {
   return seed % MAXINT32;
+}
+
+
+// dropout
+  // Python Code {
+    // keep_prob = 1 - rate
+    // # uniform [keep_prob, 1.0 + keep_prob)
+    // random_tensor = keep_prob
+    // random_tensor += random_ops.random_uniform(
+    //     noise_shape, seed=seed, dtype=x.dtype)
+    // # 0. if [keep_prob, 1.0) and 1. if [1.0, 1.0 + keep_prob)
+    // binary_tensor = math_ops.floor(random_tensor)
+    // ret = math_ops.divide(x, keep_prob) * binary_tensor
+  // }  
+static Status Dropout(const Scope& scope, const Input x, const int rate, Output& dropout) {
+  float keep_prob = 1 - rate;
+  auto random_value5 = RandomUniform(scope, Shape(scope, x), DT_FLOAT, RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_tensor = Add(scope, random_value5, Const<float>(scope, {keep_prob}));
+  auto binary_tensor = Floor(scope, random_tensor);
+  auto result = Multiply(scope, Div(scope, x, Const<float>(scope, {keep_prob})), binary_tensor);
+
+  dropout = result.z;
+
+  return scope.status();
 }
 
 int main() {
@@ -94,13 +118,24 @@ int main() {
 
   Status status = session.Run({}, {inputs_decode_compressed, labels_decode_compressed}, {}, &outputs);
   if(status.ok()) {
+    // inputs
     std::string inputs_str = outputs[0].scalar<string>()();
-    Eigen::Tensor<float, 4, Eigen::RowMajor> inputs_t = inputs.tensor<float, 4>();
-    std::copy_n(inputs_str.data() + INPUTS_HEADER_BYTES, NUM_IMAGES * IMAGE_SIZE * IMAGE_SIZE * NUM_CHANNELS, inputs_t.data());
+    const char *inputs_str_data = inputs_str.c_str();
 
+    float* inputs_data = inputs.tensor<float, 4>().data();
+    int count = NUM_IMAGES * IMAGE_SIZE * IMAGE_SIZE * NUM_CHANNELS;
+    for(int i = 0; i < count; i++) {
+      inputs_data[i] = (unsigned char)(*(inputs_str_data + INPUTS_HEADER_BYTES + i));
+    }
+
+    // labels
     std::string labels_str = outputs[1].scalar<string>()();
-    Eigen::Tensor<int64, 1, Eigen::RowMajor> labels_t = labels.vec<int64>();
-    std::copy_n(labels_str.data() + LABELS_HEADER_BYTES, NUM_IMAGES, labels_t.data());
+    const char *labels_str_data = labels_str.c_str();
+
+    int64* labels_data = labels.vec<int64>().data();
+    for(int i = 0; i < NUM_IMAGES; i++) {
+      labels_data[i] = (unsigned char)(*(labels_str_data + INPUTS_HEADER_BYTES + i));
+    }
   } else {
     LOG(INFO) << "Print: status: " << status;
 
@@ -229,7 +264,7 @@ int main() {
   LOG(INFO) << "Node building status: " << scope.status();
 
   // reshape
-  auto reshape1 = Reshape(scope, max_pool_2, {64, 3136}); // TODO: get shape dynamically
+  auto reshape1 = Reshape(scope, max_pool_2, {BATCH_SIZE, s1});
   LOG(INFO) << "Node building status: " << scope.status();
 
   // 
@@ -237,17 +272,15 @@ int main() {
   LOG(INFO) << "Node building status: " << scope.status();
 
   // dropout
-  float dropout_rate = 0.5;
+  Output dropout_output;
+  if (!Dropout(scope, hidden, 0.5f, dropout_output).ok()) {
+    LOG(ERROR) << "-----------------------------------------status: " << scope.status();
 
-  float keep_prob = 1 - dropout_rate;
-  auto random_value5 = RandomNormal(scope, Shape(scope, hidden), DT_FLOAT, RandomNormal::Seed(SEED));
-  auto random_tensor = Add(scope, Const<float>(scope, {keep_prob}), random_value5);
-  auto binary_tensor = Floor(scope, random_tensor);
-  auto dropout_ret = Multiply(scope, Div(scope, hidden, Const<float>(scope, {keep_prob})), binary_tensor);
-  // dropout done 
+    return scope.status().code();
+  }
 
   // model output
-  auto logits = Add(scope, MatMul(scope, dropout_ret, fc2_weights), fc2_biases);
+  auto logits = Add(scope, MatMul(scope, dropout_output, fc2_weights), fc2_biases);
   // Convnet Model ends
 
   // loss

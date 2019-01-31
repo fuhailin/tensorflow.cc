@@ -25,5 +25,5 @@
 <p>bazel run -c opt //tensorflow/examples/cc/dataset:generatordataset_test</p> 
 <br/>
 <p>6) CNN</p>
-<p>cp -r tensorflow/examples/cc/cnn/mnist/data /tmp/</p>
+<p>sh tensorflow/examples/cc/cnn/mnist/data/download_data.sh</p>
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist</p> 

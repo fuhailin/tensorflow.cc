@@ -132,6 +132,10 @@ int main() {
     std::string labels_str = outputs[1].scalar<string>()();
     const char *labels_str_data = labels_str.c_str();
 
+    // for(int i = 0; i < NUM_IMAGES; i++) {
+    //   std::cout << (int)labels_str_data[i] << ", ";
+    // }
+
     int64* labels_data = labels.vec<int64>().data();
     for(int i = 0; i < NUM_IMAGES; i++) {
       labels_data[i] = (unsigned char)(*(labels_str_data + INPUTS_HEADER_BYTES + i));

@@ -340,6 +340,72 @@ REGISTER_OP("_FusedConv2D")
 expected to create these operators.
 )doc");
 
+// --------------------------------------------------------------------------
+// RKZConv2D
+REGISTER_OP("RKZConv2D")
+    .Input("input: T")
+    .Input("filter: T")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, double}")
+    .Attr("stride: int")
+    .Attr("padding: int")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle input, filter;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 4, &input));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 4, &filter));
+
+      int32 stride;
+      int32 padding;
+      TF_RETURN_IF_ERROR(c->GetAttr("stride", &stride));
+      TF_RETURN_IF_ERROR(c->GetAttr("padding", &padding));
+
+      // (W - F + 2P) / S + 1
+      DimensionHandle w1 = c->Dim(input, 1); 
+      DimensionHandle f1 = c->Dim(filter, 0); 
+      DimensionHandle w2 = c->Dim(input, 2); 
+      DimensionHandle f2 = c->Dim(filter, 1);       
+      int out_rows = (c->Value(w1) - c->Value(f1) + 2 * padding) / stride + 1;
+      int out_cols = (c->Value(w2) - c->Value(f2) + 2 * padding) / stride + 1; 
+
+      ShapeHandle output = c->MakeShape({c->Dim(input, 0), out_rows, out_cols, c->Dim(filter, 3)});
+
+      c->set_output(0, output);
+      return Status::OK();
+    });
+
+REGISTER_OP("RKZConv2DGradFilter")
+    .Input("input: T")
+    .Input("filter_dims: int32")
+    .Input("out_backprop: T")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, double}")
+    .Attr("stride: int")
+    .Attr("padding: int")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle s;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(1, &s));
+      TF_RETURN_IF_ERROR(c->WithRank(s, 4, &s));
+      c->set_output(0, s);
+      return Status::OK();
+    });
+
+REGISTER_OP("RKZConv2DGradInput")
+    .Input("input_dims: int32")
+    .Input("filter: T")
+    .Input("out_backprop: T")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, double}")
+    .Attr("stride: int")
+    .Attr("padding: int")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle s;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &s));
+      TF_RETURN_IF_ERROR(c->WithRank(s, 4, &s));
+      c->set_output(0, s);
+      return Status::OK();
+    });
+
+// --------------------------------------------------------------------------
 namespace {
 
 Status CommonFusedConvCalculations(InferenceContext* c, bool has_resize) {

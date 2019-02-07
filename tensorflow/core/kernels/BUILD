@@ -3892,6 +3892,7 @@ cc_library(
         ":topk_op",
         ":xent_op",
         ":rnn",
+        ":rkz_conv_ops",
     ],
 )
 
@@ -7198,6 +7199,18 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+    ],
+)
+
+tf_kernel_library(
+    name = "rkz_conv_ops",
+    prefix = "rkz_conv_ops",
+    deps = [
+        ":bounds_check",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/kernels:eigen_helpers",
+        "//third_party/eigen3",
     ],
 )
 

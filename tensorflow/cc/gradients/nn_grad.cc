@@ -261,6 +261,48 @@ Status Conv2DGrad(const Scope& scope, const Operation& op,
 }
 REGISTER_GRADIENT_OP("Conv2D", Conv2DGrad);
 
+
+Status RKZConv2DGrad(const Scope& scope, const Operation& op,
+                  const std::vector<Output>& grad_inputs,
+                  std::vector<Output>* grad_outputs) {
+#if 1
+  int stride = 1;
+  int padding = 2;
+
+  auto attrs = op.output(0).node()->attrs();
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "stride", &stride));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "padding", &padding));
+  
+  auto dx_1 = RKZConv2DGradInput(scope, Shape(scope, op.input(0)), op.input(1),
+                                  grad_inputs[0], stride, padding);
+  grad_outputs->push_back(dx_1);
+
+  auto dx_2 =
+      RKZConv2DGradFilter(scope, op.input(0), Shape(scope, op.input(1)),
+                           grad_inputs[0], stride, padding);
+  grad_outputs->push_back(dx_2);
+#else // For debugging
+  string data_format = "NHWC";
+  string paddingstr = "SAME";
+  std::vector<int32> strides({1, 1, 1, 1});
+  bool use_cudnn_on_gpu = true;
+
+  auto dx_1 = Conv2DBackpropInput(scope, Shape(scope, op.input(0)), op.input(1),
+                                  grad_inputs[0], strides, paddingstr,
+                                  Conv2DBackpropInput::DataFormat(data_format)
+                                      .UseCudnnOnGpu(use_cudnn_on_gpu));
+  grad_outputs->push_back(dx_1);
+  auto dx_2 =
+      Conv2DBackpropFilter(scope, op.input(0), Shape(scope, op.input(1)),
+                           grad_inputs[0], strides, paddingstr,
+                           Conv2DBackpropFilter::DataFormat(data_format)
+                               .UseCudnnOnGpu(use_cudnn_on_gpu));
+  grad_outputs->push_back(dx_2);
+#endif  
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("RKZConv2D", RKZConv2DGrad);
+
 Status MaxPoolGradHelper(const Scope& scope, const Operation& op,
                          const std::vector<Output>& grad_inputs,
                          std::vector<Output>* grad_outputs) {

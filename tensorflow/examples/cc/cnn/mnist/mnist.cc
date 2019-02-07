@@ -50,12 +50,18 @@ using namespace std;
 // Not to change
 #define IMAGE_SIZE 28
 #define NUM_CHANNELS 1
-#define PIXEL_DEPTH 255
+#define PIXEL_DEPTH 255.0f
 #define NUM_LABELS 10
 #define INPUTS_HEADER_BYTES 16
 #define LABELS_HEADER_BYTES 8
 #define NUM_IMAGES (BATCH_SIZE * BATCHES_PER_EPOCHS)         // 55000 images max
 
+
+static string DetailedDebugString(const Tensor &tensor) {
+  return strings::StrCat("Tensor<type: ", DataTypeString(tensor.dtype()),
+                         " shape: ", tensor.shape().DebugString(),
+                         " values: ", tensor.SummarizeValue(-1, true), ">");
+}
 
 //
 // Python code: seed1, seed2 = random_seed.get_seed(seed)
@@ -125,7 +131,10 @@ int main() {
     float* inputs_data = inputs.tensor<float, 4>().data();
     int count = NUM_IMAGES * IMAGE_SIZE * IMAGE_SIZE * NUM_CHANNELS;
     for(int i = 0; i < count; i++) {
-      inputs_data[i] = (unsigned char)(*(inputs_str_data + INPUTS_HEADER_BYTES + i));
+      float data = (unsigned char)(*(inputs_str_data + INPUTS_HEADER_BYTES + i));
+      data = (data - (PIXEL_DEPTH / 2.0f)) / PIXEL_DEPTH;
+
+      inputs_data[i] = data;
     }
 
     // labels
@@ -138,7 +147,7 @@ int main() {
 
     int64* labels_data = labels.vec<int64>().data();
     for(int i = 0; i < NUM_IMAGES; i++) {
-      labels_data[i] = (unsigned char)(*(labels_str_data + INPUTS_HEADER_BYTES + i));
+      labels_data[i] = (unsigned char)(*(labels_str_data + LABELS_HEADER_BYTES + i));
     }
   } else {
     LOG(INFO) << "Print: status: " << status;

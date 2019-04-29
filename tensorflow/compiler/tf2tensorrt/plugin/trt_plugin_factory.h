@@ -34,6 +34,13 @@ namespace tensorrt {
 
 class PluginFactoryTensorRT : public nvinfer1::IPluginFactory {
  public:
+  // TODO(b/131313301): Delete this when IPluginFactory is fixed upstream.
+  // IPluginFactory defines virtual methods and no virtual destructor. To avoid
+  // a non-virtual-dtor error, we need to add a virtual destructor here. Do not
+  // use a pointer to IPluginFactory because deleting through such a pointer
+  // results in undefined behavior.
+  virtual ~PluginFactoryTensorRT() {}
+
   // TODO(aaroey): this static method has to be inlined to make the singleton a
   // unique global symbol. Find a way to fix it.
   static PluginFactoryTensorRT* GetInstance() {
@@ -69,7 +76,7 @@ class PluginFactoryTensorRT : public nvinfer1::IPluginFactory {
   // TODO(jie): Owned plugin should be associated with different sessions;
   //            should really hand ownership of plugins to resource management;
   std::vector<std::unique_ptr<PluginTensorRT>> owned_plugins_;
-  tensorflow::mutex instance_m_;
+  mutex instance_m_;
 };
 
 class TrtPluginRegistrar {
@@ -89,9 +96,8 @@ class TrtPluginRegistrar {
                                         construct_func)              \
   REGISTER_TRT_PLUGIN_UNIQ(ctr, name, deserialize_func, construct_func)
 #define REGISTER_TRT_PLUGIN_UNIQ(ctr, name, deserialize_func, construct_func) \
-  static ::tensorflow::tensorrt::TrtPluginRegistrar trt_plugin_registrar##ctr \
-      TF_ATTRIBUTE_UNUSED = ::tensorflow::tensorrt::TrtPluginRegistrar(       \
-          name, deserialize_func, construct_func)
+  static TrtPluginRegistrar trt_plugin_registrar##ctr TF_ATTRIBUTE_UNUSED =   \
+      TrtPluginRegistrar(name, deserialize_func, construct_func)
 
 }  // namespace tensorrt
 }  // namespace tensorflow

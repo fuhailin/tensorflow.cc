@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import os
 import sys
+import traceback
 
 # TODO(mdan): Use a custom logger class.
 from tensorflow.python.platform import tf_logging as logging
@@ -46,8 +47,11 @@ def set_verbosity(level, alsologtostdout=False):
   more in-depth debugging.
 
   There are two controls that control the logging verbosity:
+
    * The `set_verbosity` function
+
    * The `AUTOGRAPH_VERBOSITY` environment variable
+
   `set_verbosity` takes precedence over the environment variable.
 
   For example:
@@ -110,19 +114,34 @@ def get_verbosity():
   global verbosity_level
   if verbosity_level is not None:
     return verbosity_level
-  return os.getenv(VERBOSITY_VAR_NAME, DEFAULT_VERBOSITY)
+  return int(os.getenv(VERBOSITY_VAR_NAME, DEFAULT_VERBOSITY))
 
 
 def has_verbosity(level):
   return get_verbosity() >= level
 
 
+def _output_to_stdout(msg, *args, **kwargs):
+  print(msg % args)
+  if kwargs.get('exc_info', False):
+    traceback.print_exc()
+
+
+def error(level, msg, *args, **kwargs):
+  if has_verbosity(level):
+    logging.error(msg, *args, **kwargs)
+    if echo_log_to_stdout:
+      _output_to_stdout('ERROR: ' + msg, *args, **kwargs)
+
+
 def log(level, msg, *args, **kwargs):
   if has_verbosity(level):
     logging.info(msg, *args, **kwargs)
     if echo_log_to_stdout:
-      print(msg % args)
+      _output_to_stdout(msg, *args, **kwargs)
 
 
-def warn_first_n(msg, *args, **kwargs):
-  logging.log_first_n(logging.WARNING, msg, *args, **kwargs)
+def warn(msg, *args, **kwargs):
+  logging.warn(msg, *args, **kwargs)
+  if echo_log_to_stdout:
+    _output_to_stdout('WARNING: ' + msg, *args, **kwargs)

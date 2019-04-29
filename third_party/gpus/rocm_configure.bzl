@@ -194,6 +194,10 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/8.0.0/include/")
     inc_dirs.append("/opt/rocm/hcc/lib/clang/8.0.0/include")
 
+    # Support hcc based off clang 9.0.0, included in ROCm2.2
+    inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/9.0.0/include/")
+    inc_dirs.append("/opt/rocm/hcc/lib/clang/9.0.0/include")
+
     inc_entries = []
     for inc_dir in inc_dirs:
         inc_entries.append("  cxx_builtin_include_directory: \"%s\"" % inc_dir)
@@ -231,6 +235,42 @@ def _amdgpu_targets(repository_ctx):
         if amdgpu_target[:3] != "gfx" or not amdgpu_target[3:].isdigit():
             auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
     return amdgpu_targets
+
+def _hipcc_env(repository_ctx):
+    """Returns the environment variable string for hipcc.
+
+    Args:
+        repository_ctx: The repository context.
+
+    Returns:
+        A string containing environment variables for hipcc.
+    """
+    hipcc_env = ""
+    for name in [
+        "HIP_CLANG_PATH",
+        "DEVICE_LIB_PATH",
+        "HIP_VDI_HOME",
+        "HIPCC_VERBOSE",
+        "HIPCC_COMPILE_FLAGS_APPEND",
+    ]:
+        if name in repository_ctx.os.environ:
+            hipcc_env = (hipcc_env + " " + name + "=\"" +
+                         repository_ctx.os.environ[name].strip() + "\";")
+    return hipcc_env.strip()
+
+def _crosstool_verbose(repository_ctx):
+    """Returns the environment variable value CROSSTOOL_VERBOSE.
+
+    Args:
+        repository_ctx: The repository context.
+
+    Returns:
+        A string containing value of environment variable CROSSTOOL_VERBOSE.
+    """
+    name = "CROSSTOOL_VERBOSE"
+    if name in repository_ctx.os.environ:
+        return repository_ctx.os.environ[name].strip()
+    return "0"
 
 def _cpu_value(repository_ctx):
     """Returns the name of the host operating system.
@@ -605,7 +645,6 @@ def _create_local_rocm_repository(repository_ctx):
         outs = rocm_lib_outs,
     ))
 
-
     # Set up BUILD file for rocm/
     _tpl(
         repository_ctx,
@@ -656,6 +695,12 @@ def _create_local_rocm_repository(repository_ctx):
         {
             "%{cpu_compiler}": str(cc),
             "%{hipcc_path}": "/opt/rocm/bin/hipcc",
+            "%{hipcc_env}": _hipcc_env(repository_ctx),
+            "%{hip_runtime_path}": "/opt/rocm/hip/lib",
+            "%{hip_runtime_library}": "hip_hcc",
+            "%{hcc_runtime_path}": "/opt/rocm/hcc/lib",
+            "%{hcc_runtime_library}": "mcwamp",
+            "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
             "%{rocm_amdgpu_targets}": ",".join(
                 ["\"%s\"" % c for c in rocm_config.amdgpu_targets],

@@ -24,6 +24,7 @@ py_library(
         "ast_util.py",
         "cfg.py",
         "compiler.py",
+        "errors.py",
         "inspect_utils.py",
         "origin_info.py",
         "parser.py",
@@ -94,8 +95,18 @@ py_test(
     deps = [
         ":pyct",
         "//tensorflow/python:client_testlib",
+        "//tensorflow/python/autograph/pyct/testing:test_modules",
         "@gast_archive//:gast",
     ],
+)
+
+sh_test(
+    name = "inspect_utils_test_par",
+    srcs = ["inspect_utils_test.sh"],
+    data = [
+        ":inspect_utils_test.par",
+    ],
+    tags = ["no_oss"],
 )
 
 py_test(
@@ -145,6 +156,7 @@ py_test(
     deps = [
         ":pyct",
         "//tensorflow/python:client_testlib",
+        "@absl_py//absl/testing:parameterized",
         "@gast_archive//:gast",
     ],
 )

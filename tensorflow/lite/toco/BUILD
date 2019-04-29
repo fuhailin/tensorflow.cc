@@ -133,6 +133,7 @@ cc_library(
 cc_library(
     name = "model_cmdline_flags",
     srcs = [
+        "args.cc",
         "model_cmdline_flags.cc",
     ],
     hdrs = [
@@ -282,9 +283,11 @@ cc_library(
         ":runtime",
         ":toco_port",
         ":tooling_util",
+        "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/lite/kernels/internal:quantization_util",
         "//tensorflow/lite/kernels/internal:strided_slice_logic",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -309,7 +312,7 @@ cc_library(
         "toco_tooling.h",
     ],
     copts = tf_copts() + select({
-        "//tensorflow:darwin": ["-DTOCO_SUPPORT_PORTABLE_PROTOS=0"],
+        "//tensorflow:macos": ["-DTOCO_SUPPORT_PORTABLE_PROTOS=0"],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
@@ -334,7 +337,7 @@ cc_library(
         "//tensorflow/lite/toco/tflite:export",
         "//tensorflow/lite/toco/tflite:import",
     ] + select({
-        # Placeholder for internal darwin rule.
+        # Placeholder for internal macOS rule.
         "//conditions:default": [],
     }),
 )
@@ -377,6 +380,7 @@ cc_library(
         ":types_proto_cc",
         "//tensorflow/core:lib",
         "//tensorflow/lite/kernels/internal:types",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_googlesource_code_re2//:re2",
         "@protobuf_archive//:protobuf_headers",
@@ -474,6 +478,19 @@ tf_cc_test(
     ],
     deps = [
         ":toco_port",
+        "//tensorflow/lite/testing:util",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+tf_cc_test(
+    name = "model_cmdline_flags_test",
+    srcs = [
+        "model_cmdline_flags_test.cc",
+    ],
+    deps = [
+        ":model_cmdline_flags",
+        ":model_flags_proto_cc",
         "//tensorflow/lite/testing:util",
         "@com_google_googletest//:gtest",
     ],

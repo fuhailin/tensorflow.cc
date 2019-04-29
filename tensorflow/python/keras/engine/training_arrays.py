@@ -29,12 +29,12 @@ from tensorflow.python.eager import context
 from tensorflow.python.framework import errors
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import callbacks as cbks
-from tensorflow.python.keras.engine import distributed_training_utils
+from tensorflow.python.keras.distribute import distributed_training_utils
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.utils.generic_utils import make_batches
 from tensorflow.python.keras.utils.generic_utils import slice_arrays
+from tensorflow.python.keras.utils.mode_keys import ModeKeys
 from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.training.mode_keys import ModeKeys
 
 try:
   from scipy.sparse import issparse  # pylint: disable=g-import-not-at-top
@@ -140,10 +140,14 @@ def model_iteration(model,
   if mode == ModeKeys.TRAIN:
     _print_train_info(inputs, val_inputs, steps_per_epoch, verbose)
 
-  # Enter DistributionStrategy scope.
+  # Enter tf.distribute.Strategy scope.
   if model._distribution_strategy:
-    scope = model._distribution_strategy.scope()
+    scope = distributed_training_utils.distributed_scope(
+        strategy=model._distribution_strategy,
+        learning_phase=(1 if mode == ModeKeys.TRAIN else 0))
     scope.__enter__()
+
+  model._update_sample_weight_modes(sample_weights=sample_weights)
 
   # Get step function and loop type.
   f = _make_execution_function(model, mode)
@@ -164,6 +168,9 @@ def model_iteration(model,
     ins = inputs
   else:
     ins = _prepare_feed_values(model, inputs, targets, sample_weights, mode)
+    # `ins` is a function when a distribute strategy is used in Eager mode.  In
+    # that case `is_dataset` is True.  The code branches that have requirements
+    # about the type of `ins` do not trigger in the distributed case.
   if not is_dataset:
     num_samples_or_steps = _get_num_samples_or_steps(ins, batch_size,
                                                      steps_per_epoch)
@@ -174,6 +181,16 @@ def model_iteration(model,
   # to properly reinitialize and reuse in multiple validation passes.
   val_iterator = None
   if isinstance(val_inputs, (dataset_ops.DatasetV1, dataset_ops.DatasetV2)):
+    if validation_steps is None:
+      # Because we pass an iterator feed instead of a Dataset to the eval
+      # model_iteration() call, it will not trigger the dataset-input path
+      # that determines the number of steps required. To avoid this issue,
+      # set validation_steps here if validation_steps is None.
+      validation_steps = training_utils.infer_steps_for_dataset(
+          val_inputs,
+          validation_steps,
+          epochs=epochs,
+          steps_name='validation_steps')
     val_iterator = _get_iterator(val_inputs, model._distribution_strategy)
     val_inputs = _prepare_feed_values(
         model, val_iterator, val_targets, val_sample_weights, ModeKeys.TEST)
@@ -211,9 +228,8 @@ def model_iteration(model,
     aggregator = training_utils.MetricsAggregator(use_steps,
                                                   num_samples_or_steps)
 
-  if model._compile_distribution and not validation_in_fit:
-    distributed_training_utils._copy_weights_to_distributed_model(
-        model, model._distributed_model)
+  if model._compile_distribution:
+    distributed_training_utils._copy_weights_to_distributed_model(model, mode)
 
   callbacks.model.stop_training = False
   callbacks._call_begin_hook(mode)
@@ -247,12 +263,33 @@ def model_iteration(model,
 
         # Get outputs.
         try:
-          # `ins` can be callable in DistributionStrategy + eager case.
+          # `ins` can be callable in tf.distribute.Strategy + eager case.
           actual_inputs = ins() if callable(ins) else ins
           batch_outs = f(actual_inputs)
         except errors.OutOfRangeError:
-          if not is_dataset:
+          if is_dataset:
+            # The dataset passed by the user ran out of batches.
+            # Now we know the cardinality of the dataset.
+            # If steps_per_epoch was specified, then running out of data is
+            # unexpected, so we stop training and inform the user.
+            if steps_per_epoch:
+              callbacks.model.stop_training = True
+              logging.warning(
+                  'Your dataset ran out of data; interrupting training. '
+                  'Make sure that your dataset can generate at least '
+                  '`%s * epochs` batches (in this case, %d batches). '
+                  'You may need to use the repeat() function when '
+                  'building your dataset.'
+                  % (steps_name, steps_per_epoch * epochs))
+            elif step > 0:
+              steps_per_epoch = step
+              aggregator.num_samples_or_steps = steps_per_epoch
+              if mode == ModeKeys.TRAIN:
+                progbar.params['steps'] = steps_per_epoch
+                progbar.progbar.target = steps_per_epoch
+          else:
             # We ran out of batches while the user passed an iterator (legacy).
+            callbacks.model.stop_training = True
             logging.warning(
                 'Your dataset iterator ran out of data; '
                 'interrupting training. Make sure that your iterator '
@@ -260,15 +297,6 @@ def model_iteration(model,
                 'batches (in this case, %d batches). You may need to'
                 'use the repeat() function when building your '
                 'dataset.' % (steps_name, steps_per_epoch * epochs))
-            callbacks.model.stop_training = True
-          else:
-            # The dataset passed by the user ran out of batches.
-            # Now we know the cardinality of the dataset.
-            if step > 0:
-              steps_per_epoch = step
-              aggregator.num_samples_or_steps = steps_per_epoch
-              progbar.params['steps'] = steps_per_epoch
-              progbar.progbar.target = steps_per_epoch
           break
 
         if not isinstance(batch_outs, list):
@@ -353,6 +381,13 @@ def model_iteration(model,
     if (do_validation and
         training_utils.should_run_validation(validation_freq, epoch) and
         not callbacks.model.stop_training):
+
+      if model._compile_distribution:
+        # Since we create a new clone from the original model we need to copy
+        # the weights back to the original model before we can run validation.
+        distributed_training_utils._copy_weights_to_original_model(
+            model, ModeKeys.TRAIN)
+
       val_results = model_iteration(
           model,
           val_inputs,
@@ -385,10 +420,9 @@ def model_iteration(model,
   callbacks._call_end_hook(mode)
 
   if model._distribution_strategy:
-    if model._compile_distribution and not validation_in_fit:
+    if model._compile_distribution:
       # TODO(priyag, psv): Copy back metrics to the original model as well?
-      distributed_training_utils._copy_weights_to_original_model(
-          model, model._distributed_model, mode)
+      distributed_training_utils._copy_weights_to_original_model(model, mode)
     scope.__exit__(None, None, None)
 
   if mode == ModeKeys.TRAIN:
@@ -447,7 +481,7 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
     # in Distribution Strategy case as it follows the same code path for both
     # eager and graph modes.
     # TODO(priyag,omalleyt): Either we should move the training DS with
-    # EagerIterator to use training_generator code path, or figure out how to
+    # IteratorV2 to use training_generator code path, or figure out how to
     # set a symbolic Iterator out of a Dataset when in eager mode.
     if context.executing_eagerly():
       return get_distributed_inputs

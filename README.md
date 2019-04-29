@@ -28,3 +28,4 @@
 <p>sh tensorflow/examples/cc/cnn/mnist/data/download_data.sh</p>
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist</p> 
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist_rkz</p> 
+

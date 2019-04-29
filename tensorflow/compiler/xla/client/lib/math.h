@@ -20,11 +20,22 @@ limitations under the License.
 
 namespace xla {
 
-// Computes the square root of 'operand'.
-XlaOp Sqrt(XlaOp operand);
+// Determines whether operand is +/-inf or nan.
+//
+// Raises an error if called on integral or complex values.
+XlaOp IsPosInf(XlaOp operand);
+XlaOp IsNegInf(XlaOp operand);
+XlaOp IsInf(XlaOp operand);
+XlaOp IsNan(XlaOp operand);
 
-// Computes the reciprocal of the square root of 'operand'.
-XlaOp Rsqrt(XlaOp operand);
+// Determines whether operand is equal to -0.
+//
+// Raises an error for integral or complex values.
+XlaOp IsNegZero(XlaOp operand);
+
+// Returns the next number after 'from' in the direction of 'to' the same way
+// std::nextafter(from, to) would.
+XlaOp NextAfter(XlaOp from, XlaOp to);
 
 // Computes the square of 'operand'.
 XlaOp Square(XlaOp operand);
@@ -90,9 +101,8 @@ XlaOp Sinh(XlaOp x);
 // is true, otherwise returns its argument.
 xla::XlaOp MaybeConjugate(xla::XlaOp x, bool conjugate);
 
-// Returns the next number after 'from' in the direction of 'to' the same way
-// std::nextafter(from, to) would.
-XlaOp NextAfter(XlaOp from, XlaOp to);
+// Computes the logistic function: logistic(x) = 0.5 + 0.5 * tanh(0.5 * x).
+XlaOp Logistic(XlaOp x);
 
 }  // namespace xla
 

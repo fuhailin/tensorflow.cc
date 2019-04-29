@@ -26,7 +26,6 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/protobuf_internal.h"
-#include "tensorflow/core/protobuf/saved_model.pb.h"
 #include "tensorflow/core/protobuf/saver.pb.h"
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/public/session_options.h"
@@ -149,7 +148,8 @@ Status RunInitOp(const RunOptions& run_options, const string& export_dir,
                  const std::vector<AssetFileDef>& asset_file_defs,
                  Session* session, const string& init_op_name) {
   if (!init_op_name.empty()) {
-    LOG(INFO) << "Running initialization op on SavedModel bundle.";
+    LOG(INFO) << "Running initialization op on SavedModel bundle at path: "
+              << export_dir;
     std::vector<std::pair<string, Tensor>> inputs;
     AddAssetsTensorsToInputs(export_dir, asset_file_defs, &inputs);
     RunMetadata run_metadata;

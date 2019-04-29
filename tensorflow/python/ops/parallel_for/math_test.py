@@ -18,12 +18,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from tensorflow.python.compat import compat
 from tensorflow.python.eager import backprop
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import clip_ops
+from tensorflow.python.ops import linalg_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.ops import random_ops
@@ -35,7 +37,41 @@ from tensorflow.python.platform import test
 @test_util.run_all_in_graph_and_eager_modes
 class MathTest(PForTestCase):
 
-  def test_unary_cwise_ops(self):
+  def _test_unary_cwise_ops(self, ops, is_complex):
+    for op in ops:
+      with backprop.GradientTape(persistent=True) as g:
+        x = random_ops.random_uniform([3, 5])
+        g.watch(x)
+        if is_complex:
+          y = random_ops.random_uniform([3, 5])
+          g.watch(y)
+          x = math_ops.complex(x, y)
+
+      # pylint: disable=cell-var-from-loop
+      output_dtypes = []
+
+      def loop_fn(i):
+        with g:
+          x1 = array_ops.gather(x, i)
+          y1 = op(x1)
+          outputs = [op(x), y1]
+          if y1.dtype == dtypes.float32:
+            loss = math_ops.reduce_sum(y1 * y1)
+          else:
+            loss = None
+        if loss is not None:
+          grad = g.gradient(loss, x1)
+          if grad is not None:
+            outputs.append(grad)
+        del output_dtypes[:]
+        output_dtypes.extend([t.dtype for t in outputs])
+        return outputs
+
+      # pylint: enable=cell-var-from-loop
+
+      self._test_loop_fn(loop_fn, 3, loop_fn_dtypes=output_dtypes)
+
+  def test_unary_cwise_complex_ops(self):
     complex_ops = [
         math_ops.angle,
         math_ops.imag,
@@ -43,6 +79,9 @@ class MathTest(PForTestCase):
         math_ops.real,
         math_ops.conj,
     ]
+    self._test_unary_cwise_ops(complex_ops, True)
+
+  def test_unary_cwise_real_ops_1(self):
     real_ops = [
         lambda x: math_ops.acosh(1 + math_ops.square(x)),
         math_ops.abs,
@@ -66,6 +105,11 @@ class MathTest(PForTestCase):
         math_ops.lgamma,
         math_ops.log,
         math_ops.log1p,
+    ]
+    self._test_unary_cwise_ops(real_ops, False)
+
+  def test_unary_cwise_real_ops_2(self):
+    real_ops = [
         math_ops.neg,
         math_ops.negative,
         math_ops.reciprocal,
@@ -80,7 +124,6 @@ class MathTest(PForTestCase):
         math_ops.square,
         math_ops.tan,
         math_ops.tanh,
-        math_ops.tanh,
         nn.elu,
         nn.relu,
         nn.relu6,
@@ -88,37 +131,7 @@ class MathTest(PForTestCase):
         nn.softplus,
         nn.softsign,
     ]
-    for op in complex_ops + real_ops:
-      with backprop.GradientTape(persistent=True) as g:
-        x = random_ops.random_uniform([3, 5])
-        g.watch(x)
-        if op in complex_ops:
-          y = random_ops.random_uniform([3, 5])
-          g.watch(y)
-          x = math_ops.complex(x, y)
-
-      # pylint: disable=cell-var-from-loop
-      output_dtypes = []
-      def loop_fn(i):
-        with g:
-          x1 = array_ops.gather(x, i)
-          y1 = op(x1)
-          outputs = [op(x), y1]
-          if y1.dtype == dtypes.float32:
-            loss = math_ops.reduce_sum(y1 * y1)
-          else:
-            loss = None
-        if loss is not None:
-          grad = g.gradient(loss, x1)
-          if grad is not None:
-            outputs.append(grad)
-        del output_dtypes[:]
-        output_dtypes.extend([t.dtype for t in outputs])
-        return outputs
-
-      # pylint: enable=cell-var-from-loop
-
-      self._test_loop_fn(loop_fn, 3, loop_fn_dtypes=output_dtypes)
+    self._test_unary_cwise_ops(real_ops, False)
 
   def test_unary_cwise_no_grad(self):
     for op in [math_ops.ceil,
@@ -161,7 +174,6 @@ class MathTest(PForTestCase):
         math_ops.divide,
         math_ops.div_no_nan,
         math_ops.equal,
-        math_ops.floor_div,
         math_ops.floor_mod,
         math_ops.greater,
         math_ops.greater_equal,
@@ -182,6 +194,10 @@ class MathTest(PForTestCase):
         safe_polygamma,
         safe_zeta,
     ]
+    # FloorDiv fails on XLA due floor's discontinuities exacerbating small
+    # division differences.
+    if not test_util.is_xla_enabled():
+      float_ops += [math_ops.floor_div]
     for op in logical_ops + float_ops:
       x = random_ops.random_uniform([7, 3, 5])
       y = random_ops.random_uniform([3, 5])
@@ -274,11 +290,34 @@ class MathTest(PForTestCase):
 
             self._test_loop_fn(loop_fn, 2)
 
+  def test_batch_matmul_broadcast(self):
+    if not compat.forward_compatible(2019, 4, 25):
+      self.skipTest("Skipping test for future functionality.")
+    for broadcast_a in (True, False):
+      for broadcast_b in (True, False):
+        for stack_a in (True, False):
+          for stack_b in (True, False):
+            shape_a = (2, 3, 5) if broadcast_a else (4, 2, 3, 5)
+            shape_b = (2, 5, 7) if broadcast_b else (4, 2, 5, 7)
+            shape_a = (2,) + shape_a if stack_a else shape_a
+            shape_b = (2,) + shape_b if stack_b else shape_b
+            x = random_ops.random_uniform(shape_a)
+            y = random_ops.random_uniform(shape_b)
+
+            # pylint: disable=cell-var-from-loop
+            def loop_fn(i):
+              a = array_ops.gather(x, i) if stack_a else x
+              b = array_ops.gather(y, i) if stack_b else y
+              return math_ops.matmul(a, b)
+
+            # pylint: enable=cell-var-from-loop
+            self._test_loop_fn(loop_fn, 2)
+
   def test_reduction(self):
     x = random_ops.random_uniform([2, 3, 4, 5])
     for op in [
         math_ops.reduce_sum, math_ops.reduce_prod, math_ops.reduce_max,
-        math_ops.reduce_min
+        math_ops.reduce_min, math_ops.reduce_mean,
     ]:
       for axis in ([1], None, [0, 2]):
         for keepdims in (True, False):
@@ -291,6 +330,21 @@ class MathTest(PForTestCase):
           # pylint: enable=cell-var-from-loop
 
           self._test_loop_fn(loop_fn, 2)
+
+  def test_boolean_reduction(self):
+    x = random_ops.random_uniform([2, 3, 4, 5]) > 0.5
+    for op in [math_ops.reduce_any, math_ops.reduce_all]:
+      for axis in ([1], None, [0, 2]):
+        for keepdims in (True, False):
+
+          # pylint: disable=cell-var-from-loop
+          def loop_fn(i):
+            a = array_ops.gather(x, i)
+            return op(a, axis=axis, keepdims=keepdims)
+
+          # pylint: enable=cell-var-from-loop
+
+          self._test_loop_fn(loop_fn, 2, loop_fn_dtypes=[dtypes.bool])
 
   def test_cum_sum(self):
     x = random_ops.random_uniform([2, 3, 4, 5])
@@ -325,26 +379,46 @@ class MathTest(PForTestCase):
           self._test_loop_fn(loop_fn, 2)
 
   def test_bias_add(self):
-    x_shape = [2, 3, 4, 5, 6]
-    x = random_ops.random_uniform(x_shape)
     for data_format in ("NCHW", "NHWC"):
-      with backprop.GradientTape(persistent=True) as g:
-        bias_dim = 2 if data_format == "NCHW" else -1
-        bias_shape = x_shape[bias_dim]
-        bias = random_ops.random_uniform([bias_shape])
-        g.watch(bias)
+      for stacked_value in (True, False):
+        x_shape = [3, 4, 5, 6]
+        if stacked_value:
+          x_shape = [2] + x_shape
+        x = random_ops.random_uniform(x_shape)
+        for stacked_bias in (True, False):
+          if not (stacked_value or stacked_bias):
+            continue
+          with backprop.GradientTape(persistent=True) as g:
+            bias_dim = -1
+            if data_format == "NCHW":
+              bias_dim = 2 if stacked_value else 1
+            bias_shape = [x_shape[bias_dim]]
+            if stacked_bias:
+              bias_shape = [2] + bias_shape
+            bias = random_ops.random_uniform(bias_shape)
+            g.watch(bias)
 
-      # pylint: disable=cell-var-from-loop
-      def loop_fn(i):
-        with g:
-          a = array_ops.gather(x, i)
-          y = nn.bias_add(a, bias, data_format=data_format)
-          loss = math_ops.reduce_sum(y * y)
-        return y, g.gradient(loss, bias)
-      # pylint: enable=cell-var-from-loop
+          # pylint: disable=cell-var-from-loop
+          def loop_fn(i):
+            with g:
+              a = array_ops.gather(x, i) if stacked_value else x
+              b = array_ops.gather(bias, i) if stacked_bias else bias
+              y = nn.bias_add(a, b, data_format=data_format)
+              loss = math_ops.reduce_sum(y * y)
+            grad = g.gradient(loss, bias)
+            if stacked_bias:
+              # If we gather over bias in loop_fn, the gradient will be an
+              # instance of `IndexedSlices` with attrs `values` and `indices`.
+              return y, grad.values, grad.indices
+            else:
+              return y, grad
+          # pylint: enable=cell-var-from-loop
 
-      self._test_loop_fn(
-          loop_fn, 2, loop_fn_dtypes=[dtypes.float32, dtypes.float32])
+          out_dtypes = [dtypes.float32, dtypes.float32]
+          if stacked_bias:
+            out_dtypes = out_dtypes + [dtypes.int32]
+          self._test_loop_fn(
+              loop_fn, 2, loop_fn_dtypes=out_dtypes)
 
   def test_unsorted_segment_sum(self):
     t = random_ops.random_uniform([3, 3, 2])
@@ -399,6 +473,45 @@ class MathTest(PForTestCase):
       # pylint: enable=cell-var-from-loop
 
       self._test_loop_fn(loop_fn, 2)
+
+
+@test_util.run_all_in_graph_and_eager_modes
+class LinalgTest(PForTestCase):
+
+  def test_cholesky(self):
+    z = random_ops.random_normal([2, 3, 3])
+    x = (math_ops.matmul(z, array_ops.matrix_transpose(z))  # Ensure pos. def.
+         + linalg_ops.eye(3))  # Ensure well-conditioned.
+
+    def loop_fn(i):
+      return linalg_ops.cholesky(array_ops.gather(x, i))
+
+    self._test_loop_fn(loop_fn, 2)
+
+  def test_matrix_triangular_solve(self):
+    for lower in (True, False):
+      for adjoint in (True, False):
+        for stack_a in (True, False):
+          for stack_b in (True, False):
+            shape_a = (2, 4, 3, 3) if stack_a else (4, 3, 3)
+            shape_b = (2, 4, 3, 5) if stack_b else (4, 3, 5)
+            x = array_ops.matrix_band_part(
+                random_ops.random_uniform(shape_a)
+                + linalg_ops.eye(3),  # Ensure well-conditioned.
+                *((-1, 0) if lower else (0, -1)))  # Ensure triangular.
+            y = random_ops.random_uniform(shape_b)
+
+            # pylint: disable=cell-var-from-loop
+            def loop_fn(i):
+              a = array_ops.gather(x, i) if stack_a else x
+              b = array_ops.gather(y, i) if stack_b else y
+              return linalg_ops.matrix_triangular_solve(a, b,
+                                                        lower=lower,
+                                                        adjoint=adjoint)
+
+            # pylint: enable=cell-var-from-loop
+
+            self._test_loop_fn(loop_fn, 2)
 
 
 if __name__ == "__main__":

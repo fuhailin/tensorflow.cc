@@ -18,6 +18,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import json
+
 from absl.testing import parameterized
 import numpy as np
 
@@ -949,8 +951,8 @@ class AUCTest(test.TestCase):
   def test_config(self):
     auc_obj = metrics.AUC(
         num_thresholds=100,
-        curve=metrics_utils.AUCCurve.PR,
-        summation_method=metrics_utils.AUCSummationMethod.MAJORING,
+        curve='PR',
+        summation_method='majoring',
         name='auc_1')
     self.assertEqual(auc_obj.name, 'auc_1')
     self.assertEqual(len(auc_obj.variables), 4)
@@ -958,8 +960,10 @@ class AUCTest(test.TestCase):
     self.assertEqual(auc_obj.curve, metrics_utils.AUCCurve.PR)
     self.assertEqual(auc_obj.summation_method,
                      metrics_utils.AUCSummationMethod.MAJORING)
+    old_config = auc_obj.get_config()
+    self.assertDictEqual(old_config, json.loads(json.dumps(old_config)))
 
-    # Check save and restore config
+    # Check save and restore config.
     auc_obj2 = metrics.AUC.from_config(auc_obj.get_config())
     self.assertEqual(auc_obj2.name, 'auc_1')
     self.assertEqual(len(auc_obj2.variables), 4)
@@ -967,6 +971,38 @@ class AUCTest(test.TestCase):
     self.assertEqual(auc_obj2.curve, metrics_utils.AUCCurve.PR)
     self.assertEqual(auc_obj2.summation_method,
                      metrics_utils.AUCSummationMethod.MAJORING)
+    new_config = auc_obj2.get_config()
+    self.assertDictEqual(old_config, new_config)
+    self.assertAllClose(auc_obj.thresholds, auc_obj2.thresholds)
+
+  def test_config_manual_thresholds(self):
+    auc_obj = metrics.AUC(
+        num_thresholds=None,
+        curve='PR',
+        summation_method='majoring',
+        name='auc_1',
+        thresholds=[0.3, 0.5])
+    self.assertEqual(auc_obj.name, 'auc_1')
+    self.assertEqual(len(auc_obj.variables), 4)
+    self.assertEqual(auc_obj.num_thresholds, 4)
+    self.assertAllClose(auc_obj.thresholds, [0.0, 0.3, 0.5, 1.0])
+    self.assertEqual(auc_obj.curve, metrics_utils.AUCCurve.PR)
+    self.assertEqual(auc_obj.summation_method,
+                     metrics_utils.AUCSummationMethod.MAJORING)
+    old_config = auc_obj.get_config()
+    self.assertDictEqual(old_config, json.loads(json.dumps(old_config)))
+
+    # Check save and restore config.
+    auc_obj2 = metrics.AUC.from_config(auc_obj.get_config())
+    self.assertEqual(auc_obj2.name, 'auc_1')
+    self.assertEqual(len(auc_obj2.variables), 4)
+    self.assertEqual(auc_obj2.num_thresholds, 4)
+    self.assertEqual(auc_obj2.curve, metrics_utils.AUCCurve.PR)
+    self.assertEqual(auc_obj2.summation_method,
+                     metrics_utils.AUCSummationMethod.MAJORING)
+    new_config = auc_obj2.get_config()
+    self.assertDictEqual(old_config, new_config)
+    self.assertAllClose(auc_obj.thresholds, auc_obj2.thresholds)
 
   def test_value_is_idempotent(self):
     self.setup()
@@ -1004,6 +1040,23 @@ class AUCTest(test.TestCase):
     expected_result = (0.75 * 1 + 0.25 * 0)
     self.assertAllClose(self.evaluate(result), expected_result, 1e-3)
 
+  def test_manual_thresholds(self):
+    self.setup()
+    # Verify that when specified, thresholds are used instead of num_thresholds.
+    auc_obj = metrics.AUC(num_thresholds=2, thresholds=[0.5])
+    self.assertEqual(auc_obj.num_thresholds, 3)
+    self.assertAllClose(auc_obj.thresholds, [0.0, 0.5, 1.0])
+    self.evaluate(variables.variables_initializer(auc_obj.variables))
+    result = auc_obj(self.y_true, self.y_pred)
+
+    # tp = [2, 1, 0], fp = [2, 0, 0], fn = [0, 1, 2], tn = [0, 2, 2]
+    # recall = [2/2, 1/(1+1), 0] = [1, 0.5, 0]
+    # fp_rate = [2/2, 0, 0] = [1, 0, 0]
+    # heights = [(1 + 0.5)/2, (0.5 + 0)/2] = [0.75, 0.25]
+    # widths = [(1 - 0), (0 - 0)] = [1, 0]
+    expected_result = (0.75 * 1 + 0.25 * 0)
+    self.assertAllClose(self.evaluate(result), expected_result, 1e-3)
+
   def test_weighted_roc_interpolation(self):
     self.setup()
     auc_obj = metrics.AUC(num_thresholds=self.num_thresholds)
@@ -1021,8 +1074,7 @@ class AUCTest(test.TestCase):
   def test_weighted_roc_majoring(self):
     self.setup()
     auc_obj = metrics.AUC(
-        num_thresholds=self.num_thresholds,
-        summation_method=metrics_utils.AUCSummationMethod.MAJORING)
+        num_thresholds=self.num_thresholds, summation_method='majoring')
     self.evaluate(variables.variables_initializer(auc_obj.variables))
     result = auc_obj(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
@@ -1037,8 +1089,7 @@ class AUCTest(test.TestCase):
   def test_weighted_roc_minoring(self):
     self.setup()
     auc_obj = metrics.AUC(
-        num_thresholds=self.num_thresholds,
-        summation_method=metrics_utils.AUCSummationMethod.MINORING)
+        num_thresholds=self.num_thresholds, summation_method='minoring')
     self.evaluate(variables.variables_initializer(auc_obj.variables))
     result = auc_obj(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
@@ -1054,8 +1105,8 @@ class AUCTest(test.TestCase):
     self.setup()
     auc_obj = metrics.AUC(
         num_thresholds=self.num_thresholds,
-        curve=metrics_utils.AUCCurve.PR,
-        summation_method=metrics_utils.AUCSummationMethod.MAJORING)
+        curve='PR',
+        summation_method='majoring')
     self.evaluate(variables.variables_initializer(auc_obj.variables))
     result = auc_obj(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
@@ -1071,8 +1122,8 @@ class AUCTest(test.TestCase):
     self.setup()
     auc_obj = metrics.AUC(
         num_thresholds=self.num_thresholds,
-        curve=metrics_utils.AUCCurve.PR,
-        summation_method=metrics_utils.AUCSummationMethod.MINORING)
+        curve='PR',
+        summation_method='minoring')
     self.evaluate(variables.variables_initializer(auc_obj.variables))
     result = auc_obj(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
@@ -1086,10 +1137,7 @@ class AUCTest(test.TestCase):
 
   def test_weighted_pr_interpolation(self):
     self.setup()
-    auc_obj = metrics.AUC(
-        num_thresholds=self.num_thresholds,
-        curve=metrics_utils.AUCCurve.PR,
-        summation_method=metrics_utils.AUCSummationMethod.INTERPOLATION)
+    auc_obj = metrics.AUC(num_thresholds=self.num_thresholds, curve='PR')
     self.evaluate(variables.variables_initializer(auc_obj.variables))
     result = auc_obj(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
@@ -1114,6 +1162,16 @@ class AUCTest(test.TestCase):
 
     with self.assertRaisesRegexp(ValueError, '`num_thresholds` must be > 1.'):
       metrics.AUC(num_thresholds=1)
+
+  def test_invalid_curve(self):
+    with self.assertRaisesRegexp(ValueError,
+                                 'Invalid AUC curve value "Invalid".'):
+      metrics.AUC(curve='Invalid')
+
+  def test_invalid_summation_method(self):
+    with self.assertRaisesRegexp(
+        ValueError, 'Invalid AUC summation method value "Invalid".'):
+      metrics.AUC(summation_method='Invalid')
 
 
 if __name__ == '__main__':

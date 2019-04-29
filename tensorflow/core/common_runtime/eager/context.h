@@ -23,6 +23,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+// Required for IS_MOBILE_PLATFORM
+#include "tensorflow/core/platform/platform.h"  // NO_LINT
+
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/eager/eager_executor.h"
@@ -31,11 +34,11 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/rendezvous_mgr.h"
 #include "tensorflow/core/example/example.pb.h"
 #include "tensorflow/core/platform/env.h"
-#ifndef __ANDROID__
+#if !defined(IS_MOBILE_PLATFORM)
 #include "tensorflow/core/distributed_runtime/eager/eager_client.h"
 #include "tensorflow/core/distributed_runtime/server_lib.h"
 #include "tensorflow/core/distributed_runtime/worker_cache.h"
-#endif
+#endif  // !IS_MOBILE_PLATFORM
 #include "tensorflow/core/framework/collective.h"
 #include "tensorflow/core/framework/log_memory.h"
 #include "tensorflow/core/framework/rendezvous.h"
@@ -63,8 +66,7 @@ enum ContextDevicePlacementPolicy {
   // Silently copy the tensor, which has a performance cost since the operation
   // will be blocked till the copy completes. This is the default policy.
   DEVICE_PLACEMENT_SILENT = 2,
-  // Default placement policy which silently copies int32 tensors but not other
-  // dtypes.
+  // Placement policy which silently copies int32 tensors but not other dtypes.
   DEVICE_PLACEMENT_SILENT_FOR_INT32 = 3,
 };
 
@@ -85,12 +87,13 @@ class EagerContext {
   EagerContext(const SessionOptions& opts,
                ContextDevicePlacementPolicy default_policy, bool async,
                const DeviceMgr* device_mgr, bool device_mgr_owned,
-               Rendezvous* rendezvous);
+               Rendezvous* rendezvous,
+               const CustomKernelCreator* custom_kernel_creator);
 
   ~EagerContext();
 
   // Returns the function library runtime for the given device.
-  FunctionLibraryRuntime* func_lib(Device* d) const {
+  FunctionLibraryRuntime* func_lib(const Device* d) const {
     return pflr_->GetFLR(d->name());
   }
 
@@ -118,7 +121,7 @@ class EagerContext {
   }
 
   // Clears the kernel caches.
-  void ClearCaches();
+  Status ClearCaches();
 
   // Sets the device placement policy for the current thread.
   void SetThreadLocalDevicePlacementPolicy(ContextDevicePlacementPolicy policy);
@@ -183,8 +186,10 @@ class EagerContext {
 
   // TODO(apassos) clean up RunMetadata storage.
   mutex* MetadataMu() LOCK_RETURNED(metadata_mu_) { return &metadata_mu_; }
-  bool ShouldStoreMetadata() LOCKS_EXCLUDED(metadata_mu_);
-  void SetShouldStoreMetadata(bool value);
+  bool ShouldStoreStepStats() LOCKS_EXCLUDED(metadata_mu_);
+  void SetShouldStoreStepStats(bool value);
+  bool ShouldStoreGraphs() LOCKS_EXCLUDED(metadata_mu_);
+  void SetShouldStoreGraphs(bool value);
   RunMetadata* RunMetadataProto() { return &run_metadata_; }
   void ClearRunMetadata() EXCLUSIVE_LOCKS_REQUIRED(metadata_mu_);
 
@@ -198,7 +203,7 @@ class EagerContext {
 
   FunctionLibraryDefinition* FuncLibDef() { return &func_lib_def_; }
 
-#ifndef __ANDROID__
+#if !defined(IS_MOBILE_PLATFORM)
   Status GetClientAndContextID(Device* device, eager::EagerClient** client,
                                uint64* context_id);
 
@@ -214,7 +219,7 @@ class EagerContext {
   // - remote_device_mgr: A DeviceMgr* which contains all remote devices
   // (should contain no local devices).
   // - remote_contexts: A map containing task name to remote context ID.
-  void InitializeRemote(
+  Status InitializeRemote(
       std::unique_ptr<ServerInterface> server,
       std::unique_ptr<eager::EagerClientCache> remote_eager_workers,
       std::unique_ptr<DeviceMgr> remote_device_manager,
@@ -229,7 +234,7 @@ class EagerContext {
   Status StoreCollectiveOpsServer(
       std::unique_ptr<ServerInterface> server, DeviceMgr* device_mgr,
       CollectiveExecutorMgrInterface* rpc_collective_executor_mgr);
-#endif
+#endif  // IS_MOBILE_PLATFORM
 
   // If true, then tensors should be shipped across processes via the
   // EagerService.SendTensor RPC. If false, _Send/_Recv ops should be used
@@ -284,7 +289,8 @@ class EagerContext {
       GUARDED_BY(cache_mu_);
 
   // Whether we should compute RunMetadata.
-  std::atomic<bool> should_store_metadata_{false};
+  std::atomic<bool> should_store_step_stats_{false};
+  std::atomic<bool> should_store_graphs_{false};
   mutex metadata_mu_;
   RunMetadata run_metadata_ GUARDED_BY(metadata_mu_);
   RunMetadataListener* metadata_listener_ GUARDED_BY(metadata_mu_) = nullptr;
@@ -311,7 +317,7 @@ class EagerContext {
   std::unique_ptr<CollectiveExecutorMgrInterface> collective_executor_mgr_;
   CollectiveExecutorMgrInterface* unowned_collective_executor_mgr_ = nullptr;
 
-#ifndef __ANDROID__
+#if !defined(IS_MOBILE_PLATFORM)
   void CloseRemoteContexts();
 
   // The server_ is not const since we release it when the context is destroyed.
@@ -334,7 +340,7 @@ class EagerContext {
   mutex keep_alive_thread_shutdown_mu_;
   condition_variable keep_alive_thread_cv_;
   bool shutting_down_ GUARDED_BY(keep_alive_thread_shutdown_mu_) = false;
-#endif
+#endif  // IS_MOBILE_PLATFORM
 
   bool use_send_tensor_rpc_;
   const bool pin_small_ops_to_cpu_;

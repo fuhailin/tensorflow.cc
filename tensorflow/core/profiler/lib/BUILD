@@ -11,23 +11,25 @@ load(
     "//tensorflow:tensorflow.bzl",
     "tf_cuda_library",
 )
+load(
+    "//tensorflow/core:platform/default/build_config.bzl",
+    "tf_additional_profiler_lib_deps",
+)
 
 tf_cuda_library(
-    name = "eager_profiler",
+    name = "profiler_session",
     srcs = [
-        "eager_profiler.cc",
+        "profiler_session.cc",
     ],
     hdrs = [
-        "eager_profiler.h",
+        "profiler_session.h",
     ],
     visibility = ["//tensorflow:internal"],
     deps = [
-        "//tensorflow/core/common_runtime/eager:context",
-        "//tensorflow/contrib/tpu/profiler:trace_events_proto_cc",
+        "//tensorflow/core/profiler/internal:profiler_interface",
+        "//tensorflow/core/profiler:protos_all_cc",
     ] + select({
-        "//tensorflow:android": [
-            "//tensorflow/core:android_tensorflow_lib_lite",
-        ],
+        "//tensorflow:android": [],
         "//conditions:default": [
             "//tensorflow/core:core_cpu_lib",
             "//tensorflow/core:framework",
@@ -36,7 +38,41 @@ tf_cuda_library(
             "//tensorflow/core:lib_internal",
             "//tensorflow/core:protos_all_cc",
             "//tensorflow/core:session_options",
-            "//tensorflow/core:device_tracer",
         ],
     }),
+)
+
+tf_cuda_library(
+    name = "profiler_graph_lib",
+    visibility = ["//tensorflow:internal"],
+    deps = tf_additional_profiler_lib_deps(),
+    alwayslink = 1,
+)
+
+tf_cuda_library(
+    name = "profiler_eager_lib",
+    visibility = ["//tensorflow:internal"],
+    deps = [
+        "//tensorflow/core/profiler/internal/runtime:eager_profiler",
+    ] + tf_additional_profiler_lib_deps(),
+    alwayslink = 1,
+)
+
+tf_cuda_library(
+    name = "traceme",
+    srcs = ["traceme.cc"],
+    hdrs = ["traceme.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tensorflow/core:lib",
+        "//tensorflow/core/profiler/internal:traceme_recorder",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:optional",
+    ],
+)
+
+filegroup(
+    name = "mobile_srcs",
+    srcs = glob(["*"]),
+    visibility = ["//visibility:public"],
 )

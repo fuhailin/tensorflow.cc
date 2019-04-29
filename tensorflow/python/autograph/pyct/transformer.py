@@ -18,19 +18,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import sys
+import collections
 
 import gast
-import six
 
 from tensorflow.python.autograph.pyct import anno
 from tensorflow.python.autograph.pyct import compiler
 from tensorflow.python.autograph.pyct import pretty_printer
 from tensorflow.python.autograph.pyct import templates
-
-
-class AutoGraphParseError(SyntaxError):
-  pass
 
 
 # TODO(znado): Use namedtuple.
@@ -50,8 +45,11 @@ class Context(object):
     self.current_origin = None
 
 
-# TODO(mdan): Use namedtuple.
-class EntityInfo(object):
+# TODO(mdan): Move to a standalone file.
+class EntityInfo(
+    collections.namedtuple(
+        'EntityInfo',
+        ('source_code', 'source_file', 'future_features', 'namespace'))):
   """Contains information about a Python entity.
 
   Immutable.
@@ -61,22 +59,13 @@ class EntityInfo(object):
   Attributes:
     source_code: The entity's source code.
     source_file: The entity's source file.
+    future_features: Tuple[Text], the future features that this entity was
+      compiled with. See
+      https://docs.python.org/2/reference/simple_stmts.html#future.
     namespace: Dict[str, ], containing symbols visible to the entity (excluding
       parameters).
-    arg_values: dict[str->*], containing parameter values, if known.
-    arg_types: dict[str->*], containing parameter types, if known.
-    owner_type: The surrounding class type of the function, if present.
   """
-
-  # TODO(mdan): Remove the default and update tests.
-  def __init__(self, source_code, source_file, namespace, arg_values, arg_types,
-               owner_type):
-    self.source_code = source_code
-    self.source_file = source_file
-    self.namespace = namespace
-    self.arg_values = {} if arg_values is None else arg_values
-    self.arg_types = {} if arg_types is None else arg_types
-    self.owner_type = owner_type
+  pass
 
 
 class _StateStack(object):
@@ -299,9 +288,15 @@ class Base(gast.NodeTransformer):
     return self._local_scope_state[-1].get(name, default)
 
   def debug_print(self, node):
-    """Helper method useful for debugging."""
+    """Helper method useful for debugging. Prints the AST."""
     if __debug__:
       print(pretty_printer.fmt(node))
+    return node
+
+  def debug_print_src(self, node):
+    """Helper method useful for debugging. Prints the AST as code."""
+    if __debug__:
+      print(compiler.ast_to_source(node))
     return node
 
   def create_assignment(self, target, expression):
@@ -462,64 +457,44 @@ class Base(gast.NodeTransformer):
     processing_expr_node = False
 
     parent_origin = self.ctx.current_origin
-    try:
-      if isinstance(node, (gast.FunctionDef, gast.ClassDef, gast.Lambda)):
-        did_enter_function = True
-      elif isinstance(node, gast.Expr):
-        processing_expr_node = True
+    if isinstance(node, (gast.FunctionDef, gast.ClassDef, gast.Lambda)):
+      did_enter_function = True
+    elif isinstance(node, gast.Expr):
+      processing_expr_node = True
 
-      if did_enter_function:
-        self._enclosing_entities.append(node)
+    if did_enter_function:
+      self._enclosing_entities.append(node)
 
-      if anno.hasanno(node, anno.Basic.ORIGIN):
-        self.ctx.current_origin = anno.getanno(node, anno.Basic.ORIGIN)
+    if anno.hasanno(node, anno.Basic.ORIGIN):
+      self.ctx.current_origin = anno.getanno(node, anno.Basic.ORIGIN)
 
-      if processing_expr_node:
-        entry_expr_value = node.value
+    if processing_expr_node:
+      entry_expr_value = node.value
 
-      if not anno.hasanno(node, anno.Basic.SKIP_PROCESSING):
-        result = super(Base, self).visit(node)
-      self.ctx.current_origin = parent_origin
+    if not anno.hasanno(node, anno.Basic.SKIP_PROCESSING):
+      result = super(Base, self).visit(node)
+    self.ctx.current_origin = parent_origin
 
-      # Adjust for consistency: replacing the value of an Expr with
-      # an Assign node removes the need for the Expr node.
-      if processing_expr_node:
-        if isinstance(result, gast.Expr) and result.value != entry_expr_value:
-          # When the replacement is a list, it is assumed that the list came
-          # from a template that contained a number of statements, which
-          # themselves are standalone and don't require an enclosing Expr.
-          if isinstance(result.value,
-                        (list, tuple, gast.Assign, gast.AugAssign)):
-            result = result.value
+    # Adjust for consistency: replacing the value of an Expr with
+    # an Assign node removes the need for the Expr node.
+    if processing_expr_node:
+      if isinstance(result, gast.Expr) and result.value != entry_expr_value:
+        # When the replacement is a list, it is assumed that the list came
+        # from a template that contained a number of statements, which
+        # themselves are standalone and don't require an enclosing Expr.
+        if isinstance(result.value,
+                      (list, tuple, gast.Assign, gast.AugAssign)):
+          result = result.value
 
-      # On exception, the local scope integrity is not guaranteed.
-      if did_enter_function:
-        self._enclosing_entities.pop()
+    # On exception, the local scope integrity is not guaranteed.
+    if did_enter_function:
+      self._enclosing_entities.pop()
 
-      if local_scope_size_at_entry != len(self._local_scope_state):
-        raise AssertionError(
-            'Inconsistent local scope stack. Before entering node %s, the'
-            ' stack had length %d, after exit it has length %d. This'
-            ' indicates enter_local_scope and exit_local_scope are not'
-            ' well paired.' % (node, local_scope_size_at_entry,
-                               len(self._local_scope_state)))
-      return result
-
-    except (ValueError, AttributeError, KeyError, NotImplementedError) as e:
-      if not self.ctx.current_origin:
-        raise e
-      original_file_path = self.ctx.current_origin.loc.filename
-      original_line_number = self.ctx.current_origin.loc.lineno
-      original_col_offset = self.ctx.current_origin.loc.col_offset
-      original_source_line = (
-          self.ctx.current_origin.source_code_line)
-      msg = '%s: %s.' % (e.__class__.__name__, str(e))
-
-      # TODO(mdan): Avoid the printing of the original exception.
-      # In other words, we need to find how to suppress the "During handling
-      # of the above exception, another exception occurred" message.
-      six.reraise(
-          AutoGraphParseError,
-          AutoGraphParseError(msg, (original_file_path, original_line_number,
-                                    original_col_offset, original_source_line)),
-          sys.exc_info()[2])
+    if local_scope_size_at_entry != len(self._local_scope_state):
+      raise AssertionError(
+          'Inconsistent local scope stack. Before entering node %s, the'
+          ' stack had length %d, after exit it has length %d. This'
+          ' indicates enter_local_scope and exit_local_scope are not'
+          ' well paired.' % (node, local_scope_size_at_entry,
+                             len(self._local_scope_state)))
+    return result

@@ -45,7 +45,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
-import android.support.v13.app.FragmentCompat;
 import android.support.v4.content.ContextCompat;
 import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
@@ -62,6 +61,7 @@ import android.widget.ListView;
 import android.widget.NumberPicker;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.support.v13.app.FragmentCompat;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -70,7 +70,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-
 
 /** Basic fragments for the Camera. */
 public class Camera2BasicFragment extends Fragment
@@ -369,10 +368,7 @@ public class Camera2BasicFragment extends Fragment
       classifier.setNumThreads(numThreads);
       if (device.equals(cpu)) {
       } else if (device.equals(gpu)) {
-        if (!GpuDelegateHelper.isGpuDelegateAvailable()) {
-          showToast("gpu not in this build.");
-          classifier = null;
-        } else if (model.equals(mobilenetV1Quant)) {
+        if (model.equals(mobilenetV1Quant)) {
           showToast("gpu requires float model.");
           classifier = null;
         } else {
@@ -406,9 +402,7 @@ public class Camera2BasicFragment extends Fragment
     // Build list of devices
     int defaultModelIndex = 0;
     deviceStrings.add(cpu);
-    if (GpuDelegateHelper.isGpuDelegateAvailable()) {
-      deviceStrings.add(gpu);
-    }
+    deviceStrings.add(gpu);
     deviceStrings.add(nnApi);
 
     deviceView.setAdapter(

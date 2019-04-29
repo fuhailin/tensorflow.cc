@@ -365,22 +365,10 @@ bool Env::LocalTempFilename(string* filename) {
 }
 
 bool Env::CreateUniqueFileName(string* prefix, const string& suffix) {
-#ifdef __APPLE__
-  uint64_t tid64;
-  pthread_threadid_np(nullptr, &tid64);
-  int32 tid = static_cast<int32>(tid64);
-  int32 pid = static_cast<int32>(getpid());
-#elif defined(__FreeBSD__)
-  // Has to be casted to long first, else this error appears:
-  // static_cast from 'pthread_t' (aka 'pthread *') to 'int32' (aka 'int')
-  // is not allowed
-  int32 tid = static_cast<int32>(static_cast<int64>(pthread_self()));
-  int32 pid = static_cast<int32>(getpid());
-#elif defined(PLATFORM_WINDOWS)
-  int32 tid = static_cast<int32>(GetCurrentThreadId());
+  int32 tid = GetCurrentThreadId();
+#ifdef PLATFORM_WINDOWS
   int32 pid = static_cast<int32>(GetCurrentProcessId());
 #else
-  int32 tid = static_cast<int32>(pthread_self());
   int32 pid = static_cast<int32>(getpid());
 #endif
   uint64 now_microsec = NowMicros();
@@ -529,7 +517,8 @@ Status ReadBinaryProto(Env* env, const string& fname,
   // respectively.
   coded_stream.SetTotalBytesLimit(1024LL << 20, 512LL << 20);
 
-  if (!proto->ParseFromCodedStream(&coded_stream)) {
+  if (!proto->ParseFromCodedStream(&coded_stream) ||
+      !coded_stream.ConsumedEntireMessage()) {
     TF_RETURN_IF_ERROR(stream->status());
     return errors::DataLoss("Can't parse ", fname, " as binary proto");
   }

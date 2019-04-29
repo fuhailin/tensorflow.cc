@@ -109,7 +109,7 @@ tf_gen_op_wrapper_py(
 # Ops tests
 tf_py_test(
     name = "gmm_test",
-    size = "large",
+    size = "medium",
     srcs = [
         "python/ops/gmm_test.py",
     ],
@@ -130,6 +130,7 @@ tf_py_test(
         "//tensorflow/python:random_seed",
         "//tensorflow/python:training",
     ],
+    shard_count = 4,
     tags = [
         "no_pip",  # b/38283730
         "notsan",  # Flaky: b/30756419
@@ -200,12 +201,10 @@ py_test(
     name = "kmeans_test",
     size = "medium",
     srcs = ["python/ops/kmeans_test.py"],
+    python_version = "PY2",
     shard_count = 4,
     srcs_version = "PY2AND3",
-    tags = [
-        "nomac",  # b/73741358
-        "notsan",  # b/67512932
-    ],
+    tags = ["notsan"],
     deps = [
         ":factorization_py",
         ":factorization_py_CYCLIC_DEPENDENCIES_THAT_NEED_TO_GO",
@@ -227,7 +226,7 @@ py_test(
 
 tf_py_test(
     name = "wals_test",
-    size = "large",
+    size = "medium",
     srcs = ["python/ops/wals_test.py"],
     additional_deps = [
         ":factorization_py",
@@ -250,8 +249,8 @@ tf_py_test(
         "//tensorflow/python:training",
         "//tensorflow/python:variables",
     ],
+    shard_count = 4,
     tags = [
-        "manual",
         "noasan",  # times out b/63678675
         "nomsan",
     ],

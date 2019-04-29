@@ -87,22 +87,22 @@ class SquareLinearOperatorKroneckerTest(
     self._rtol[dtypes.float32] = 1e-4
     self._rtol[dtypes.complex64] = 1e-4
 
-  @property
-  def _operator_build_infos(self):
-    build_info = linear_operator_test_util.OperatorBuildInfo
+  @staticmethod
+  def operator_shapes_infos():
+    shape_info = linear_operator_test_util.OperatorShapesInfo
     return [
-        build_info((1, 1), factors=[(1, 1), (1, 1)]),
-        build_info((8, 8), factors=[(2, 2), (2, 2), (2, 2)]),
-        build_info((12, 12), factors=[(2, 2), (3, 3), (2, 2)]),
-        build_info((1, 3, 3), factors=[(1, 1), (1, 3, 3)]),
-        build_info((3, 6, 6), factors=[(3, 1, 1), (1, 2, 2), (1, 3, 3)]),
+        shape_info((1, 1), factors=[(1, 1), (1, 1)]),
+        shape_info((8, 8), factors=[(2, 2), (2, 2), (2, 2)]),
+        shape_info((12, 12), factors=[(2, 2), (3, 3), (2, 2)]),
+        shape_info((1, 3, 3), factors=[(1, 1), (1, 3, 3)]),
+        shape_info((3, 6, 6), factors=[(3, 1, 1), (1, 2, 2), (1, 3, 3)]),
     ]
 
-  @property
-  def _tests_to_skip(self):
+  @staticmethod
+  def tests_to_skip():
     return ["det", "inverse", "solve", "solve_with_broadcast"]
 
-  def _operator_and_matrix(
+  def operator_and_matrix(
       self, build_info, dtype, use_placeholder,
       ensure_self_adjoint_and_pd=False):
     # Kronecker products constructed below will be from symmetric
@@ -192,6 +192,23 @@ class SquareLinearOperatorKroneckerTest(
     with self.assertRaisesRegexp(ValueError, ">=1 operators"):
       kronecker.LinearOperatorKronecker([])
 
+  def test_kronecker_adjoint_type(self):
+    matrix = [[1., 0.], [0., 1.]]
+    operator = kronecker.LinearOperatorKronecker(
+        [
+            linalg.LinearOperatorFullMatrix(
+                matrix, is_non_singular=True),
+            linalg.LinearOperatorFullMatrix(
+                matrix, is_non_singular=True),
+        ],
+        is_non_singular=True,
+    )
+    adjoint = operator.adjoint()
+    self.assertIsInstance(
+        adjoint,
+        kronecker.LinearOperatorKronecker)
+    self.assertEqual(2, len(adjoint.operators))
+
   def test_kronecker_cholesky_type(self):
     matrix = [[1., 0.], [0., 1.]]
     operator = kronecker.LinearOperatorKronecker(
@@ -241,4 +258,5 @@ class SquareLinearOperatorKroneckerTest(
 
 
 if __name__ == "__main__":
+  linear_operator_test_util.add_tests(SquareLinearOperatorKroneckerTest)
   test.main()

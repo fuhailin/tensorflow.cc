@@ -269,19 +269,28 @@ void BaseRemoteRendezvous::SameWorkerRecvDone(
   attr.set_gpu_compatible(send_args.alloc_attrs.gpu_compatible() ||
                           recv_args.alloc_attrs.gpu_compatible());
   Allocator* out_allocator = dst_device->GetAllocator(attr);
-
+  AllocationAttributes allocation_attr;
+  uint64 safe_alloc_frontier = dst_device->SafeAllocFrontier(0);
+  bool sync_dst_compute = (safe_alloc_frontier == 0);
+  std::function<uint64()> freed_by_func = [dst_device, &safe_alloc_frontier]() {
+    safe_alloc_frontier = dst_device->SafeAllocFrontier(safe_alloc_frontier);
+    return safe_alloc_frontier;
+  };
+  if (!sync_dst_compute) {
+    allocation_attr.freed_by_func = &freed_by_func;
+  }
   if (in.dtype() != DT_VARIANT) {
     // Variants are handled by CopyTensor::ViaDMA.
-    Tensor copy(out_allocator, in.dtype(), in.shape());
+    Tensor copy(out_allocator, in.dtype(), in.shape(), allocation_attr);
     *out = copy;
   }
 
   // The following function takes care of cpu->gpu, gpu->cpu, gpu->gpu copies,
   // etc.
-  CopyTensor::ViaDMA(parsed.edge_name, send_args.device_context,
-                     recv_args.device_context, src_device, dst_device,
-                     send_args.alloc_attrs, recv_args.alloc_attrs, &in, out,
-                     0 /*dev_to_dev_stream_index*/, std::move(done));
+  CopyTensor::ViaDMA(
+      parsed.edge_name, send_args.device_context, recv_args.device_context,
+      src_device, dst_device, send_args.alloc_attrs, recv_args.alloc_attrs, &in,
+      out, 0 /*dev_to_dev_stream_index*/, std::move(done), sync_dst_compute);
 }
 
 bool BaseRemoteRendezvous::IsSameWorker(DeviceNameUtils::ParsedName src,
@@ -293,8 +302,11 @@ void BaseRemoteRendezvous::RecvAsync(const ParsedKey& parsed,
                                      const Rendezvous::Args& recv_args,
                                      DoneCallback done) {
   VLOG(1) << "RemoteRendezvous Recv " << this << " " << parsed.FullKey();
-  CHECK(is_initialized()) << "RecvAsync called when uninitialized.";
   Status s = ValidateDevices(parsed, false /*!is_src*/);
+  if (s.ok() && !is_initialized()) {
+    s.Update(errors::Internal(
+        "RecvAsync called when uninitialized (key:", parsed.FullKey(), ")."));
+  }
   if (!s.ok()) {
     done(s, Args(), recv_args, Tensor(), false);
     return;

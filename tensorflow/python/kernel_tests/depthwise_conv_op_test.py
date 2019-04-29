@@ -207,6 +207,7 @@ class DepthwiseConv2DTest(test.TestCase):
             use_gpu=True,
             grouped_conv=True)
 
+  @test_util.run_v1_only("b/120545219")
   def testDepthwiseConv2DWithUnknownShape(self):
     # GitHub issue 22110.
     if not test.is_gpu_available():
@@ -220,6 +221,7 @@ class DepthwiseConv2DTest(test.TestCase):
           np.ones([1, 1, 1, 1], np.float32),
           v.eval(feed_dict={x: np.ones([1, 1, 1, 1], np.float32)}))
 
+  @test_util.run_v1_only("b/120545219")
   def testDepthwiseConv2DFormat(self):
     if not test.is_gpu_available():
       return
@@ -458,6 +460,7 @@ class DepthwiseConv2DTest(test.TestCase):
             use_gpu=True,
             grouped_conv=True)
 
+  @test_util.run_v1_only("b/120545219")
   def testDepthwiseConv2DInputGradFormat(self):
     if not test.is_gpu_available():
       return
@@ -481,7 +484,6 @@ class DepthwiseConv2DTest(test.TestCase):
             data_format="NCHW")
 
   @test_util.run_v1_only("b/120545219")
-  @test_util.disable_xla("This test never passed for XLA")
   def testDepthwiseConv2DFilterGrad(self):
     for index, (input_size, filter_size, output_size, stride,
                 padding) in enumerate(CheckGradConfigsToTest()):
@@ -499,7 +501,7 @@ class DepthwiseConv2DTest(test.TestCase):
             test_input=False,
             use_gpu=True)
 
-  @test_util.disable_xla("This test never passed for XLA")
+  @test_util.run_v1_only("b/120545219")
   def testDepthwiseConv2DFilterGradFormat(self):
     if not test.is_gpu_available():
       return
@@ -614,7 +616,6 @@ class DepthwiseConv2DTest(test.TestCase):
     cpu_value = _GetVal(use_gpu=False)
     self.assertAllClose(cpu_value, gpu_value, rtol=1e-4, atol=1e-4)
 
-  @test_util.disable_xla("This test never passed for XLA")
   def testDepthwiseConv2DFilterGradCompare(self):
     for index, (input_size, filter_size, output_size, stride,
                 padding) in enumerate(ConfigsToTest()):

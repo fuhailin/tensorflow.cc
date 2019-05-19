@@ -18,6 +18,7 @@ limitations under the License.
 // RKZConv2D and RKZConv2DGrad are examples of convolution layer
 // Ref: http://cs231n.github.io/convolutional-networks/
 // Ref: https://wiseodd.github.io/techblog/2016/07/16/convnet-conv-layer/
+// Ref: https://medium.com/@2017csm1006/forward-and-backpropagation-in-convolutional-neural-network-4dfa96d7b37e
 //
 // Author: Rock Zhuang
 // Date  : Feb 07, 2019

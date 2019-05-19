@@ -223,6 +223,8 @@ cc_library_with_android_deps(
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/cc/saved_model:loader",
+        "//tensorflow/cc/tools:freeze_saved_model",
     ],
 )
 

@@ -22,6 +22,8 @@ limitations under the License.
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/protobuf/config.pb.h"
+#include "tensorflow/cc/saved_model/loader.h"
+#include "tensorflow/cc/tools/freeze_saved_model.h"
 
 namespace tensorflow {
 
@@ -156,6 +158,24 @@ Status ClientSession::ReleaseCallable(CallableHandle handle) {
 
 Session* ClientSession::GetSession() {
   return impl()->session_.get();
+}
+
+Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def, tensorflow::GraphDef *frozen_graph_def, 
+                          const std::unordered_set<string>& freezing_outputs) {
+  tensorflow::SavedModelBundle saved_model_bundle;
+  std::unordered_set<std::string> inputs;
+  std::unordered_set<std::string> outputs;
+
+  TF_RETURN_IF_ERROR(tensorflow::AddGraphDefWithOutputsToSavedModelBundle(GetSession(), graph_def, 
+                              freezing_outputs, 
+                              "", 
+                              &saved_model_bundle));
+  TF_RETURN_IF_ERROR(tensorflow::FreezeSavedModel(saved_model_bundle, frozen_graph_def, &inputs, &outputs));
+
+  // Need to release session ownership
+  saved_model_bundle.session.release();
+
+  return Status::OK();
 }
 
 }  // end namespace tensorflow

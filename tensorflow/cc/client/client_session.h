@@ -96,8 +96,9 @@ class ClientSession {
                           std::vector<Tensor>* outputs) const;
 
   // Freeze model into frozen_graph_def
-  Status FreezeModel(tensorflow::GraphDef &graph_def, tensorflow::GraphDef *frozen_graph_def, 
-                          const std::unordered_set<string>& freezing_outputs);
+  Status FreezeModel(tensorflow::GraphDef &graph_def, 
+                     tensorflow::GraphDef *frozen_graph_def, 
+                     const std::unordered_set<string>& freezing_outputs);
 
   /// \brief A handle to a subgraph, created with
   /// `ClientSession::MakeCallable()`.

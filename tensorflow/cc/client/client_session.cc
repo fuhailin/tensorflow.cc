@@ -160,17 +160,23 @@ Session* ClientSession::GetSession() {
   return impl()->session_.get();
 }
 
-Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def, tensorflow::GraphDef *frozen_graph_def, 
-                          const std::unordered_set<string>& freezing_outputs) {
+Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def, 
+                     tensorflow::GraphDef *frozen_graph_def, 
+                     const std::unordered_set<string>& freezing_outputs) {
   tensorflow::SavedModelBundle saved_model_bundle;
   std::unordered_set<std::string> inputs;
   std::unordered_set<std::string> outputs;
 
-  TF_RETURN_IF_ERROR(tensorflow::AddGraphDefWithOutputsToSavedModelBundle(GetSession(), graph_def, 
+  TF_RETURN_IF_ERROR(tensorflow::AddGraphDefWithOutputsToSavedModelBundle(
+                              GetSession(), 
+                              graph_def, 
                               freezing_outputs, 
                               "", 
                               &saved_model_bundle));
-  TF_RETURN_IF_ERROR(tensorflow::FreezeSavedModel(saved_model_bundle, frozen_graph_def, &inputs, &outputs));
+  TF_RETURN_IF_ERROR(tensorflow::FreezeSavedModel(saved_model_bundle, 
+                                                  frozen_graph_def, 
+                                                  &inputs, 
+                                                  &outputs));
 
   // Need to release session ownership
   saved_model_bundle.session.release();

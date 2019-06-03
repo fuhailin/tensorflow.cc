@@ -1,4 +1,5 @@
 <p>Tensorflow C++ Examples</p>
+<p>Check commit history here: https://github.com/rockzhuang/tensorflow/commits?author=rockzhuang</p>
 <p>----------------------------------------------------------------------------------------------</p>
 <p>1) TFRecordDataset and Iterator</p>
 <p>bazel run -c opt //tensorflow/examples/cc/tool:tfrecord_test</p>

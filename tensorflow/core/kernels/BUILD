@@ -7562,6 +7562,7 @@ cc_library(
     deps = [
         ":rnn_ops",
         ":rnn_softmaxloss_hgrad_op",
+        ":rnn_softmaxloss_op",
     ],
 )
 
@@ -7599,6 +7600,19 @@ tf_kernel_library(
 tf_kernel_library(
     name = "rnn_softmaxloss_hgrad_op",
     prefix = "rnn_softmaxloss_hgrad_op",
+    deps = [
+        ":bounds_check",
+        ":blas_gemm",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/kernels:eigen_helpers",
+        "//third_party/eigen3",
+    ],
+)
+
+tf_kernel_library(
+    name = "rnn_softmaxloss_op",
+    prefix = "rnn_softmaxloss_op",
     deps = [
         ":bounds_check",
         ":blas_gemm",

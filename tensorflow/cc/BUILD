@@ -413,12 +413,17 @@ tf_cc_test(
 
 cc_library(
     name = "nn_grad",
-    srcs = ["gradients/nn_grad.cc"],
+    srcs = [
+        "gradients/nn_grad.cc",
+        "gradients/lstm/lstm_ops.cc",    
+        "gradients/lstm/lstm_ops.h",
+    ],
     deps = [
         ":cc_ops",
         ":cc_ops_internal",
         ":grad_op_registry",
         ":gradients",
+        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
     ],
     alwayslink = 1,
 )

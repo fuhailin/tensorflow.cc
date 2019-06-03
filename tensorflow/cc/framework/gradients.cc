@@ -528,6 +528,10 @@ Status SymbolicGradientBuilder::AddGradients() {
         return errors::Internal(
             "Invalid gradient output index: ", dx_index, " size: ", dx.size());
       }
+      // Rock Zhuang: I changed the following line in file edgeset.h, otherwise the in_edges is unordered.
+      //              There is a potential issue that the edges number may exceed the limit.
+      // before: static constexpr int kInline = 64 / sizeof(const void*);
+      // after:  static constexpr int kInline = 256 / sizeof(const void*);
       TF_RETURN_IF_ERROR(
           BackpropAlongEdge(dx[dx_index++], {e->src(), e->src_output()}));
     }

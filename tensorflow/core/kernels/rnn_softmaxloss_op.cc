@@ -15,11 +15,11 @@ limitations under the License.
 
 //
 // Bridge of RNN forward and backward propagation, 
-// to compute loss, h_grad, dw_y, db_y values.
+// to compute loss, dw_y, db_y values.
 // Ref: sparse_xent_op and lstm_ops modules
 //
 // Author: Rock Zhuang
-// Date  : Jan 15, 2019
+// Date  : May 31, 2019
 // 
 
 #define EIGEN_USE_THREADS
@@ -28,7 +28,7 @@ limitations under the License.
 #define EIGEN_USE_GPU
 #endif  // GOOGLE_CUDA
 
-#include "tensorflow/core/kernels/rnn_softmaxloss_hgrad_op.h"
+#include "tensorflow/core/kernels/rnn_softmaxloss_op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -275,9 +275,9 @@ DECLARE_GPU_SPEC(int64);
 
 
 template <typename Device, typename T, typename Index>
-class RNNSoftmaxLossHGradOp : public OpKernel {
+class RNNSoftmaxLossOp : public OpKernel {
  public:
-  explicit RNNSoftmaxLossHGradOp(OpKernelConstruction* context)
+  explicit RNNSoftmaxLossOp(OpKernelConstruction* context)
       : OpKernel(context) {}
 
   void Compute(OpKernelContext* context) override {
@@ -285,6 +285,8 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
     const Tensor& labels = context->input(1);
     const Tensor& w_y_tensor = context->input(2);
     const Tensor& b_y_tensor = context->input(3);
+
+    // LOG(INFO) << __FUNCTION__ << "----------------------------b_y_tensor:" << std::endl << b_y_tensor.DebugString();
 
     int time_len = h_tensor.dim_size(0);
     int batch_size = h_tensor.dim_size(1);
@@ -321,16 +323,6 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
 
     Tensor* loss_out = nullptr; // loss
     OP_REQUIRES_OK(context, context->allocate_output("loss", labels.shape(), &loss_out));
-    Tensor* h_grad = nullptr; // dh
-    OP_REQUIRES_OK(context, context->allocate_output("h_grad", h_tensor.shape(), &h_grad));
-
-    TensorShape dw_y_shape({input_size, num_units});
-    Tensor* dw_y_tensor;
-    OP_REQUIRES_OK(context, context->allocate_output("dw_y", dw_y_shape, &dw_y_tensor));
-
-    TensorShape db_y_shape({input_size});
-    Tensor* db_y_tensor;
-    OP_REQUIRES_OK(context, context->allocate_output("db_y", db_y_shape, &db_y_tensor));
 
     Tensor* p_out = nullptr; // p
     TensorShape p_shape({time_len, batch_size, input_size});
@@ -338,9 +330,8 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
 
     const Device& device = context->eigen_device<Device>();
 
-    functor::TensorZero<Device, T>()(device, h_grad->flat<T>());
-    functor::TensorZero<Device, T>()(device, dw_y_tensor->flat<T>());
-    functor::TensorZero<Device, T>()(device, db_y_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, loss_out->flat<T>());
+    functor::TensorZero<Device, T>()(device, p_out->flat<T>());
 
     SliceHelper<Device, T> slicer(context);
     SliceHelper<Device, Index> slicer2(context);
@@ -351,15 +342,13 @@ class RNNSoftmaxLossHGradOp : public OpKernel {
       const Tensor labels_sub_tensor = slicer2.InputSliceFromTwoDims(labels, t, "labels_sub");
   
       Tensor loss_out_tensor = slicer.OutputSliceFromTwoDims(loss_out, t, "loss_sub");
-      Tensor hgrad_tensor = slicer.OutputSlice(h_grad, t, "h_grad_sub");
       Tensor p_out_tensor = slicer.OutputSlice(p_out, t, "p_sub");
 
       functor::SparseXentFunctor<Device, T, Index> functor;
       functor(context, device, h_sub_tensor.matrix<T>(),
               labels_sub_tensor.vec<Index>(), w_y_tensor.matrix<T>(), b_y_tensor.vec<T>(), 
               logits.matrix<T>(), scratch.vec<T>(), backprop.matrix<T>(),
-              p_out_tensor.matrix<T>(), loss_out_tensor.vec<T>(), 
-              hgrad_tensor.matrix<T>(), dw_y_tensor->matrix<T>(), db_y_tensor->vec<T>());
+              p_out_tensor.matrix<T>(), loss_out_tensor.vec<T>());
 
       slicer.FinishTimeStep();
       slicer2.FinishTimeStep();
@@ -376,8 +365,7 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
                   typename TTypes<Index>::ConstVec labels,
                   typename TTypes<T>::ConstMatrix w_y, typename TTypes<T>::ConstVec b_y, 
                   typename TTypes<T>::Matrix logits, typename TTypes<T>::Vec scratch, typename TTypes<T>::Matrix backprop, 
-                  typename TTypes<T>::Matrix p, typename TTypes<T>::Vec loss, typename TTypes<T>::Matrix h_grad,
-                  typename TTypes<T>::Matrix dw_y, typename TTypes<T>::Vec db_y) {
+                  typename TTypes<T>::Matrix p, typename TTypes<T>::Vec loss) {
     // const int kBatchDim = 0;
     const int kClassDim = 1;
 
@@ -447,40 +435,6 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
         backprop.dimension(1) /* max_depth */);
     To32Bit(loss).device(d) =
         To32Bit(backprop).generate(sparse_xent_loss_gen).sum(along_class);
-
-    // backprop (dy here): prob - labels, where
-    //   prob (p) = exp(logits - max_logits) / sum(exp(logits - max_logits))
-    To32Bit(backprop).device(d) = To32Bit(backprop).exp();
-    generator::SparseXentGradGenerator<T, Index> sparse_xent_grad_gen(
-        sparse_xent_helpers::To32BitConst<T>(backprop),
-        sparse_xent_helpers::To32BitConst<T>(scratch), To32Bit(labels),
-        backprop.dimension(1) /* max_depth */);
-    To32Bit(backprop).device(d) =
-        To32Bit(backprop).generate(sparse_xent_grad_gen);
-
-    // dW_y += np.dot(dy, h.T), for a batch
-    
-    // CPU Version
-    // Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> contract_pairs2;
-    // contract_pairs2[0] = Eigen::IndexPair<Eigen::DenseIndex>(0, 0);
-    // To32Bit(dw_y).device(d) += To32Bit(backprop).contract(h, contract_pairs2);
-
-    typename TTypes<T>::ConstMatrix const_backprop(backprop.data(), backprop.dimensions());
-    TensorBlasGemm<CPUDevice, T, false>::compute(
-        ctx, d, true, false, 1.f, const_backprop, h, 1.f, dw_y);
-
-    // db_y += dy, for a batch
-    db_y.device(d) += backprop.sum(Eigen::array<int, 1>({0}));
-
-    // dh = np.dot(W_y.T, dy), for a batch
-
-    // CPU Version
-    // Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> contract_pairs3;
-    // contract_pairs3[0] = Eigen::IndexPair<Eigen::DenseIndex>(1, 0);
-    // To32Bit(h_grad).device(d) = To32Bit(backprop).contract(To32Bit(w_y), contract_pairs3);
-    TensorBlasGemm<CPUDevice, T, false>::compute(
-        ctx, d, false, false, 1.f, const_backprop, w_y, 0.f, h_grad);
-
   }
 };
 
@@ -488,11 +442,11 @@ struct SparseXentFunctor<CPUDevice, T, Index> {
 
 #define REGISTER(Dev, T, Index)                   \
   REGISTER_KERNEL_BUILDER(                        \
-      Name("RNNSoftmaxLossHGrad") \
+      Name("RNNSoftmaxLoss") \
           .Device(DEVICE_##Dev)                   \
           .TypeConstraint<T>("T")                 \
           .TypeConstraint<Index>("Tlabels"),      \
-      RNNSoftmaxLossHGradOp<Dev##Device, T, Index>);
+      RNNSoftmaxLossOp<Dev##Device, T, Index>);
 REGISTER(CPU, float, int32)
 REGISTER(CPU, float, int64)
 REGISTER(CPU, double, int32)
@@ -539,6 +493,163 @@ DECLARE_GPU_SPEC(int32);
 }  // end namespace functor
 
 #endif  // GOOGLE_CUDA
+
+#undef REGISTER
+
+//
+// Grad
+//
+
+template <typename Device, typename T, typename Index>
+class RNNSoftmaxLossGradOp : public OpKernel {
+ public:
+  explicit RNNSoftmaxLossGradOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& h_tensor = context->input(0);
+    const Tensor& labels = context->input(1);
+    const Tensor& w_y_tensor = context->input(2);
+    const Tensor& b_y_tensor = context->input(3);
+    const Tensor& p_tensor = context->input(4);
+
+    // LOG(INFO) << __FUNCTION__ << "----------------------------p_tensor:" << std::endl << p_tensor.DebugString();
+
+    int time_len = h_tensor.dim_size(0);
+    int batch_size = h_tensor.dim_size(1);
+    int num_units = h_tensor.dim_size(2);
+    int input_size = w_y_tensor.dim_size(0);
+
+    OP_REQUIRES(context, h_tensor.dims() == 3,
+              errors::InvalidArgument("h_tensor must be 3-dimensional: ",
+                                      h_tensor.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(labels.shape()),
+                errors::InvalidArgument("labels must be 2-D, but got shape ",
+                                        labels.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(w_y_tensor.shape()),
+                errors::InvalidArgument("w_y_tensor must be 2-D, but got shape ",
+                                        w_y_tensor.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(b_y_tensor.shape()),
+                errors::InvalidArgument("labels must be 1-D, but got shape ",
+                                        b_y_tensor.shape().DebugString()));
+    OP_REQUIRES(context, p_tensor.dims() == 3,
+              errors::InvalidArgument("p_tensor must be 3-dimensional: ",
+                                      p_tensor.shape().DebugString()));
+
+    Tensor backprop; // dy
+    TensorShape backprop_shape({batch_size, input_size});
+    OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<T>::value,
+                                                   backprop_shape, &backprop));
+
+    // output 
+    Tensor* h_grad = nullptr; // dh
+    OP_REQUIRES_OK(context, context->allocate_output("h_grad", h_tensor.shape(), &h_grad));
+
+    // {TIME_LEN, BATCH_SIZE, NUM_UNIT}
+    Tensor* cs_grad = nullptr; // cs
+    TensorShape cs_grad_shape({time_len, batch_size, num_units});
+    OP_REQUIRES_OK(context, context->allocate_output("cs_grad", cs_grad_shape, &cs_grad));
+
+    TensorShape dw_y_shape({input_size, num_units});
+    Tensor* dw_y_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output("dw_y", dw_y_shape, &dw_y_tensor));
+
+    TensorShape db_y_shape({input_size});
+    Tensor* db_y_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output("db_y", db_y_shape, &db_y_tensor));
+
+
+    const Device& device = context->eigen_device<Device>();
+
+    functor::TensorZero<Device, T>()(device, h_grad->flat<T>());
+    functor::TensorZero<Device, T>()(device, cs_grad->flat<T>()); // TODO: how to do with cs_grad? 
+    functor::TensorZero<Device, T>()(device, dw_y_tensor->flat<T>());
+    functor::TensorZero<Device, T>()(device, db_y_tensor->flat<T>());
+
+    SliceHelper<Device, T> slicer(context);
+    SliceHelper<Device, Index> slicer2(context);
+
+    // Reverse order
+    for(int t = time_len - 1; t >= 0; t--) {  
+      const Tensor h_sub_tensor = slicer.InputSlice(h_tensor, t, "h_sub");
+      const Tensor labels_sub_tensor = slicer2.InputSliceFromTwoDims(labels, t, "labels_sub");
+  
+      Tensor p_sub_tensor = slicer.InputSlice(p_tensor, t, "p_sub");
+
+      Tensor hgrad_tensor = slicer.OutputSlice(h_grad, t, "h_grad_sub");
+
+      // LOG(INFO) << __FUNCTION__ << "----------------------------p_sub_tensor:" << std::endl << p_sub_tensor.DebugString();
+
+      functor::GradFunctor<Device, T, Index> functor;
+      functor(context, device, h_sub_tensor.matrix<T>(),
+              labels_sub_tensor.vec<Index>(), p_sub_tensor.matrix<T>(),
+              w_y_tensor.matrix<T>(), b_y_tensor.vec<T>(), 
+              backprop.matrix<T>(), 
+              hgrad_tensor.matrix<T>(), dw_y_tensor->matrix<T>(), db_y_tensor->vec<T>());
+
+      slicer.FinishTimeStep();
+      slicer2.FinishTimeStep();
+    }
+  }
+};
+
+
+
+// Partial specialization for a CPUDevice, that uses the Eigen implementation
+// from XentEigenImpl.
+namespace functor {
+template <typename T, typename Index>
+struct GradFunctor<CPUDevice, T, Index> {
+  void operator()(OpKernelContext* ctx, const CPUDevice& d, typename TTypes<T>::ConstMatrix h,
+                  typename TTypes<Index>::ConstVec labels, typename TTypes<T>::Matrix p, 
+                  typename TTypes<T>::ConstMatrix w_y, typename TTypes<T>::ConstVec b_y, 
+                  typename TTypes<T>::Matrix backprop, 
+                  typename TTypes<T>::Matrix h_grad,
+                  typename TTypes<T>::Matrix dw_y, typename TTypes<T>::Vec db_y) {
+    // backprop (dy here): prob - labels
+    generator::RNNSoftmaxLossGradGenerator<T, Index> sparse_xent_grad_gen(
+        sparse_xent_helpers::To32BitConst<T>(p), To32Bit(labels),
+        p.dimension(1) /* max_depth */);
+    To32Bit(backprop).device(d) =
+        To32Bit(p).generate(sparse_xent_grad_gen);
+
+    // dW_y += np.dot(dy, h.T), for a batch
+    typename TTypes<T>::ConstMatrix const_backprop(backprop.data(), backprop.dimensions());
+    TensorBlasGemm<CPUDevice, T, false>::compute(
+        ctx, d, true, false, 1.f, const_backprop, h, 1.f, dw_y);
+
+    // db_y += dy, for a batch
+    db_y.device(d) += backprop.sum(Eigen::array<int, 1>({0}));
+
+    // dh = np.dot(W_y.T, dy), for a batch
+    TensorBlasGemm<CPUDevice, T, false>::compute(
+        ctx, d, false, false, 1.f, const_backprop, w_y, 0.f, h_grad);
+  }
+};
+
+}  // namespace functor
+
+
+#define REGISTER(Dev, T, Index)                   \
+  REGISTER_KERNEL_BUILDER(                        \
+      Name("RNNSoftmaxLossGrad") \
+          .Device(DEVICE_##Dev)                   \
+          .TypeConstraint<T>("T")                 \
+          .TypeConstraint<Index>("Tlabels"),      \
+      RNNSoftmaxLossGradOp<Dev##Device, T, Index>);
+REGISTER(CPU, float, int32)
+REGISTER(CPU, float, int64)
+REGISTER(CPU, double, int32)
+REGISTER(CPU, double, int64)
+REGISTER(CPU, Eigen::half, int32)
+REGISTER(CPU, Eigen::half, int64)
+
+#if GOOGLE_CUDA
+REGISTER(GPU, float, int32)
+REGISTER(GPU, float, int64)
+REGISTER(GPU, Eigen::half, int32)
+REGISTER(GPU, Eigen::half, int64)
+#endif
 
 #undef REGISTER
 

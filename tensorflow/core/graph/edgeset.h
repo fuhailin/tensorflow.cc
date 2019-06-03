@@ -57,7 +57,7 @@ class EdgeSet {
   // If ptrs_[0] == this then ptrs_[1] points to a set<const Edge*>.
   // kInline must be >= 2, and is chosen such that ptrs_ fills a 64 byte
   // cacheline.
-  static constexpr int kInline = 64 / sizeof(const void*);
+  static constexpr int kInline = 256 / sizeof(const void*);
   const void* ptrs_[kInline];
 
   gtl::FlatSet<const Edge*>* get_set() const {

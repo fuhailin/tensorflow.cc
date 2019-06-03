@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "tensorflow/cc/framework/grad_op_registry.h"
 #include "tensorflow/cc/framework/gradients.h"
+#include "lstm/lstm_ops.h"
 
 namespace tensorflow {
 namespace ops {
@@ -136,6 +137,68 @@ Status SparseSoftmaxCrossEntropyWithLogitsGrad(const Scope& scope, const Operati
   return scope.status();
 }
 REGISTER_GRADIENT_OP("SparseSoftmaxCrossEntropyWithLogits", SparseSoftmaxCrossEntropyWithLogitsGrad);
+
+Status RNNSoftmaxLossGradFn(const Scope& scope, const Operation& op,
+                   const std::vector<Output>& grad_inputs,
+                   std::vector<Output>* grad_outputs) {
+  auto h = op.input(0);
+  auto y = op.input(1);
+  auto w_y = op.input(2);
+  auto b_y = op.input(3);
+
+  auto p = op.output(1);
+
+  auto grad = RNNSoftmaxLossGrad(scope, h, y, w_y, b_y, p);
+
+  grad_outputs->push_back(Identity(scope.WithOpName("h_grad"), grad.h_grad));
+  grad_outputs->push_back(NoGradient());
+  grad_outputs->push_back(Identity(scope.WithOpName("dw_y"), grad.dw_y));
+  grad_outputs->push_back(Identity(scope.WithOpName("db_y"), grad.db_y));
+  grad_outputs->push_back(Identity(scope.WithOpName("cs_grad"), grad.cs_grad));
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("RNNSoftmaxLoss", RNNSoftmaxLossGradFn);
+
+Status BlockLSTMGradFn(const Scope& scope, const Operation& op,
+                   const std::vector<Output>& grad_inputs,
+                   std::vector<Output>* grad_outputs) {
+
+  auto block_lstm_grad = BlockLSTMGrad(scope,
+                              op.input(0), // seq_len_max,
+                              op.input(1), 
+                              op.input(2),
+                              op.input(3),
+                              op.input(4),
+                              op.input(5), // wci
+                              op.input(6), // wcf
+                              op.input(7), // wco
+                              op.input(8),
+                              op.output(0),
+                              op.output(1),
+                              op.output(2),
+                              op.output(3),
+                              op.output(4),
+                              op.output(5),
+                              op.output(6),
+                              grad_inputs[4], // cs_grad
+                              grad_inputs[0], // h_grad
+                              false           // use_peephole
+                              );
+
+  grad_outputs->push_back(NoGradient());
+  grad_outputs->push_back(Identity(scope.WithOpName("x_grad"), block_lstm_grad.x_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("cs_prev_grad"), block_lstm_grad.cs_prev_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("h_prev_grad"), block_lstm_grad.h_prev_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("w_grad"), block_lstm_grad.w_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("wci_grad"), block_lstm_grad.wci_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("wcf_grad"), block_lstm_grad.wcf_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("wco_grad"), block_lstm_grad.wco_grad));
+  grad_outputs->push_back(Identity(scope.WithOpName("b_grad"), block_lstm_grad.b_grad));
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("BlockLSTM", BlockLSTMGradFn);
 
 Status LogSoftmaxGrad(const Scope& scope, const Operation& op,
                       const std::vector<Output>& grad_inputs,

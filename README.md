@@ -14,6 +14,7 @@
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:rnn_ops_restore</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_ops_test</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_multi_layers</p>
+<p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_multi_layers_autograd</p>
 <br/>
 <p>4) Magenta melody basic_rnn module</p>
 <p>cp -r tensorflow/examples/cc/magenta/data /tmp/</p>

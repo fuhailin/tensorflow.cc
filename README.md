@@ -19,6 +19,7 @@
 <p>cp -r tensorflow/examples/cc/magenta/data /tmp/</p>
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_basic_rnn</p>
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_lstm_train</p>
+<p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_lstm_autograd</p>
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_cudnn_rnn</p>
 <br/>
 <p>5) GeneratorDataset</p>

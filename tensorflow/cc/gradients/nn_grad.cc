@@ -181,8 +181,8 @@ Status BlockLSTMGradFn(const Scope& scope, const Operation& op,
                               op.output(4),
                               op.output(5),
                               op.output(6),
-                              grad_inputs[4], // cs_grad
-                              grad_inputs[0], // h_grad
+                              grad_inputs[1], // cs_grad
+                              grad_inputs[6], // h_grad: i-th output's backpropped gradients of BlockLSTM
                               false           // use_peephole
                               );
 

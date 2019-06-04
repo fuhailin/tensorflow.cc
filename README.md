@@ -13,6 +13,7 @@
 <p>3) RNN</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:rnn_ops_test</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:rnn_ops_restore</p>
+<p>bazel run -c opt //tensorflow/examples/cc/rnn:rnn_ops_restore_by_clientsession</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_ops_test</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_multi_layers</p>
 <p>bazel run -c opt //tensorflow/examples/cc/rnn:lstm_multi_layers_autograd</p>

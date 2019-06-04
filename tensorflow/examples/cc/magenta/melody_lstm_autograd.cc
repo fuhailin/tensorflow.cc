@@ -300,7 +300,6 @@ int main() {
 
   auto cs_prev = Placeholder(root, DT_FLOAT, Placeholder::Shape({BATCH_SIZE, NUM_UNIT})); // (batch_size, cell_size)
   auto h_prev = Placeholder(root, DT_FLOAT, Placeholder::Shape({BATCH_SIZE, NUM_UNIT}));
-  auto cs_grad = Placeholder(root, DT_FLOAT, Placeholder::Shape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
 
   // LSTM
   auto block_lstm = BlockLSTM(root, 

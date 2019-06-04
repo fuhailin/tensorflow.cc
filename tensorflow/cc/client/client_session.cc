@@ -127,6 +127,7 @@ Status ClientSession::Run(const RunOptions& run_options, const FeedType& inputs,
                                target_node_names, outputs, run_metadata);
 }
 
+// Directly pass parameters to Session.Run
 Status ClientSession::Run(const RunOptions& run_options,
                           const std::vector<std::pair<string, Tensor>> feeds,
                           const std::vector<string>& output_tensor_names,
@@ -183,5 +184,24 @@ Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def,
 
   return Status::OK();
 }
+
+// Reads a model graph definition from disk
+Status ClientSession::restoreModel(const string& graph_file_name) {
+  GraphDef graph_def;
+  Status load_graph_status =
+      ReadTextProto(Env::Default(), graph_file_name, &graph_def);
+  if (!load_graph_status.ok()) {
+    return errors::NotFound("Failed to load compute graph at '",
+                                        graph_file_name, "'");
+  }
+
+  Status session_create_status = GetSession()->Create(graph_def);
+  if (!session_create_status.ok()) {
+    return session_create_status;
+  }
+
+  return Status::OK();
+}
+
 
 }  // end namespace tensorflow

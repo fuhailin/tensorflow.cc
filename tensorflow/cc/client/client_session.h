@@ -100,6 +100,9 @@ class ClientSession {
                      tensorflow::GraphDef *frozen_graph_def, 
                      const std::unordered_set<string>& freezing_outputs);
 
+  // Reads a model graph definition from disk
+  Status restoreModel(const string& graph_file_name);
+
   /// \brief A handle to a subgraph, created with
   /// `ClientSession::MakeCallable()`.
   typedef int64 CallableHandle;

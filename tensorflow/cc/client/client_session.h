@@ -101,7 +101,7 @@ class ClientSession {
                      const std::unordered_set<string>& freezing_outputs);
 
   // Reads a model graph definition from disk
-  Status restoreModel(const string& graph_file_name);
+  Status RestoreModel(const string& graph_file_name) const;
 
   /// \brief A handle to a subgraph, created with
   /// `ClientSession::MakeCallable()`.

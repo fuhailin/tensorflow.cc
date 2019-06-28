@@ -186,7 +186,7 @@ Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def,
 }
 
 // Reads a model graph definition from disk
-Status ClientSession::restoreModel(const string& graph_file_name) {
+Status ClientSession::RestoreModel(const string& graph_file_name) const {
   GraphDef graph_def;
   Status load_graph_status =
       ReadTextProto(Env::Default(), graph_file_name, &graph_def);
@@ -195,7 +195,7 @@ Status ClientSession::restoreModel(const string& graph_file_name) {
                                         graph_file_name, "'");
   }
 
-  Status session_create_status = GetSession()->Create(graph_def);
+  Status session_create_status = impl()->session_->Create(graph_def);
   if (!session_create_status.ok()) {
     return session_create_status;
   }

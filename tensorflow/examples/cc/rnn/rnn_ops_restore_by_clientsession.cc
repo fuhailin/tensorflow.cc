@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
   ClientSession clientSession(root);
 
   // First we load and initialize the model.
-  Status load_graph_status = clientSession.restoreModel(graph_path);
+  Status load_graph_status = clientSession.RestoreModel(graph_path);
   if (!load_graph_status.ok()) {
     LOG(ERROR) << load_graph_status;
     return -1;

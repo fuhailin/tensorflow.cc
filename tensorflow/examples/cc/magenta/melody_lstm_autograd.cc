@@ -363,7 +363,10 @@ int main() {
 
     // Train
     {
-      // Note that every input batch in BATCH_SIZE is from a different example
+      // Note that every input batch in BATCH_SIZE is from a different example with
+      // same begin and end position.
+      // In this example, there is only one example used, so it is from a same example with
+      // same begin and end position.
       Tensor x_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
       {
         auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, INPUT_SIZE});

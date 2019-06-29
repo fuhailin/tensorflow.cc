@@ -173,6 +173,7 @@ REGISTER_OP("RNNSoftmaxLoss")
     .Input("cs: T")
     .Output("loss: T")
     .Output("p: T")
+    .Output("logits: T")
     .Attr("T: {half, bfloat16, float, double}")
     .Attr("Tlabels: {int32, int64} = DT_INT64")
     .SetShapeFn([](InferenceContext* c) {
@@ -192,6 +193,7 @@ REGISTER_OP("RNNSoftmaxLoss")
 
       c->set_output(0, c->Matrix(time_len, batch_size));
       c->set_output(1, c->MakeShape({time_len, batch_size, input_size}));
+      c->set_output(2, c->MakeShape({time_len, batch_size, input_size}));  // for logits
       
       return Status::OK();
     })

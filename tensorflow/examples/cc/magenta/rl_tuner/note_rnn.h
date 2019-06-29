@@ -28,15 +28,14 @@ limitations under the License.
 #include "tensorflow/examples/cc/magenta/lstm/lstm_ops.h"
 #include "tensorflow/cc/framework/gradients.h"
 
-using namespace tensorflow::ops;
-using namespace tensorflow::ops::internal;
-using namespace std;
+using tensorflow::ops::BlockLSTM;
+using tensorflow::ops::RNNSoftmaxLoss;
 
 namespace tensorflow {
 
 class NoteRNN {
  public:
-  explicit NoteRNN(const ::tensorflow::Scope& s);
+  explicit NoteRNN(const ::tensorflow::Scope& s, const ClientSession &ses);
   ~NoteRNN();
 
   Status Init();
@@ -80,6 +79,17 @@ class NoteRNN {
 
   Output logits;
 
+  Output rate;
+  Output random_value;
+  Output assign_w;
+  Output assign_b;
+  Output random_value2;
+  Output assign_w_y;
+  Output assign_b_y;
+  Output assign_ada_w;
+  Output assign_ada_b;
+  Output assign_ada_w_y;
+  Output assign_ada_b_y;
 
  private:
   Status BuildGraph();

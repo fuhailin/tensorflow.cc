@@ -306,11 +306,6 @@ class RNNSoftmaxLossOp : public OpKernel {
                 errors::InvalidArgument("labels must be 1-D, but got shape ",
                                         b_y_tensor.shape().DebugString()));
 
-    Tensor logits; // y_bar
-    TensorShape logits_shape({batch_size, input_size});
-    OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<T>::value,
-                                                   logits_shape, &logits));
-
     Tensor scratch; // temp variable
     TensorShape scratch_shape({batch_size});
     OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<T>::value,
@@ -328,10 +323,15 @@ class RNNSoftmaxLossOp : public OpKernel {
     TensorShape p_shape({time_len, batch_size, input_size});
     OP_REQUIRES_OK(context, context->allocate_output("p", p_shape, &p_out));
 
+    Tensor *logits_out; // y_s or y'
+    TensorShape logits_shape({time_len, batch_size, input_size});
+    OP_REQUIRES_OK(context, context->allocate_output("logits", logits_shape, &logits_out));
+
     const Device& device = context->eigen_device<Device>();
 
     functor::TensorZero<Device, T>()(device, loss_out->flat<T>());
     functor::TensorZero<Device, T>()(device, p_out->flat<T>());
+    functor::TensorZero<Device, T>()(device, logits_out->flat<T>());
 
     SliceHelper<Device, T> slicer(context);
     SliceHelper<Device, Index> slicer2(context);
@@ -343,6 +343,7 @@ class RNNSoftmaxLossOp : public OpKernel {
   
       Tensor loss_out_tensor = slicer.OutputSliceFromTwoDims(loss_out, t, "loss_sub");
       Tensor p_out_tensor = slicer.OutputSlice(p_out, t, "p_sub");
+      Tensor logits = slicer.OutputSlice(logits_out, t, "logits_sub");
 
       functor::SparseXentFunctor<Device, T, Index> functor;
       functor(context, device, h_sub_tensor.matrix<T>(),

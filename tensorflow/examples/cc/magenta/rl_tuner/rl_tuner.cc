@@ -32,20 +32,25 @@ limitations under the License.
 #define EXPLORATION_PERIOD 5000
 
 #define REWARD_SCALER 0.1
-#define C_MAJOR_KEY {0, 1, 2, 4, 6, 7, 9, 11, 13, 14, 16, 18, \
-                     19, 21, 23, 25, 26, 28, 30, 31, 33, 35, 37}
+#define C_MAJOR_KEY {0, 1, 2, 4, 6, 7, 9, 11, 13, 14, 16, 18, 19, 21, 23, 25, 26, 28, 30, 31, 33, 35, 37}
 
+#define GRAPH_PATH "/tmp/magenta_frozen.pb"
+
+using tensorflow::DT_FLOAT;
+using tensorflow::DT_UINT8;
+using tensorflow::Output;
+using tensorflow::TensorShape;
+using std::vector;
 using namespace tensorflow::ops;
 using namespace tensorflow::ops::internal;
-using namespace std;
 
 namespace tensorflow {
 
 RLTuner::RLTuner()
     : scope(Scope::NewRootScope()), session(scope),
-      q_network(NoteRNN(scope)),
-      target_q_network(NoteRNN(scope)),
-      reward_rnn(NoteRNN(scope)) {
+      q_network(NoteRNN(scope, session)),
+      target_q_network(NoteRNN(scope, session)),
+      reward_rnn(NoteRNN(scope, session)) {
   this->Init();
 }
 
@@ -64,14 +69,12 @@ Status RLTuner::Init() {
 
   this->BuildGraph();
 
-  string graph_path = "/tmp/magenta_frozen.pb";
-
   this->q_network.Init();
-  this->q_network.Restore(graph_path);
+  this->q_network.Restore(GRAPH_PATH);
   this->target_q_network.Init();
-  this->target_q_network.Restore(graph_path);
+  this->target_q_network.Restore(GRAPH_PATH);
   this->reward_rnn.Init();
-  this->reward_rnn.Restore(graph_path);
+  this->reward_rnn.Restore(GRAPH_PATH);
 
   return Status::OK();
 }
@@ -99,23 +102,23 @@ Status RLTuner::BuildGraph() {
 
   // Rewards are observed from the environment and are fed in later.
   this->rewards = Placeholder(this->scope, DT_FLOAT,
-                              Placeholder::Shape({MINIBATCH_SIZE, NUM_UNIT}));
+                              Placeholder::Shape({MINIBATCH_SIZE, INPUT_SIZE}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // target_vals
-  this->target_vals = ReduceMax(this->scope, this->next_action_scores, 0);
+  this->target_vals = ReduceMax(this->scope, this->next_action_scores, 1);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Total rewards are the observed rewards plus
   // discounted estimated future rewards.
   this->future_rewards = Add(this->scope, this->rewards,
                              Mul(this->scope, this->target_vals,
-                             Cast(this->scope, DISCOUNT_RATE, DT_FLOAT)));
+                                 Cast(this->scope, DISCOUNT_RATE, DT_FLOAT)));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // q_value_prediction
   this->action_mask = Placeholder(this->scope, DT_FLOAT,
-                                  Placeholder::Shape({MINIBATCH_SIZE, this->num_actions}));
+                                  Placeholder::Shape({INPUT_SIZE, this->num_actions}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   this->masked_action_scores = ReduceSum(this->scope,
@@ -123,52 +126,62 @@ Status RLTuner::BuildGraph() {
                                          1);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  auto temp_diff = Sub(this->scope, this->masked_action_scores, this->future_rewards);
+  this->temp_diff = Sub(this->scope, this->masked_action_scores, this->future_rewards);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Prediction error is the mean squared error between the reward the
   // network actually received for a given action, and what it expected to
   // receive.
-  this->prediction_error = ReduceMean(this->scope, Square(this->scope, temp_diff), 0);
+  this->prediction_error = ReduceMean(this->scope, Square(this->scope, this->temp_diff), 0);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Gradients
   TF_CHECK_OK(AddSymbolicGradients(this->scope, {this->prediction_error},
                                    {this->q_network.w, this->q_network.b, this->q_network.w_y, this->q_network.b_y},
-                                   &grad_outputs));
+                                   &this->grad_outputs));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  auto lr = Cast(this->scope, 0.03, DT_FLOAT);
+  this->lr = Cast(this->scope, 0.03, DT_FLOAT);
 
-  // Clip gradients. (TODO)
+  // Clip gradients. TODO(Rock)
       // for i, (grad, var) in enumerate(this->gradients):
       //   if grad is not None:
       //     this->gradients[i] = (tf.clip_by_norm(grad, 5), var)
 
   // alternative of ApplyAdagrad
-  apply_w = ApplyAdagradTrick(this->scope, this->q_network.w, this->q_network.ada_w, lr, grad_outputs[0]);
+  this->apply_w = ApplyAdagradTrick(this->scope, this->q_network.w,
+                                    this->q_network.ada_w, this->lr, this->grad_outputs[0]);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  apply_b = ApplyAdagradTrick(this->scope, this->q_network.b, this->q_network.ada_b, lr, grad_outputs[1]);
+  this->apply_b = ApplyAdagradTrick(this->scope, this->q_network.b, this->q_network.ada_b,
+                                    this->lr, this->grad_outputs[1]);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  apply_w_y = ApplyAdagradTrick(this->scope, this->q_network.w_y, this->q_network.ada_w_y, lr, grad_outputs[2]);
+  this->apply_w_y = ApplyAdagradTrick(this->scope, this->q_network.w_y, this->q_network.ada_w_y,
+                                      this->lr, this->grad_outputs[2]);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  apply_b_y = ApplyAdagradTrick(this->scope, this->q_network.b_y, this->q_network.ada_b_y, lr, grad_outputs[3]);
+  this->apply_b_y = ApplyAdagradTrick(this->scope, this->q_network.b_y, this->q_network.ada_b_y,
+                                      this->lr, this->grad_outputs[3]);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // target_network_update: w, b, w_y, b_y
   this->update_target_w = this->AssignSub(this->target_q_network.w, this->q_network.w);
+  LOG(INFO) << "Node building status: " << this->scope.status();
   this->update_target_b = this->AssignSub(this->target_q_network.b, this->q_network.b);
+  LOG(INFO) << "Node building status: " << this->scope.status();
   this->update_target_w_y = this->AssignSub(this->target_q_network.w_y, this->q_network.w_y);
+  LOG(INFO) << "Node building status: " << this->scope.status();
   this->update_target_b_y = this->AssignSub(this->target_q_network.b_y, this->q_network.b_y);
+  LOG(INFO) << "Node building status: " << this->scope.status();
+
+  return this->scope.status();
 }
 
 // target = (1 - TARGET_NETWORK_UPDATE_RATE) * target + TARGET_NETWORK_UPDATE_RATE * source;
-Add RLTuner::AssignSub(const Output &target, const Output &source) {
-  Add update_target = Add(this->scope,
+Output RLTuner::AssignSub(Output &target, const Output &source) {
+  target = Add(this->scope,
                   Mul(this->scope, Cast(this->scope, 1 - TARGET_NETWORK_UPDATE_RATE,  DT_FLOAT), target),
                   Mul(this->scope, Cast(this->scope, TARGET_NETWORK_UPDATE_RATE,  DT_FLOAT), source));
 
-  return update_target;
+  return target;
 }
 
 void RLTuner::Train() {
@@ -387,8 +400,10 @@ void RLTuner::Store(const Tensor &observation, const Tensor &state_h, const Tens
 
 // RewardFromRewardRnnScores
 double RLTuner::RewardFromRewardRnnScores(const Tensor &action, const Tensor &reward_scores) {
+  auto action_vec = action.shaped<float, 1>({INPUT_SIZE});
+
   // argmax
-  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action.vec<float>().argmax();
+  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action_vec.argmax();
 
   Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.vec<float>();
 

@@ -71,6 +71,9 @@ class RLTuner {
   Output update_target_w_y;
   Output update_target_b_y;
 
+  Output temp_diff;
+  Output lr;
+
   int discount_rate;
   int num_actions;
   int actions_executed_so_far;
@@ -110,7 +113,7 @@ class RLTuner {
              const Tensor &new_reward_state_c);
 
   double Random();
-  Add AssignSub(const Output &target, const Output &source);
+  Output AssignSub(Output &target, const Output &source);
 
   // Reward
   double RewardFromRewardRnnScores(const Tensor &action,

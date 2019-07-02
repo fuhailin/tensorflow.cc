@@ -29,7 +29,6 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import string_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_string_ops
-from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import test
 from tensorflow.python.util import compat
 
@@ -171,8 +170,7 @@ class StringSplitOpTest(test.TestCase):
       self.assertAllEqual(shape, [3, 1])
 
 
-class StringSplitV2OpTest(ragged_test_util.RaggedTensorTestCase,
-                          parameterized.TestCase):
+class StringSplitV2OpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
 
   @parameterized.named_parameters([
       {"testcase_name": "Simple",
@@ -271,9 +269,18 @@ class StringSplitV2OpTest(ragged_test_util.RaggedTensorTestCase,
         expected, ragged_rank=input.shape.ndims)
     actual_ragged_v1 = ragged_string_ops.strings_split_v1(
         input, result_type="RaggedTensor", **kwargs)
+    actual_ragged_v1_input_kwarg = ragged_string_ops.strings_split_v1(
+        input=input, result_type="RaggedTensor", **kwargs)
+    actual_ragged_v1_source_kwarg = ragged_string_ops.strings_split_v1(
+        source=input, result_type="RaggedTensor", **kwargs)
     actual_ragged_v2 = ragged_string_ops.string_split_v2(input, **kwargs)
-    self.assertRaggedEqual(expected_ragged, actual_ragged_v1)
-    self.assertRaggedEqual(expected_ragged, actual_ragged_v2)
+    actual_ragged_v2_input_kwarg = ragged_string_ops.string_split_v2(
+        input=input, **kwargs)
+    self.assertAllEqual(expected_ragged, actual_ragged_v1)
+    self.assertAllEqual(expected_ragged, actual_ragged_v1_input_kwarg)
+    self.assertAllEqual(expected_ragged, actual_ragged_v1_source_kwarg)
+    self.assertAllEqual(expected_ragged, actual_ragged_v2)
+    self.assertAllEqual(expected_ragged, actual_ragged_v2_input_kwarg)
 
     # Check that the internal version (which returns a SparseTensor) works
     # correctly.  Note: the internal version oly supports vector inputs.

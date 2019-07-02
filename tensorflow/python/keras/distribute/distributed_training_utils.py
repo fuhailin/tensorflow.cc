@@ -26,9 +26,8 @@ from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import iterator_ops
 from tensorflow.python.distribute import distribute_coordinator_context as dc_context
 from tensorflow.python.distribute import distribution_strategy_context as ds_context
-from tensorflow.python.distribute import one_device_strategy
+from tensorflow.python.distribute import multi_worker_util
 from tensorflow.python.distribute import reduce_util
-from tensorflow.python.distribute import values
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import dtypes
@@ -80,9 +79,9 @@ def set_weights(distribution_strategy, dist_model, weights):
 def unwrap_values(distribution_strategy, grouped_inputs, grouped_outputs,
                   grouped_updates=None, grouped_session_args=None,
                   with_loss_tensor=False):
-  """Unwrap and return the list of values contained in the PerDevice parameters.
+  """Unwrap the list of values contained in the PerReplica parameters.
 
-  This function calls `flatten_perdevice_values` to parse each of the input
+  This function calls `flatten_per_replica_values` to parse each of the input
   parameters into a list of values on the different devices. If we set
   `with_loss_tensor` to be True, we also call `reduce` on the list of losses on
   the different devices to give us one loss tensor.
@@ -90,31 +89,31 @@ def unwrap_values(distribution_strategy, grouped_inputs, grouped_outputs,
   Args:
     distribution_strategy: DistributionStrategy used to distribute training and
         validation.
-    grouped_inputs: PerDevice inputs returned from the train or test function
+    grouped_inputs: PerReplica inputs returned from the train or test function
         that we ran on each device.
-    grouped_outputs: PerDevice outputs returned from the train or test function
+    grouped_outputs: PerReplica outputs returned from the train or test function
         that we ran on each device.
-    grouped_updates: PerDevice updates returned from the train or test function
+    grouped_updates: PerReplica updates returned from the train or test function
         that we ran on each device.
-    grouped_session_args: PerDevice session args returned from the train or
+    grouped_session_args: PerReplica session args returned from the train or
         test function that we ran on each device.
     with_loss_tensor: Boolean that indicates if we need to add the reduced loss
         tensor as one of the outputs.
 
   Returns:
-    Values of each of the PerDevice parameters.
+    Values of each of the PerReplica parameters.
 
   """
   # Unwrap per device values returned from each model's train function.
   # This will be used to construct the main train function.
-  all_inputs = flatten_perdevice_values(distribution_strategy,
-                                        grouped_inputs)
+  all_inputs = flatten_per_replica_values(distribution_strategy,
+                                          grouped_inputs)
   all_outputs = unwrap_outputs(distribution_strategy, grouped_outputs,
                                with_loss_tensor)
 
   if grouped_updates:
-    all_updates = flatten_perdevice_values(distribution_strategy,
-                                           grouped_updates)
+    all_updates = flatten_per_replica_values(distribution_strategy,
+                                             grouped_updates)
   else:
     all_updates = None
 
@@ -122,12 +121,12 @@ def unwrap_values(distribution_strategy, grouped_inputs, grouped_outputs,
   if grouped_session_args:
     grouped_feed_dict = grouped_session_args.get('feed_dict')
     if grouped_feed_dict:
-      all_session_args['feed_dict'] = flatten_perdevice_values(
+      all_session_args['feed_dict'] = flatten_per_replica_values(
           distribution_strategy, grouped_feed_dict)
 
     grouped_fetches = grouped_session_args.get('fetches')
     if grouped_fetches:
-      all_session_args['fetches'] = flatten_perdevice_values(
+      all_session_args['fetches'] = flatten_per_replica_values(
           distribution_strategy, grouped_fetches)
 
   # TODO(priyag): Return only non empty/None values
@@ -136,9 +135,9 @@ def unwrap_values(distribution_strategy, grouped_inputs, grouped_outputs,
 
 def unwrap_outputs(distribution_strategy, grouped_outputs,
                    with_loss_tensor=False):
-  """Unwrap the list of outputs contained in the PerDevice parameters.
+  """Unwrap the list of outputs contained in the PerReplica parameters.
 
-  This function calls `flatten_perdevice_values` to parse each of the input
+  This function calls `flatten_per_replica_values` to parse each of the input
   parameters into a list of outputs on the different devices. If we set
   `with_loss_tensor` to be True, we also call `reduce` on the list of losses on
   the different devices to give us one loss tensor.
@@ -146,75 +145,60 @@ def unwrap_outputs(distribution_strategy, grouped_outputs,
   Args:
     distribution_strategy: DistributionStrategy used to distribute training and
         validation.
-    grouped_outputs: PerDevice outputs returned from the train or test function
+    grouped_outputs: PerReplica outputs returned from the train or test function
         that we ran on each device.
     with_loss_tensor: Boolean that indicates if we need to add the reduced loss
         tensor as one of the outputs.
 
   Returns:
-    Values of each of the PerDevice outputs.
+    Values of each of the PerReplica outputs.
 
   """
   if not with_loss_tensor:
-    return flatten_perdevice_values(distribution_strategy,
-                                    grouped_outputs)
+    return flatten_per_replica_values(distribution_strategy,
+                                      grouped_outputs)
 
   if not isinstance(grouped_outputs, list):
     grouped_outputs = [grouped_outputs]
   # reduce loss tensor before adding it to the list of fetches
   loss = distribution_strategy.reduce(reduce_util.ReduceOp.SUM,
                                       grouped_outputs[0], axis=None)
-  all_outputs = flatten_perdevice_values(distribution_strategy,
-                                         grouped_outputs[1:])
+  all_outputs = flatten_per_replica_values(distribution_strategy,
+                                           grouped_outputs[1:])
+  if (is_tpu_strategy(distribution_strategy) and
+      ops.executing_eagerly_outside_functions()):
+    # Choose 1 value per replica in the TPU case since all replicas produce the
+    # same output.
+    # We only do this in eager mode for now since this function is used in
+    # both graph and eager mode and in the graph case we currently don't use
+    # experimental_run so would need to be removed when we converge the graph
+    # code path as well.
+    all_outputs = all_outputs[::distribution_strategy.num_replicas_in_sync]
   return [loss] + all_outputs
 
 
-def flatten_perdevice_values(distribution_strategy, perdevice_values):
-  """Unwraps and flattens a nest of PerDevice parameters.
+def flatten_per_replica_values(distribution_strategy, per_replica_values):
+  """Unwraps and flattens a nest of PerReplica parameters.
 
-  PerDevice values have one value associated with each device. Each entry in
-  the PerDevice dict has a device `key` and the corresponding value on the
-  device as the `value`. In this function we take a PerDevice value or a list of
-  PerDevice values and return all the values in the PerDevice dict.
+  PerReplica values have one value associated with each device. Each entry in
+  the PerReplica dict has a device `key` and the corresponding value on the
+  device as the `value`. In this function we take a PerReplica value or a list
+  of PerReplica values and return all the values in the PerReplica dict.
 
   Args:
     distribution_strategy: DistributionStrategy used to distribute training and
       validation.
-    perdevice_values: List of PerDevice object or a single PerDevice object.
+    per_replica_values: List of PerReplica object or a single PerReplica object.
 
   Returns:
-    List of values of all the PerDevice objects.
+    List of values of all the PerReplica objects.
 
   """
-  # This function takes a PerDevice object or a list of PerDevice objects and
+  # pylint: disable=g-complex-comprehension
+  # This function takes a PerReplica object or a list of PerReplica objects and
   # returns all the values associated with it.
-  return [e for flattened in nest.flatten(perdevice_values)
+  return [e for flattened in nest.flatten(per_replica_values)
           for e in distribution_strategy.unwrap(flattened)]
-
-
-def unwrap_perdevice_values(distribution_strategy, perdevice_values):
-  """Unwraps a nest of PerDevice parameters.
-
-  PerDevice values have one value associated with each device. Each entry in
-  the PerDevice dict has a device `key` and the corresponding value on the
-  device as the `value`. In this function we take a PerDevice value or a list of
-  PerDevice values, transform all the values in each PerDevice dict to a list
-  and return a list of such lists.
-
-  Args:
-    distribution_strategy: DistributionStrategy used to distribute training and
-      validation.
-    perdevice_values: List of PerDevice object or a single PerDevice object.
-
-  Returns:
-    List of lists of values of all the PerDevice objects.
-
-  """
-  flats = [
-      distribution_strategy.unwrap(flattened)
-      for flattened in nest.flatten(perdevice_values)
-  ]
-  return list(zip(*flats))
 
 
 def validate_callbacks(input_callbacks, optimizer):
@@ -267,15 +251,15 @@ def validate_distributed_dataset_inputs(distribution_strategy, x, y,
     distribution_strategy: The current DistributionStrategy used to call
         `fit`/`evaluate`.
     x: Input Dataset DistributedValue object. For example, when we use
-        `MirroredStrategy` this is a PerDevice object with a tensor for each
+        `MirroredStrategy` this is a PerReplica object with a tensor for each
         device set in the dict. x can also be a tuple or dict. The keys of the
         dict should match the names of the input layers of the model.
     y: Target Dataset DistributedValue object. For example, when we use
-        `MirroredStrategy` this is a PerDevice object with a tensor for each
+        `MirroredStrategy` this is a PerReplica object with a tensor for each
         device set in the dict. y can also be a tuple or dict. The keys of the
         dict should match the names of the output layers of the model.
     sample_weights: Sample weights Dataset DistributedValue object. For example,
-        when we use `MirroredStrategy` this is a PerDevice object with a tensor
+        when we use `MirroredStrategy` this is a PerReplica object with a tensor
         for each device set in the dict.
 
   Returns:
@@ -292,16 +276,16 @@ def validate_distributed_dataset_inputs(distribution_strategy, x, y,
 
   # If each element of x and y are not tensors, we cannot standardize and
   # validate the input and targets.
-  x_values_list = validate_per_device_inputs(distribution_strategy, x)
+  x_values_list = validate_per_replica_inputs(distribution_strategy, x)
 
   if y is not None:
-    y_values_list = validate_per_device_inputs(distribution_strategy, y)
+    y_values_list = validate_per_replica_inputs(distribution_strategy, y)
   else:
     y_values_list = None
 
   if sample_weights is not None:
-    sample_weights_list = validate_per_device_inputs(distribution_strategy,
-                                                     sample_weights)
+    sample_weights_list = validate_per_replica_inputs(distribution_strategy,
+                                                      sample_weights)
   else:
     sample_weights_list = None
 
@@ -309,27 +293,27 @@ def validate_distributed_dataset_inputs(distribution_strategy, x, y,
   return x_values_list, y_values_list, sample_weights_list
 
 
-def validate_per_device_inputs(distribution_strategy, x):
-  """Validates PerDevice dataset input list.
+def validate_per_replica_inputs(distribution_strategy, x):
+  """Validates PerReplica dataset input list.
 
   Args:
     distribution_strategy: The current DistributionStrategy used to call
       `fit`, `evaluate` and `predict`.
-    x: A list of PerDevice objects that represent the input or
+    x: A list of PerReplica objects that represent the input or
       target values.
 
   Returns:
-    List containing the first element of each of the PerDevice objects in
+    List containing the first element of each of the PerReplica objects in
     the input list.
 
   Raises:
-    ValueError: If any of the objects in the `per_device_list` is not a tensor.
+    ValueError: If any of the objects in the `per_replica_list` is not a tensor.
 
   """
-  # Convert the inputs and targets into a list of PerDevice objects.
-  per_device_list = nest.flatten(x)
+  # Convert the inputs and targets into a list of PerReplica objects.
+  per_replica_list = nest.flatten(x)
   x_values_list = []
-  for x in per_device_list:
+  for x in per_replica_list:
     if not tensor_util.is_tensor(x):
       raise ValueError('Dataset input to the model should be tensors instead '
                        'they are of type {}'.format(type(x)))
@@ -338,8 +322,9 @@ def validate_per_device_inputs(distribution_strategy, x):
     # structure.
     x_values = distribution_strategy.unwrap(x)
 
-    # Validate that the shape and dtype of all the elements in x are the same.
-    validate_all_tensor_shapes(x, x_values)
+    if not context.executing_eagerly():
+      # Validate that the shape and dtype of all the elements in x are the same.
+      validate_all_tensor_shapes(x, x_values)
     validate_all_tensor_types(x, x_values)
 
     x_values_list.append(x_values[0])
@@ -389,24 +374,20 @@ def _wait_for_variable_initialization(session):
 def init_restore_or_wait_for_variables():
   """Initialize or restore variables or wait for variables to be initialized."""
   session = K._get_session()  # pylint: disable=protected-access
-  worker_context = dc_context.get_current_worker_context()
-  if not worker_context or worker_context.experimental_should_init:
+  if not multi_worker_util.has_worker_context(
+  ) or multi_worker_util.should_load_checkpoint():
     # TODO(yuefengz): if checkpoints exist, restore from checkpoint.
     K._initialize_variables(session)  # pylint: disable=protected-access
   else:
     _wait_for_variable_initialization(session)
 
 
-def validate_inputs(x, y, distribution_strategy, allow_partial_batch=False):
+def validate_inputs(x, y):
   """Validate inputs when using DistributionStrategy.
 
   Args:
     x: Model Inputs.
     y: Model Targets.
-    distribution_strategy: The DistributionStrategy with which the model is
-      compiled.
-    allow_partial_batch: Boolean. If false, datasets must have fully
-      defined shapes.
 
   Raises:
     ValueError: if input is not a Dataset or a numpy array(when we use
@@ -417,16 +398,6 @@ def validate_inputs(x, y, distribution_strategy, allow_partial_batch=False):
     raise ValueError('`DistributionStrategy` does not support inputs of type '
                      'Iterator. You must pass a `tf.data.Dataset` object or a '
                      'numpy array as input.')
-
-  if is_tpu_strategy(distribution_strategy):
-    for i in [x, y]:
-      if (isinstance(i, dataset_ops.DatasetV2) and not allow_partial_batch):
-        if not is_dataset_shape_fully_defined(i):
-          raise ValueError(
-              'Using TPUs currently requires fully defined shapes. Either use '
-              'set_shape() on the input tensors or use '
-              'dataset.batch(..., drop_remainder=True).'
-              'Found unknown shape in input {}.'.format(i))
 
 
 # TODO(b/118776054): Currently we support global batch size for TPUStrategy and
@@ -448,6 +419,22 @@ def is_dataset_shape_fully_defined(dataset):
   shapes = nest.flatten(dataset_ops.get_legacy_output_shapes(dataset))
   unknown_shapes = [s for s in shapes if not s.is_fully_defined()]
   return not unknown_shapes
+
+
+def process_batch_and_step_size(
+    strategy, inputs, batch_size, steps_per_epoch, mode):
+  """Process the batch size and step size based on input and dist strategy."""
+  first_x_value = nest.flatten(inputs)[0]
+  if isinstance(first_x_value, np.ndarray):
+    # Until support for partial batch is implemented across all
+    # functions and distribution strategy, we pass `mode` to selectively
+    # relax the constraint to consume all the training samples.
+    steps_per_epoch, batch_size = get_input_params(strategy,
+                                                   first_x_value,
+                                                   steps_per_epoch,
+                                                   batch_size,
+                                                   mode=mode)
+  return batch_size, steps_per_epoch
 
 
 def get_input_params(distribution_strategy, first_x_value, steps, batch_size,
@@ -481,13 +468,18 @@ def get_input_params(distribution_strategy, first_x_value, steps, batch_size,
   use_per_replica_batch = not global_batch_size_supported(
       distribution_strategy)
 
-  # Partial batches are allowed for training as we repeat the
-  # dataset when converting numpy arrays into a dataset.
-  # For other modes uneven batch sizes are not allowed except
-  # for `predict()` on TPUStrategy.
-  allow_partial_batch = (mode == ModeKeys.TRAIN or
-                         (mode == ModeKeys.PREDICT
-                          and is_tpu_strategy(distribution_strategy)))
+  # TODO(b/128995245): In eager mode, uneven batch sizes are allowed except for
+  # `fit()` on TPUStrategy.
+  # In graph mode, the zero batch case in batch norm is not handled due to
+  # XLA-GPU regression. Uneven batch sizes are not allowed except
+  # for `test()` and `predict()` on TPUStrategy.
+  if context.executing_eagerly():
+    allow_partial_batch = (mode != ModeKeys.TRAIN or
+                           not is_tpu_strategy(distribution_strategy))
+  else:
+    allow_partial_batch = (mode == ModeKeys.TRAIN or
+                           ((mode == ModeKeys.PREDICT or mode == ModeKeys.TEST)
+                            and is_tpu_strategy(distribution_strategy)))
 
   if steps is None:
     if batch_size is None:
@@ -580,6 +572,10 @@ def _get_input_from_iterator(iterator, model):
   """Get elements from the iterator and verify the input shape and type."""
   next_element = iterator.get_next()
 
+  # `len(nest.flatten(x))` is going to not count empty elements such as {}.
+  # len(nest.flatten([[0,1,2], {}])) is 3 and not 4.   The `next_element` is
+  # going to get flattened in `_prepare_feed_values` to work around that. Empty
+  # elements are going to get filtered out as part of the flattening.
   if len(nest.flatten(next_element)) == len(model.inputs):
     x = next_element
     y = None
@@ -612,6 +608,9 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
   """
   strategy = model._distribution_strategy
   inputs, targets, sample_weights = _get_input_from_iterator(inputs, model)
+  if is_tpu_strategy(strategy):
+    if sample_weights is not None:
+      raise ValueError('TPUStrategy does not support sample weights.')
 
   # When the inputs are dict, then we want to flatten it in the same order as
   # the input layers, such that the data are fed into the input layers in the
@@ -619,40 +618,27 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
   if isinstance(inputs, dict):
     inputs = [inputs[key] for key in model._feed_input_names]
   if is_distributing_by_cloning(model):
-    inputs = flatten_perdevice_values(strategy, inputs)
-    targets = flatten_perdevice_values(strategy, targets)
+    inputs = flatten_per_replica_values(strategy, inputs)
+    targets = flatten_per_replica_values(strategy, targets)
+    # Expand 1-dimensional inputs.
+    # TODO(b/124535720): Remove once this standarize data logic is shared with
+    # main flow.
+    inputs, targets = nest.map_structure(
+        training_utils.standardize_single_array, (inputs, targets))
   else:
-    # TODO(b/129653859):  Simplify after PerReplica can be the input of
-    # `def_function.function`.
-    # Without cloning the `inputs` and `target` are the inputs to
-    # `values.regroup`.  Instead of a flat list of `len(inputs) * num_replicas`
-    # we need a list of `len(inputs)` lists, where each per-input list has
-    # `len(num_replicas)` elements. Each element[i] in the per-input
-    # list is the input to the i-th replica.  For example, if inputs are
-    # `[[1, 2], [3, 4]]` and there are two replicas, then we want
-    # `[[1, 3], [2, 4]]` (see `values_test.testWrapAListOfTwoTuples`) so that
-    # we arrive at a `PerReplica(d0: 1, d1: 2)` and a `PerReplica(d0:3, d1:4)`.
-    inputs = unwrap_perdevice_values(strategy, inputs)
-    targets = unwrap_perdevice_values(strategy, targets)
+    inputs = training_utils.ModelInputs(inputs).as_list()
 
-  # Expand 1-dimensional inputs.
-  # TODO(b/124535720): Remove once this standarize data logic is shared with
-  # main flow.
-  inputs, targets = nest.map_structure(training_utils.standardize_single_array,
-                                       (inputs, targets))
   if mode == ModeKeys.PREDICT:
     sample_weights = []
     targets = []
-  elif not is_distributing_by_cloning(model):
-    sample_weights = None  # b/129503665
-  else:
-    sample_weights = [
-        None for _ in range(len(model.outputs) * strategy.num_replicas_in_sync)
-    ]
+  elif sample_weights is not None and is_distributing_by_cloning(model):
+    if context.executing_eagerly() and not model._compile_distribution:
+      raise NotImplementedError('`sample_weight` is not supported when using '
+                                'tf.distribute.Strategy in eager mode and '
+                                'cloning=True.')
+    sample_weights = flatten_per_replica_values(strategy, sample_weights)
+
   ins = [inputs, targets, sample_weights]
-  if mode == ModeKeys.TRAIN and not isinstance(K.symbolic_learning_phase(),
-                                               int):
-    ins += [True]
   return tuple(ins)
 
 
@@ -660,8 +646,8 @@ def is_distributing_by_cloning(model):
   """Decide whether this model is going to be distributed via cloning.
 
   We are going to distribute the model by cloning if the user has signaled
-  that intent by not setting `cloning=False` in `Model.compile()` unless we
-  are in graph mode or running on TPU.
+  that intent by setting `cloning=True` in `Model.compile()` unless we are in
+  graph mode.
 
   Args:
     model: Keras model to distribute.
@@ -670,8 +656,15 @@ def is_distributing_by_cloning(model):
     True if the `model` is going to be distributed using cloning and False
     otherwise.
   """
-  return (model._cloning or not context.executing_eagerly() or
-          K.is_tpu_strategy(model._distribution_strategy))
+  if (is_tpu_strategy(model._distribution_strategy) and
+      context.executing_eagerly):
+    if model._cloning:
+      logging.warning(
+          'Model cloning is not supported in TPU Strategy in Eager mode.'
+          'cloning argument will be ignored.')
+    return False
+  return (model._cloning or model._compile_distribution or
+          not ops.executing_eagerly_outside_functions())
 
 
 def _custom_compile_for_predict(model):
@@ -837,35 +830,14 @@ def _make_execution_function(model, mode):
 def _make_execution_function_without_cloning(model, mode):
   """Creates a function to run one step of distributed model execution."""
   strategy = model._distribution_strategy
-  devices = strategy.extended.worker_devices
 
   with strategy.scope():
     per_replica_function = _make_replica_execution_function(model, mode)
 
     @def_function.function
-    def distributed_function(x, y, sample_weights, learning_phase=None):
+    def distributed_function(input_fn):
       """A single step of the distributed execution across replicas."""
-      del learning_phase
-
-      # TODO(b/129653859):  Simplify after PerReplica can be the input of
-      # `def_function.function`.  `regroup` calls and re-wrapping in
-      # PerReplica won't be needed then.
-      if isinstance(strategy, one_device_strategy.OneDeviceStrategy):
-        device_map = values.SingleDeviceMap(devices[0])
-        wrap_class = lambda d, x: x
-      else:
-        device_map = values.ReplicaDeviceMap(devices)
-        wrap_class = values.PerReplica
-
-      # Transform each lists of lists of values into per replica objects
-      # in the case of mirrored strategy.  For example, for 2 replicas:
-      # [[x0, y0], [x1, y1]] > [PerReplica(d0:x0, d1:x1),
-      #                         PerReplica(d0:y0, d1:y1)]
-      x = values.regroup(device_map, x, wrap_class)
-      y = values.regroup(device_map, y, wrap_class) if y else None
-      sample_weights = values.regroup(device_map, sample_weights,
-                                      wrap_class) if sample_weights else None
-
+      x, y, sample_weights = input_fn()
       # Call `Model.{train,test,predict}_on_batch` on every replica passing
       # PerReplicas as arguments.  On every replica inside this call, each
       # PerReplica object will return the value for that replica.  The outputs
@@ -877,8 +849,10 @@ def _make_execution_function_without_cloning(model, mode):
           strategy, outputs, with_loss_tensor=(mode != ModeKeys.PREDICT))
       return all_outputs
 
-    # `numpy` translates Tensors to values in Eager mode.
-    return lambda inputs: [out.numpy() for out in distributed_function(*inputs)]
+    def execution_function(input_fn):
+      # `numpy` translates Tensors to values in Eager mode.
+      return [out.numpy() for out in distributed_function(input_fn)]
+    return execution_function
 
 
 def _make_replica_execution_function(model, mode):
@@ -903,15 +877,9 @@ def _make_replica_execution_function(model, mode):
   return func
 
 
-def _make_execution_function_with_cloning(model, mode):
-  """Clones or re-uses models to run one step of distributed model execution."""
+def _make_replicated_models_with_cloning(model, mode):
+  """Build models on each replica."""
   strategy = model._distribution_strategy
-
-  distributed_model = get_distributed_model(model, mode)
-  # If distributed model for a particular `mode` is already built, use the
-  # `_distribution_function` on that distributed model.
-  if distributed_model:
-    return distributed_model._distributed_function
 
   # If distributed_model is not built, create one for `mode`.
   if model._compile_distribution:
@@ -919,9 +887,26 @@ def _make_execution_function_with_cloning(model, mode):
   else:
     _build_distributed_network(model, strategy, mode)
 
-  # We've just created the distributed model. So `distributed_model` should be
-  # not None.
+
+def _make_execution_function_with_cloning(model, mode):
+  """Clones or re-uses models to run one step of distributed model execution."""
   distributed_model = get_distributed_model(model, mode)
+  # TODO(b/134069401): Create a cache for the distributed model and exec
+  # function that incorporates additional attributes to be part of the cache key
+  # than just the mode.
+  # If distributed model for a particular `mode` is already built, use the
+  # `_distribution_function` on that distributed model.
+  # If you have updated the sample_weight_mode on the model, then you will need
+  # to recompile metrics and recreate the execution function. This is indicated
+  # by the `_recompile_exec_function` property.
+  if (distributed_model and hasattr(distributed_model, '_distribution_function')
+      and not (hasattr(distributed_model, '_recompile_exec_function') and
+               distributed_model._recompile_exec_function)):
+    return distributed_model._distributed_function
+
+  if not distributed_model:
+    _make_replicated_models_with_cloning(model, mode)
+    distributed_model = get_distributed_model(model, mode)
   assert distributed_model
 
   # Also create an execution fuction on that distributed model.
@@ -931,25 +916,26 @@ def _make_execution_function_with_cloning(model, mode):
     distributed_function = _make_graph_execution_function(model, mode)
 
   # We cache the distributed execution function on the model since creating
-  # distributed models and exection functions are expensive.
+  # distributed models and execution functions are expensive.
   distributed_model._distributed_function = distributed_function
+  distributed_model._recompile_exec_function = False
   return distributed_function
 
 
 def _make_graph_execution_function(model, mode):
   """Makes function to run one step of distributed model in graph mode."""
 
-  def _per_device_function(model):
+  def _per_replica_function(model):
     f = model._make_execution_function(mode)
     return (f.inputs, f.outputs, f.updates_op, f.session_kwargs)
 
   strategy = model._distribution_strategy
   with strategy.scope():
     # Create train ops on each of the devices when we call
-    # `_per_device_fit_function`.
+    # `_per_replica_fit_function`.
     (grouped_inputs, grouped_outputs, grouped_updates,
      grouped_session_args) = strategy.extended.call_for_each_replica(
-         _per_device_function, args=(get_distributed_model(model, mode),))
+         _per_replica_function, args=(get_distributed_model(model, mode),))
 
     # Initialize the variables in the replicated model. This is necessary for
     # multi-worker training because on some workers, initialization is not
@@ -979,7 +965,7 @@ def _make_graph_execution_function(model, mode):
 
 def _make_eager_execution_function(model, mode):
   """Makes function to run one step of distributed model eager execution."""
-  def _per_device_function(model):
+  def _per_replica_function(model):
     f = model._make_execution_function(mode)
     return (f.inputs, f.outputs)
 
@@ -994,9 +980,9 @@ def _make_eager_execution_function(model, mode):
     # lift to a separate graph when creating the per-replica functions.
     with K._scratch_graph(global_graph):
       # Create train ops on each of the devices when we call
-      # `_per_device_fit_function`.
+      # `_per_replica_fit_function`.
       grouped = strategy.extended.call_for_each_replica(
-          _per_device_function, args=(get_distributed_model(model, mode),))
+          _per_replica_function, args=(get_distributed_model(model, mode),))
       grouped_inputs, grouped_outputs = grouped
 
       # Unwrap all the per device values returned from `call_for_each_replica`.
@@ -1038,8 +1024,8 @@ def _copy_weights_to_original_model(model, mode):
     model.set_weights(updated_weights)
 
 
-def _per_device_aggregate_batch(batch_outs, model, mode):
-  """Aggregates the per-device batch-level outputs from a distributed step."""
+def _per_replica_aggregate_batch(batch_outs, model, mode):
+  """Aggregates the per-replica batch-level outputs from a distributed step."""
   if model._distribution_strategy is not None and mode == ModeKeys.PREDICT:
     total_batch_outs = []
     for i in range(len(model.outputs)):
@@ -1104,16 +1090,16 @@ def call_replica_local_fn(fn, *args, **kwargs):
   Returns:
     The result of calling `fn`.
   """
-  # TODO(b/120571621): We want to avoid reductions here since
-  # since TPUStrategy does not implement replica local variables.
-  # Remove this hack once we support TPUReplicaLocalVariables.
+  # TODO(b/132666209): Remove this function when we support assign_*
+  # for replica-local variables.
   strategy = None
   if 'strategy' in kwargs:
     strategy = kwargs.pop('strategy')
   else:
-    if ds_context.get_strategy():
+    if ds_context.has_strategy():
       strategy = ds_context.get_strategy()
 
+  # TODO(b/120571621): TPUStrategy does not implement replica-local variables.
   is_tpu = is_tpu_strategy(strategy)
   if ((not is_tpu) and strategy and ds_context.in_cross_replica_context()):
     with strategy.scope():
@@ -1135,7 +1121,7 @@ def filter_distributed_callbacks(callbacks_list):
     The list of `Callback` instances that should be run on this worker.
   """
 
-  if not K.in_multi_worker_mode():
+  if not multi_worker_util.in_multi_worker_mode():
     raise ValueError(
         'filter_distributed_callbacks() should only be called when Keras '
         'is in multi worker mode.')
@@ -1156,3 +1142,24 @@ def filter_distributed_callbacks(callbacks_list):
   return [
       callback for callback in callbacks_list if not callback._chief_worker_only
   ]  # pylint: disable=protected-access
+
+
+def _update_sample_weight_modes(model, mode, sample_weights):
+  """Update sample_weight_mode of the distributed model."""
+  if is_distributing_by_cloning(model):
+    distributed_model = get_distributed_model(model, mode)
+    if not distributed_model:
+      _make_replicated_models_with_cloning(model, mode)
+      distributed_model = get_distributed_model(model, mode)
+    distributed_model._recompile_exec_function = any(
+        [e.sample_weights_mismatch() for e in model._training_endpoints])
+
+    if sample_weights:
+      distributed_models = flatten_per_replica_values(
+          model._distribution_strategy, distributed_model)
+      # sample_weights is a tuple of 1 list where the number of elements in the
+      # list is equal to the number of replicas in sync.
+      sample_weights = sample_weights[0]
+      if sample_weights and None not in sample_weights:
+        for m, sw in zip(distributed_models, sample_weights):
+          m._update_sample_weight_modes(sample_weights=[sw])

@@ -154,7 +154,7 @@ class GraphDefBuilderWrapper {
   }
 
   // Adds a node corresponding to the `DatasetType` to the Graph.
-  // Return value of `DatasetType::op_name()` is used as the op type for the
+  // Return value of `DatasetType::type_string()` is used as the op type for the
   // node.
   // Values for the output_types and output_shapes node attributes are also
   // written if those attributes are defined in the OpDef.
@@ -232,8 +232,8 @@ class GraphDefBuilderWrapper {
   // Also looks up the `op_def->name` in the global
   // `WhitelistedStatefulOpRegistry`.
   bool IsOpWhitelisted(const OpDef* op_def) const {
-    return ((str_util::EndsWith(op_def->name(), "Dataset") ||
-             str_util::EndsWith(op_def->name(), "DatasetV2")) &&
+    return ((absl::EndsWith(op_def->name(), "Dataset") ||
+             absl::EndsWith(op_def->name(), "DatasetV2")) &&
             op_def->output_arg_size() == 1 &&
             op_def->output_arg(0).type() == DT_VARIANT) ||
            WhitelistedStatefulOpRegistry::Global()->Contains(op_def->name());
@@ -321,7 +321,7 @@ class IteratorContext {
       if (thread_pool) {
         runner_threadpool_size = thread_pool->NumThreads();
       } else {
-        runner_threadpool_size = port::NumSchedulableCPUs();
+        runner_threadpool_size = port::MaxParallelism();
       }
 
       // NOTE: Wrap every runner invocation in a call to Runner()->Run(), so
@@ -472,6 +472,12 @@ class IteratorBase {
   // be stored in `*end_of_sequence`, and the content of
   // `*out_tensors` will be undefined.
   //
+  // Implementations should never return `OutOfRange` error. If at end of
+  // sequence, set `*end_of_sequence = true` and return `Status::OK()`.
+  // Internally raised `OutOfRange` errors that do not imply end of sequence
+  // should be converted to a different error type before being propagated to
+  // the caller.
+  //
   // This method is thread-safe.
   //
   // TODO(mrry): Define `GetNextAsync()` or `GetNextManyAsync()`, and
@@ -549,7 +555,7 @@ class IteratorBase {
   }
 
  private:
-  friend class DatasetBase;  // for access to `AddCleanupFunction`
+  friend class DatasetBase;          // for access to `AddCleanupFunction`
   friend class DatasetBaseIterator;  // for access to `node_`
 
   // Registers a cleanup function to be called upon object destruction.
@@ -683,6 +689,7 @@ class DatasetBase : public core::RefCounted {
  protected:
   friend Status AsGraphDef(
       OpKernelContext* ctx, const DatasetBase* dataset,
+      SerializationContext&& serialization_ctx,
       GraphDef* graph_def);  // For access to graph related members.
   friend class CapturedFunction;
 
@@ -730,9 +737,6 @@ class DatasetBaseIterator : public IteratorBase {
 
   ~DatasetBaseIterator() override { params_.dataset->Unref(); }
 
-  // The sequence of iterators leading up to this iterator.
-  const string& prefix() const override { return params_.prefix; }
-
   const DataTypeVector& output_dtypes() const override {
     return params_.dataset->output_dtypes();
   }
@@ -740,6 +744,15 @@ class DatasetBaseIterator : public IteratorBase {
   const std::vector<PartialTensorShape>& output_shapes() const override {
     return params_.dataset->output_shapes();
   }
+
+  // The sequence of iterators leading up to this iterator.
+  const string& prefix() const override { return params_.prefix; }
+
+  // Returns a name to be used for the TraceMe event.
+  //
+  // NOTE: TraceMe support passing key value pairs of "arguments" using the
+  // following format "name#arg_1=value_,...,arg_n=value_n".
+  virtual string BuildTraceMeName() { return params_.prefix; }
 
   Status GetNext(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
                  bool* end_of_sequence) final;

@@ -23,12 +23,12 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/rnn_ops_internal.h"
 #include "tensorflow/cc/training/queue_runner.h"
 #include "tensorflow/core/protobuf/queue_runner.pb.h"
-#include "tensorflow/examples/cc/magenta/lstm/lstm_ops.h"
 #include "tensorflow/cc/framework/gradients.h"
 
-using tensorflow::ops::BlockLSTM;
+using tensorflow::ops::internal::BlockLSTM;
 using tensorflow::ops::RNNSoftmaxLoss;
 
 namespace tensorflow {

@@ -24,9 +24,9 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/rnn_ops_internal.h"
 #include "tensorflow/cc/training/queue_runner.h"
 #include "tensorflow/core/protobuf/queue_runner.pb.h"
-#include "lstm/lstm_ops.h"
 
 using namespace tensorflow;
 using namespace tensorflow::ops;
@@ -51,18 +51,10 @@ const char test_content[] = "hello world hello world hello world hello world hel
 #define TEST_BATCH_SIZE 1            // 
 #define TEST_SEQ_LENGTH TEST_TIME_LEN * TEST_BATCH_SIZE
 
-#define LIBRARY_FILENAME "/../../../../../../tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
-
 namespace tensorflow {
 // Helpers for loading a TensorFlow plugin (a .so file).
 Status LoadLibrary(const char* library_filename, void** result,
                    const void** buf, size_t* len);
-
-std::string get_working_path()
-{
-   char temp[MAXPATHLEN];
-   return (getcwd(temp, sizeof(temp)) ? std::string(temp) : std::string(""));
-}
 
 class InternalClientSession {
 public:
@@ -106,11 +98,6 @@ int main() {
 #ifdef TESTING
   test();
 #endif
-
-  // load lstm_ops library
-  std::string path = get_working_path();
-  void* unused_filehandle;
-  TF_CHECK_OK(Env::Default()->LoadLibrary(path.append(LIBRARY_FILENAME).c_str(), &unused_filehandle));
 
   // Scope
   Scope root = Scope::NewRootScope();

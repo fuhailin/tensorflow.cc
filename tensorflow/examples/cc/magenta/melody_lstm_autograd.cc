@@ -26,9 +26,9 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/rnn_ops_internal.h"
 #include "tensorflow/cc/training/queue_runner.h"
 #include "tensorflow/core/protobuf/queue_runner.pb.h"
-#include "lstm/lstm_ops.h"
 #include "tensorflow/cc/framework/gradients.h"
 
 using namespace tensorflow;
@@ -49,19 +49,10 @@ using namespace std;
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define SEQ_LENGTH TIME_LEN * BATCH_SIZE
 
-// #define LIBRARY_FILENAME "/home/rock/.cache/bazel/_bazel_rock/9982590d8d227cddee8c85cf45e44b89/execroot/org_tensorflow/bazel-out/k8-opt/bin/tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
-#define LIBRARY_FILENAME "/../../../../../../tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
-
 namespace tensorflow {
 // Helpers for loading a TensorFlow plugin (a .so file).
 Status LoadLibrary(const char* library_filename, void** result,
                    const void** buf, size_t* len);
-
-std::string get_working_path()
-{
-   char temp[MAXPATHLEN];
-   return (getcwd(temp, sizeof(temp)) ? std::string(temp) : std::string(""));
-}
 
 class InternalClientSession {
 public:
@@ -138,16 +129,6 @@ int main() {
 #ifdef TESTING
   test();
 #endif
-
-  // // load lstm_ops library
-  // void* unused_filehandle;
-  // const void* buf;
-  // size_t length;
-  // TF_CHECK_OK(tensorflow::LoadLibrary(LIBRARY_FILENAME, &unused_filehandle, &buf, &length));
-  std::string path = get_working_path();
-  void* unused_filehandle;
-  // TF_CHECK_OK(Env::Default()->LoadLibrary(LIBRARY_FILENAME, &unused_filehandle));
-  TF_CHECK_OK(Env::Default()->LoadLibrary(path.append(LIBRARY_FILENAME).c_str(), &unused_filehandle));
 
   // Scope
   Scope root = Scope::NewRootScope();

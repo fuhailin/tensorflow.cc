@@ -43,8 +43,6 @@ tf_cc_binary(
     name = "lstm_ops_test",
     srcs = [
             "lstm_ops_test.cc", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -53,7 +51,6 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
     ],
     linkopts = ["-g"],
 )
@@ -62,8 +59,6 @@ tf_cc_binary(
     name = "lstm_multi_layers",
     srcs = [
             "lstm_multi_layers.cc", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -72,7 +67,6 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
     ],
     linkopts = ["-g"],
 )
@@ -81,8 +75,6 @@ tf_cc_binary(
     name = "lstm_multi_layers_autograd",
     srcs = [
             "lstm_multi_layers_autograd.cc", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -91,7 +83,8 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
+        "//tensorflow/cc:gradients",
+        "//tensorflow/cc:nn_grad",
     ],
     linkopts = ["-g"],
 )

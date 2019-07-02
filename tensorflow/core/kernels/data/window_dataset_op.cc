@@ -83,13 +83,15 @@ class WindowDatasetOp : public UnaryDatasetOpKernel {
     }
 
     const DataTypeVector& output_dtypes() const override {
-      static DataTypeVector* output_dtypes = new DataTypeVector({DT_VARIANT});
+      static DataTypeVector* output_dtypes =
+          new DataTypeVector(input_->output_dtypes().size(), {DT_VARIANT});
       return *output_dtypes;
     }
 
     const std::vector<PartialTensorShape>& output_shapes() const override {
       static std::vector<PartialTensorShape>* output_shapes =
-          new std::vector<PartialTensorShape>({TensorShape({})});
+          new std::vector<PartialTensorShape>(input_->output_shapes().size(),
+                                              TensorShape({}));
       return *output_shapes;
     }
 
@@ -298,7 +300,7 @@ class WindowDatasetOp : public UnaryDatasetOpKernel {
           input_impl_.reset();
         }
         // Restore buffer.
-        int64 buffer_size;
+        int64 buffer_size = 0;
         TF_RETURN_IF_ERROR(
             reader->ReadScalar(strings::StrCat("buffer_size"), &buffer_size));
         buffer_.resize(buffer_size);

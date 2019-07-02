@@ -150,7 +150,7 @@ class XlaBuilder {
   // result, OpMetadata is set on the Computation Builder. All subsequent
   // instructions generated via this Computation Builder will have the same
   // OpMetadata attached until a call to ClearOpMetadata.
-  void SetOpMetadata(const OpMetadata& metadata) { metadata_ = metadata; }
+  void SetOpMetadata(OpMetadata metadata) { metadata_ = std::move(metadata); }
 
   // Clears the HloMetadata state.
   void ClearOpMetadata() { metadata_.Clear(); }
@@ -343,9 +343,11 @@ class XlaBuilder {
             const PaddingConfig& padding_config);
 
   XlaOp Reshape(const XlaOp& operand, absl::Span<const int64> dimensions,
-                absl::Span<const int64> new_sizes);
+                absl::Span<const int64> new_sizes,
+                int64 inferred_dimension = -1);
 
-  XlaOp Reshape(const XlaOp& operand, absl::Span<const int64> new_sizes);
+  XlaOp Reshape(const XlaOp& operand, absl::Span<const int64> new_sizes,
+                int64 inferred_dimension = -1);
 
   XlaOp Collapse(const XlaOp& operand, absl::Span<const int64> dimensions);
 
@@ -515,9 +517,6 @@ class XlaBuilder {
 
   XlaOp Rev(const XlaOp& operand, absl::Span<const int64> dimensions);
 
-  ABSL_DEPRECATED("Use form with comparator computation instead")
-  XlaOp Sort(const XlaOp& keys, absl::Span<const XlaOp> values = {},
-             int64 dimension = -1);
   XlaOp Sort(absl::Span<const XlaOp> operands, const XlaComputation& comparator,
              int64 dimension = -1, bool is_stable = false);
 
@@ -626,7 +625,8 @@ class XlaBuilder {
 
   // Internal helper method for creating a Reshape op with the already inferred
   // shape.
-  StatusOr<XlaOp> Reshape(const Shape& shape, const XlaOp& operand);
+  StatusOr<XlaOp> Reshape(const Shape& shape, XlaOp operand,
+                          int64 inferred_dimension = -1);
 
   // Returns the (inferred) result for the program shape using the given root.
   StatusOr<ProgramShape> GetProgramShape(int64 root_id) const;
@@ -733,6 +733,10 @@ class XlaBuilder {
                        absl::Span<const int64> new_sizes);
 
   friend XlaOp Reshape(XlaOp operand, absl::Span<const int64> new_sizes);
+
+  friend XlaOp ReshapeWithInferredDimension(const XlaOp& operand,
+                                            absl::Span<const int64> new_sizes,
+                                            int64 inferred_dimension);
 
   friend XlaOp Collapse(XlaOp operand, absl::Span<const int64> dimensions);
 
@@ -936,8 +940,6 @@ class XlaBuilder {
   friend XlaOp Neg(XlaOp operand);
   friend XlaOp Transpose(XlaOp operand, absl::Span<const int64> permutation);
   friend XlaOp Rev(XlaOp operand, absl::Span<const int64> dimensions);
-  friend XlaOp Sort(XlaOp keys, absl::Span<const XlaOp> values,
-                    int64 dimension);
   friend XlaOp Sort(absl::Span<const XlaOp> operands,
                     const XlaComputation& comparator, int64 dimension,
                     bool is_stable);
@@ -956,6 +958,10 @@ class XlaBuilder {
                            const XlaComputation& false_computation);
   friend XlaOp Conditional(
       XlaOp branch_index,
+      absl::Span<const XlaComputation* const> branch_computations,
+      absl::Span<const XlaOp> branch_operands);
+  friend XlaOp ConditionalImpl(
+      const XlaOp& branch_index,
       absl::Span<const XlaComputation* const> branch_computations,
       absl::Span<const XlaOp> branch_operands);
   friend XlaOp ReducePrecision(XlaOp operand, const int exponent_bits,
@@ -995,6 +1001,12 @@ class XlaBuilder {
   friend XlaOp AfterAll(XlaBuilder* builder, absl::Span<const XlaOp> tokens);
 
   friend XlaOp GetDimensionSize(XlaOp operand, int64 dimension);
+
+ private:
+  XlaOp ConditionalImpl(
+      const XlaOp& branch_index,
+      absl::Span<const XlaComputation* const> branch_computations,
+      absl::Span<const XlaOp> branch_operands);
 };
 
 // RAII-style object: sets the current sharding assignment in builder on
@@ -1151,6 +1163,14 @@ XlaOp Reshape(XlaOp operand, absl::Span<const int64> dimensions,
 // first to last dimension (C order), then reshapes it to the given dimension
 // sizes. Conceptually, this is a limited form of "shape casting".
 XlaOp Reshape(XlaOp operand, absl::Span<const int64> new_sizes);
+
+// `inferred_dimension` represents the output dimension that's inferred by
+// upper-level framework by dividing the input element count by the known
+// output element count. While an inferred_dimension can be static, if there
+// is a dynamic dimension in the output, it must be the inferred dimension.
+XlaOp ReshapeWithInferredDimension(const XlaOp& operand,
+                                   absl::Span<const int64> new_sizes,
+                                   int64 inferred_dimension);
 
 // Wrapper for Reshape.
 // Enqueues an operation to collapse the provided dimensions; e.g. an
@@ -1376,8 +1396,7 @@ XlaOp TriangularSolve(XlaOp a, XlaOp b, bool left_side, bool lower,
 // triangle. The data returned in the other output triangle is arbitrary and
 // implementation-defined.
 //
-// The value returned if `a` is not Hermitian positive definite is
-// implementation-defined.
+// If `a` is not Hermitian positive definite, returns an array full of NaNs.
 XlaOp Cholesky(XlaOp a, bool lower);
 
 // Enqueues an infeed instruction onto the computation, which writes data of
@@ -1712,26 +1731,6 @@ XlaOp Transpose(XlaOp operand, absl::Span<const int64> permutation);
 // elements in the given dimensions is reversed (i.e., the element at index i
 // is moved to index dimension_size - 1 - i).
 XlaOp Rev(XlaOp operand, absl::Span<const int64> dimensions);
-
-// Enqueues a sort (as increasing order) instruction onto the computation.
-// If only keys are provided:
-// * If the keys are an rank-1 tensor (an array), the result is a sorted array
-// of keys, in ascending order.
-// * If the keys have higher rank, the keys are sorted along the provided
-// dimension. For example, for a rank-2 tensor (a matrix) of keys, a dimension
-// value of 0 will independently sort every column, and a dimension value of 1
-// will independently sort each row. If no dimension number is provided, then
-// the last dimension is chosen by default.
-//
-// If both keys and values are provided:
-// * The keys and all values must be tensors with the same dimensions. The
-// element types of the tensors may be different.
-// * The result is a tuple that consists of a sorted tensor of keys (along the
-// provided dimension, as above) as the first element, and tensors with their
-// corresponding values as the other elements.
-ABSL_DEPRECATED("Use form with comparator computation instead")
-XlaOp Sort(XlaOp keys, absl::Span<const XlaOp> values = {},
-           int64 dimension = -1);
 
 // Enqueues a sort instruction onto the computation, using 'comparator' for
 // comparisons. 'comparator' needs to define a strict weak order. 'is_stable'

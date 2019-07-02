@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/rnn_ops_internal.h"
 #include "tensorflow/cc/training/queue_runner.h"
 #include "tensorflow/core/protobuf/queue_runner.pb.h"
 

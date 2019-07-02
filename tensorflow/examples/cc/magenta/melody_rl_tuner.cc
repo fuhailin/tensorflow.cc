@@ -27,24 +27,9 @@ limitations under the License.
 
 #include "tensorflow/examples/cc/magenta/rl_tuner/rl_tuner.h"
 
-// #define LIBRARY_FILENAME "/home/rock/.cache/bazel/_bazel_rock/9982590d8d227cddee8c85cf45e44b89/execroot/org_tensorflow/bazel-out/k8-opt/bin/tensorflow/contrib/rnn/python/ops/_lstm_ops.so"  // NOLINT
-#define LIBRARY_FILENAME "/../../../../../../tensorflow/contrib/rnn/python/ops/_lstm_ops.so"
-
 using tensorflow::RLTuner;
-using tensorflow::Env;
-
-std::string get_working_path() {
-  char temp[MAXPATHLEN];
-  return (getcwd(temp, sizeof(temp)) ? std::string(temp) : std::string(""));
-}
 
 int main() {
-  // Load library of lstm_ops
-  std::string path = get_working_path();
-  void* unused_filehandle;
-  TF_CHECK_OK(Env::Default()->LoadLibrary(path.append(LIBRARY_FILENAME).c_str(), &unused_filehandle));
-  // TF_CHECK_OK(Env::Default()->LoadLibrary(LIBRARY_FILENAME, &unused_filehandle));
-
   // RLTuner
   RLTuner rlTuner;
   rlTuner.Train();

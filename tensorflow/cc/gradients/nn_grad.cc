@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "tensorflow/cc/ops/nn_ops.h"
 #include "tensorflow/cc/ops/nn_ops_internal.h"
+#include "tensorflow/cc/ops/rnn_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 
 #include "tensorflow/cc/framework/grad_op_registry.h"
 #include "tensorflow/cc/framework/gradients.h"
-#include "lstm/lstm_ops.h"
+
+using tensorflow::ops::internal::BlockLSTMGrad;
 
 namespace tensorflow {
 namespace ops {

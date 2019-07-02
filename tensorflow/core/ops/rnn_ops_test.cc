@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 
@@ -13,119 +13,167 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-//
-// rnn ops, Vanilla RNN for now
-// Author: Rock Zhuang
-// Date  : Dec 20, 2018
-// 
-
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/shape_inference_testutil.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
-#include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
 
-TEST(RNNOpsTest, VanillaRNN_InvalidNumberOfInputs) {
-  ShapeInferenceTestOp op("VanillaRNN");
-  op.input_tensors.resize(2);
-
-  auto rebuild_node_def = [&op](const int hidsize) {
-    TF_ASSERT_OK(NodeDefBuilder("test", "VanillaRNN")
-                     .Input("x", 0, DT_FLOAT)
-                     .Input("y", 0, DT_FLOAT)
-                     .Input("h_pre", 0, DT_FLOAT)
-                     .Input("w_xh", 0, DT_FLOAT)
-                     .Input("w_hh", 0, DT_FLOAT)
-                     .Input("w_hy", 0, DT_FLOAT)
-                     .Input("b_h", 0, DT_FLOAT)
-                     .Input("b_y", 0, DT_FLOAT)
-                     .Attr("hidsize", hidsize)
-                     .Finalize(&op.node_def));
-  };
-
-  rebuild_node_def(0);
-
-  INFER_ERROR("Wrong number of inputs passed", op, "?;?");
-
-  // INFER_OK(op, "[?,?];?;?", "[d0_0, d0_1];[d0_0, d0_1]");
+static string JoinedCopies(const string& s, int copies) {
+  string res;
+  for (int i = 0; i < copies; ++i) {
+    strings::StrAppend(&res, i > 0 ? ";" : "", s);
+  }
+  return res;
 }
 
-// TEST(RNNOpsTest, DenseToDenseShape) {
-//   ShapeInferenceTestOp op("VanillaRNN");
+TEST(RnnOpsTest, GRUBlockCell_ShapeFn) {
+  ShapeInferenceTestOp op("GRUBlockCell");
 
-//   // Unknown shapes.
-//   INFER_OK(op, "?;?", "[?,?];[?];[?]");
+  // Rank checks.
+  INFER_ERROR("must be rank 2", op, "[?];?;?;?;?;?");
+  INFER_ERROR("must be rank 2", op, "?;[?];?;?;?;?");
 
-//   // Invalid rank.
-//   INFER_ERROR("Shape must be at least rank 2 but is rank 1", op, "[?];?");
-//   INFER_ERROR("Shape must be at least rank 2 but is rank 1", op, "?;[?]");
-//   INFER_ERROR("Shape must be at least rank 2 but is rank 1", op, "[2];?");
-//   INFER_ERROR("Shape must be at least rank 2 but is rank 1", op, "?;[2]");
-
-//   // Mismatched ranks.
-//   INFER_ERROR("Shape must be rank 2 but is rank 3", op, "[?,?];[?,?,?]");
-//   INFER_ERROR("Shape must be rank 3 but is rank 2", op, "[?,?,?];[?,?]");
-//   INFER_ERROR("Shape must be rank 2 but is rank 3", op, "[2,1];[2,1,2]");
-//   INFER_ERROR("Shape must be rank 3 but is rank 2", op, "[2,1,2];[2,1]");
-
-//   // Rank 2, unknown dims.
-//   INFER_OK(op, "[?,?];?", "[?,2];[?];[2]");
-//   INFER_OK(op, "?;[?,?]", "[?,2];[?];[2]");
-//   INFER_OK(op, "[?,?];[?,?]", "[?,2];[?];[2]");
-
-//   // Rank 4, unknown dims.
-//   INFER_OK(op, "[?,?,?,?];?", "[?,4];[?];[4]");
-//   INFER_OK(op, "?;[?,?,?,?]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[?,?,?,?];[?,?,?,?]", "[?,4];[?];[4]");
-
-//   // Known rank for 1 input.
-//   INFER_OK(op, "[5,3,2,1];?", "[?,4];[?];[4]");
-//   INFER_OK(op, "?;[5,3,2,1]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[5,3,2,1];[?,?,?,?]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[?,?,?,?];[5,3,2,1]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[5,3,2,1];[?,?,?,?]", "[?,4];[?];[4]");
-
-//   // Mismatched n-1 dims.
-//   INFER_ERROR("Dimension 0 in both shapes must be equal", op,
-//               "[4,?,2,?];[3,1,?,5]");
-//   INFER_ERROR("Dimension 2 in both shapes must be equal", op,
-//               "[4,3,2,1];[4,3,3,1]");
-
-//   // Matched n-1 dims.
-//   INFER_OK(op, "[4,5,6,7];[?,?,?,?]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[4,5,6,7];[?,?,?,4]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[?,?,?,?];[4,5,6,7]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[4,?,2,?];[?,1,?,5]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[4,5,6,7];[4,?,6,?]", "[?,4];[?];[4]");
-//   INFER_OK(op, "[4,5,6,7];[4,5,6,4]", "[?,4];[?];[4]");
-// }
-
-TEST(RNNOpsTest, VanillaRNNGrad_InvalidNumberOfInputs) {
-  ShapeInferenceTestOp op("VanillaRNNGrad");
-  op.input_tensors.resize(2);
-
-  auto rebuild_node_def = [&op](const int hidsize) {
-    TF_ASSERT_OK(NodeDefBuilder("test", "VanillaRNNGrad")
-                     .Input("x", 0, DT_FLOAT)
-                     .Input("y", 0, DT_FLOAT)
-                     .Input("p", 0, DT_FLOAT)
-                     .Input("h", 0, DT_FLOAT)
-                     .Input("w_hh", 0, DT_FLOAT)
-                     .Input("w_hy", 0, DT_FLOAT)
-                     .Input("h_prev", 0, DT_FLOAT)
-                     .Attr("hidsize", hidsize)
-                     .Finalize(&op.node_def));
-  };
-
-  // Default squeeze_dims = []
-  rebuild_node_def(10);
-
-  INFER_ERROR("Wrong number of inputs passed", op, "?;?;?");
-  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?];?;?;?;?");
-  INFER_ERROR("Shape must be rank 3 but is rank 2", op, "?;?;[?,?,?];[?,?];?;?;?");
+  // Output
+  INFER_OK(op, "?;?;?;?;?;?", "[?,?];[?,?];[?,?];[?,?]");
+  INFER_OK(op, "[?,?];[?,?];?;?;?;?",
+           "[d0_0,d1_1];[d0_0,d1_1];[d0_0,d1_1];[d0_0,d1_1]");
 }
 
-}  // end namespace tensorflow
+TEST(RnnOpsTest, GRUBlockCellGrad_ShapeFn) {
+  ShapeInferenceTestOp op("GRUBlockCellGrad");
+
+  // Rank checks.
+  INFER_ERROR("must be rank 2", op, "[?];?;?;?;?;?;?;?;?;?");
+  INFER_ERROR("must be rank 2", op, "?;[?];?;?;?;?;?;?;?;?");
+  INFER_ERROR("must be rank 2", op, "?;?;[?];?;?;?;?;?;?;?");
+
+  // Output
+  INFER_OK(op, "?;?;?;?;?;?;?;?;?;?", "[?,?];[?,?];[?,?];[?,?]");
+  INFER_OK(op, "[?,?];[?,?];[?,?];?;?;?;?;?;?;?",
+           "in0;[d0_0,d1_1];[d0_0,d1_1];[d0_0,d2_1]");
+}
+
+TEST(RnnOpsTest, LSTMBlockCell_ShapeFn) {
+  ShapeInferenceTestOp op("LSTMBlockCell");
+
+  // Last 6 inputs don't affect shape inference.
+  string input_suffix = strings::StrCat(";", JoinedCopies("?", 6));
+
+  // Rank checks.
+  INFER_ERROR("must be rank 2", op, "[?];?" + input_suffix);
+  INFER_ERROR("must be rank 2", op, "?;[?]" + input_suffix);
+
+  // Output
+  INFER_OK(op, "?;?" + input_suffix, JoinedCopies("[?,?]", 7));
+  INFER_OK(op, "[?,?];[?,?]" + input_suffix, JoinedCopies("[d0_0,d1_1]", 7));
+}
+
+TEST(RnnOpsTest, LSTMBlockCellGrad_ShapeFn) {
+  ShapeInferenceTestOp op("LSTMBlockCellGrad");
+
+  // Last 14 inputs don't affect shape inference.
+  string input_suffix = strings::StrCat(";", JoinedCopies("?", 14));
+
+  // Rank checks.
+  INFER_ERROR("must be rank 2", op, "[?];?" + input_suffix);
+  INFER_ERROR("must be rank 2", op, "?;[?]" + input_suffix);
+
+  // Output
+  INFER_OK(op, "?;?" + input_suffix, "[?,?];[?,?];[?];[?];[?]");
+  INFER_OK(op, "[?,?];[?,?]" + input_suffix,
+           "[d0_0,d1_1];[d0_0,?];[d1_1];[d1_1];[d1_1]");
+  INFER_OK(op, "[1,2];[3,4]" + input_suffix,
+           "[d0_0,d1_1];[d0_0,16];[d1_1];[d1_1];[d1_1]");
+}
+
+TEST(RnnOpsTest, BlockLSTM_ShapeFn) {
+  ShapeInferenceTestOp op("BlockLSTM");
+
+  TF_ASSERT_OK(NodeDefBuilder("test", "BlockLSTM")
+                   .Input({"seq_len_max", 0, DT_INT64})
+                   .Input({"x", 0, DT_FLOAT})
+                   .Input({"cs_prev", 0, DT_FLOAT})
+                   .Input({"h_prev", 0, DT_FLOAT})
+                   .Input({"w", 0, DT_FLOAT})
+                   .Input({"wci", 0, DT_FLOAT})
+                   .Input({"wcf", 0, DT_FLOAT})
+                   .Input({"wco", 0, DT_FLOAT})
+                   .Input({"b", 0, DT_FLOAT})
+                   .Finalize(&op.node_def));
+
+  // Middle inputs don't affect shape inference.
+  string infix = ";" + JoinedCopies("?", 6) + ";";
+
+  // Rank checks.
+  INFER_ERROR("must be rank 3", op, "?;[?]" + infix + "?");
+  INFER_ERROR("must be rank 1", op, "?;?" + infix + "[?,?]");
+
+  // Output
+  INFER_OK(op, "?;?" + infix + "?", JoinedCopies("[?,?,?]", 7));
+  INFER_OK(op, "?;[?,?,?]" + infix + "?", JoinedCopies("[d1_0,d1_1,?]", 7));
+  INFER_OK(op, "?;[?,?,?]" + infix + "[?]", JoinedCopies("[d1_0,d1_1,?]", 7));
+  INFER_OK(op, "?;[?,?,?]" + infix + "[20]", JoinedCopies("[d1_0,d1_1,5]", 7));
+
+  // cell_size must be divisible by 4.
+  INFER_ERROR("must be evenly divisible", op, "?;?" + infix + "[11]");
+}
+
+TEST(RnnOpsTest, BlockLSTMGrad_ShapeFn) {
+  ShapeInferenceTestOp op("BlockLSTMGrad");
+  TF_ASSERT_OK(NodeDefBuilder("test", "BlockLSTMGrad")
+                   .Input({"seq_len_max", 0, DT_INT64})
+                   .Input({"x", 0, DT_FLOAT})
+                   .Input({"cs_prev", 0, DT_FLOAT})
+                   .Input({"h_prev", 0, DT_FLOAT})
+                   .Input({"w", 0, DT_FLOAT})
+                   .Input({"wci", 0, DT_FLOAT})
+                   .Input({"wcf", 0, DT_FLOAT})
+                   .Input({"wco", 0, DT_FLOAT})
+                   .Input({"b", 0, DT_FLOAT})
+                   .Input({"i", 0, DT_FLOAT})
+                   .Input({"cs", 0, DT_FLOAT})
+                   .Input({"f", 0, DT_FLOAT})
+                   .Input({"o", 0, DT_FLOAT})
+                   .Input({"ci", 0, DT_FLOAT})
+                   .Input({"co", 0, DT_FLOAT})
+                   .Input({"h", 0, DT_FLOAT})
+                   .Input({"cs_grad", 0, DT_FLOAT})
+                   .Input({"h_grad", 0, DT_FLOAT})
+                   .Finalize(&op.node_def));
+
+  // Last inputs don't affect shape inference.
+  string suffix = ";" + JoinedCopies("?", 9);
+
+  // Rank check for x
+  INFER_ERROR("must be rank 3", op, "?;[?];?;?;?;?;?;?;?" + suffix);
+
+  // Rank checks for cs_prev through b.
+  INFER_ERROR("must be rank 2", op, "?;?;[1];?;?;?;?;?;?" + suffix);
+  INFER_ERROR("must be rank 2", op, "?;?;?;[1];?;?;?;?;?" + suffix);
+  INFER_ERROR("must be rank 2", op, "?;?;?;?;[1];?;?;?;?" + suffix);
+  INFER_ERROR("must be rank 1", op, "?;?;?;?;?;[1,?];?;?;?" + suffix);
+  INFER_ERROR("must be rank 1", op, "?;?;?;?;?;?;[1,?];?;?" + suffix);
+  INFER_ERROR("must be rank 1", op, "?;?;?;?;?;?;?;[1,?];?" + suffix);
+  INFER_ERROR("must be rank 1", op, "?;?;?;?;?;?;?;?;[1,?]" + suffix);
+
+  // Output with all input knowns makes known rank outputs.
+  INFER_OK(
+      op, JoinedCopies("?", 18),
+      "[?,?,?];" + JoinedCopies("[?,?]", 3) + ";" + JoinedCopies("[?]", 4));
+
+  // Output with copies input shapes to output.
+  string input = strings::StrCat("?;[?,?,?];", JoinedCopies("[?,?]", 3), ";",
+                                 JoinedCopies("[?]", 4), suffix);
+  string expected = "in1";
+  for (int i = 1; i < 8; ++i) {
+    strings::StrAppend(&expected, ";in", (i + 1));
+  }
+  INFER_OK(op, input, expected);
+}
+
+}  // namespace tensorflow

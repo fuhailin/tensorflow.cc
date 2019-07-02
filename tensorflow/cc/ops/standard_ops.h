@@ -37,6 +37,7 @@ limitations under the License.
 #include "tensorflow/cc/ops/training_ops.h"
 #include "tensorflow/cc/ops/user_ops.h"
 #include "tensorflow/cc/ops/rnn_ops.h"
+#include "tensorflow/cc/ops/rkz_rnn_ops.h"
 #include "tensorflow/cc/ops/dataset_ops.h"
 
 #endif  // TENSORFLOW_CC_OPS_STANDARD_OPS_H_

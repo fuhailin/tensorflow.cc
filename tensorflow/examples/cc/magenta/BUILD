@@ -10,6 +10,7 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
+        "//tensorflow/cc:gradients",
     ],
     linkopts = ["-g"],
 )
@@ -18,8 +19,6 @@ tf_cc_binary(
     name = "melody_lstm_train",
     srcs = [
             "melody_lstm_train.cc", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -28,7 +27,7 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
+        "//tensorflow/cc:gradients",
     ],
     linkopts = ["-g"],
 )
@@ -37,8 +36,6 @@ tf_cc_binary(
     name = "melody_lstm_autograd",
     srcs = [
             "melody_lstm_autograd.cc", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -47,7 +44,8 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
+        "//tensorflow/cc:gradients",
+        "//tensorflow/cc:nn_grad",
     ],
     linkopts = ["-g"],
 )
@@ -66,6 +64,7 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
+        "//tensorflow/cc:gradients",
     ],
     linkopts = ["-g"],
 )
@@ -79,8 +78,6 @@ tf_cc_binary(
             "rl_tuner/rl_tuner.h", 
             "rl_tuner/note_rnn.cc", 
             "rl_tuner/note_rnn.h", 
-            "lstm/lstm_ops.cc",    
-            "lstm/lstm_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",
@@ -89,7 +86,10 @@ tf_cc_binary(
         "//tensorflow/core:tensorflow",
         "//tensorflow/cc:queue_runner",
         "//tensorflow/cc:coordinator",
-        "//tensorflow/contrib/rnn:python/ops/_lstm_ops.so",
+        "//tensorflow/cc:gradients",
+        "//tensorflow/cc:math_grad",
+        "//tensorflow/cc:array_grad",
+        "//tensorflow/cc:nn_grad",
     ],
     linkopts = ["-g"],
 )

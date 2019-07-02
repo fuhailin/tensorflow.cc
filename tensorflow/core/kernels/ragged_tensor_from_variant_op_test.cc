@@ -248,7 +248,8 @@ TEST_F(RaggedTensorFromVariantKernelTest, NonEmpty1DIn3DOut) {
   test::ExpectTensorEqual<int>(*GetOutput(3), expected_values);
 }
 
-TEST_F(RaggedTensorFromVariantKernelTest, NonEmpty2DIn4DOut) {
+TEST_F(RaggedTensorFromVariantKernelTest,
+       NonEmpty2DIn4DOutInferredInputRaggedRank) {
   // ragged_component_1 =
   // [
   //   [ [x]            ],
@@ -301,7 +302,7 @@ TEST_F(RaggedTensorFromVariantKernelTest, NonEmpty2DIn4DOut) {
   Tensor variant_component_2 = CreateVariantFromRagged<int, int64>(
       {component_split_2_1, component_split_2_2}, TensorShape({11}),
       component_values_2);
-  int input_ragged_rank = 2;
+  int input_ragged_rank = -1;
   int output_ragged_rank = 4;
   BuildDecodeRaggedTensorGraph<int, int64>(
       input_ragged_rank, output_ragged_rank, TensorShape({2, 2}),
@@ -448,6 +449,28 @@ TEST_F(RaggedTensorFromVariantKernelTest, NonEmpty1DIn3DOutInt32Splits) {
 }
 
 // Tests for invalid inputs.
+TEST_F(RaggedTensorFromVariantKernelTest, InvalidInferredInputRaggedRank) {
+  Tensor component_variant_1 =
+      CreateVariantFromRagged<int, int64>({}, TensorShape({3}), {1, 2, 3});
+  Tensor component_variant_2 =
+      CreateVariantFromRagged<int, int64>({}, TensorShape({0}), {});
+  Tensor component_variant_3 =
+      CreateVariantFromRagged<int, int64>({}, TensorShape({2}), {1, 2});
+  Tensor component_variant_4 =
+      CreateVariantFromRagged<int, int64>({}, TensorShape({1}), {1});
+
+  int input_ragged_rank = -1;
+  int output_ragged_rank = 2;
+  BuildDecodeRaggedTensorGraph<int, int64>(
+      input_ragged_rank, output_ragged_rank, TensorShape({1, 1, 1, 4}),
+      {component_variant_1, component_variant_2, component_variant_3,
+       component_variant_4});
+  EXPECT_TRUE(
+      absl::StartsWith(RunOpKernel().error_message(),
+                       "Inferred input_ragged_rank (output_ragged_rank - "
+                       "encoded_variant.dims()) must be >= 0"));
+}
+
 TEST_F(RaggedTensorFromVariantKernelTest, InputDimsAndRaggedRankAttrsMismatch) {
   const std::vector<int64> component_split_1_1 = {0, 1};
   const std::vector<int64> component_split_2_1 = {0, 1, 2};
@@ -667,6 +690,49 @@ TEST_F(RaggedTensorFromVariantKernelTest, ShapeFnTest) {
   INFER_ERROR("Shape must be rank 3 but is rank 1", op, "[?]");
   INFER_ERROR("Shape must be rank 3 but is rank 2", op, "[?,?]");
   INFER_OK(op, "[?,?,?]", "[?];[?];[?];[?];[?];[?];?");
+}
+
+TEST_F(RaggedTensorFromVariantKernelTest, 2DValuesTensorIn1DOut) {
+  // [
+  //   [
+  //     [[x, x], [x, x]],
+  //     [[x, x], [x, x]]
+  //   ],
+  //   [[[x, x], [x, x]]],
+  //   [],
+  //   [
+  //     [[x, x], [x, x]],
+  //     [[x, x], [x, x]]
+  //   ]
+  // ]
+  const std::vector<int64> batched_splits_1 = {0, 2, 3, 3, 5};
+  const std::vector<int> batched_values = {1, 1, 1, 1, 2, 2, 2, 2, 3, 3,
+                                           3, 3, 4, 4, 4, 4, 5, 5, 5, 5};
+
+  Tensor variant_component_1 = CreateVariantFromRagged<int, int64>(
+      {}, TensorShape({2, 2, 2}), {1, 1, 1, 1, 2, 2, 2, 2});
+  Tensor variant_component_2 = CreateVariantFromRagged<int, int64>(
+      {}, TensorShape({1, 2, 2}), {3, 3, 3, 3});
+  Tensor variant_component_3 =
+      CreateVariantFromRagged<int, int64>({}, TensorShape({0, 2, 2}), {});
+  Tensor variant_component_4 = CreateVariantFromRagged<int, int64>(
+      {}, TensorShape({2, 2, 2}), {4, 4, 4, 4, 5, 5, 5, 5});
+
+  Tensor expected_splits_1(DT_INT64, TensorShape({5}));
+  Tensor expected_values(DT_INT32, TensorShape({5, 2, 2}));
+  test::FillValues<int64>(&expected_splits_1, batched_splits_1);
+  test::FillValues<int>(&expected_values, batched_values);
+
+  int input_ragged_rank = 0;
+  int output_ragged_rank = 1;
+  BuildDecodeRaggedTensorGraph<int, int64>(
+      input_ragged_rank, output_ragged_rank, TensorShape({4}),
+      {variant_component_1, variant_component_2, variant_component_3,
+       variant_component_4});
+  TF_ASSERT_OK(RunOpKernel());
+
+  test::ExpectTensorEqual<int64>(*GetOutput(0), expected_splits_1);
+  test::ExpectTensorEqual<int>(*GetOutput(1), expected_values);
 }
 }  // namespace
 }  // namespace tensorflow

@@ -22,7 +22,7 @@ limitations under the License.
 #include <string>
 #include <unordered_set>
 
-#include "./const.h"
+#include "tensorflow/examples/cc/magenta/rl_tuner/const.h"
 
 #define RANDOM_ACTION_PROBABILITY 0.1
 #define STORE_EVERY_NTH 1
@@ -400,17 +400,30 @@ void RLTuner::Store(const Tensor &observation, const Tensor &state_h, const Tens
 
 // RewardFromRewardRnnScores
 double RLTuner::RewardFromRewardRnnScores(const Tensor &action, const Tensor &reward_scores) {
-  auto action_vec = action.shaped<float, 1>({INPUT_SIZE});
+  // Eigen::Tensor<float, 1, Eigen::RowMajor> action_vec = action.shaped<float, 1>({INPUT_SIZE});
+  // action_vec.setRandom();
 
-  // argmax
-  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action_vec.argmax();
+  // // argmax
+  // Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action_vec.argmax();
 
-  Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.vec<float>();
 
-  // logsumexp
-  Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_vec.exp().sum().log();
+  Eigen::Tensor<float, 4, Eigen::RowMajor> tensor(2,3,5,7);
+  tensor.setRandom();
+  tensor = (tensor + tensor.constant(0.5)).log();
+  tensor(0,0,0,0) = 10.0;
 
-  return reward_scores_vec(static_cast<int>(action_note(0))) - normalization_constant();
+  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> tensor_argmax(1);
+
+  tensor_argmax = tensor.argmax();
+
+  // Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.vec<float>();
+
+  // // logsumexp
+  // Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_vec.exp().sum().log();
+
+  // return reward_scores_vec(static_cast<int>(action_note(0))) - normalization_constant();
+
+  return 0.0;
 }
 
 double RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Tensor &reward_scores) {
@@ -451,7 +464,7 @@ double RLTuner::RewardKey(const Tensor &action) {
 
   //
   // Test
-  // Ref: https://github.com/madlib/eigen/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
+  // Ref: https://github.com/eigenteam/eigen-git-mirror/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
 
   // Eigen::Tensor<float, 1, Eigen::RowMajor> tensor(10);
   // tensor.setRandom();

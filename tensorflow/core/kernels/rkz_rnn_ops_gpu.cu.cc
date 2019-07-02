@@ -281,7 +281,7 @@ void VanillaRNNCellFpropWithCUDA(
     typename TTypes<T>::ConstMatrix b_h,
     typename TTypes<T>::ConstMatrix b_y,
     typename TTypes<T>::Matrix p_out, typename TTypes<T>::Matrix h_out, typename TTypes<T>::Scalar loss_out) {
-  const cudaStream_t& cu_stream = GetCudaStream(ctx);
+  const cudaStream_t& cu_stream = GetGpuStream(ctx);
 
   // With "HostMemory("y")" when REGISTER_GPU_KERNEL, copy is not needed.
   // T y_index;
@@ -532,7 +532,7 @@ void VanillaRNNCellBpropWithCUDA(
       typename TTypes<T>::Matrix d_w_hy_out,                                      
       typename TTypes<T>::Matrix d_b_h_out,                                       
       typename TTypes<T>::Matrix d_b_y_out) {
-  const cudaStream_t& cu_stream = GetCudaStream(ctx);
+  const cudaStream_t& cu_stream = GetGpuStream(ctx);
 
   // T y_index;
   // d.memcpyDeviceToHost(&y_index, y.data(), sizeof(T) * 1);

@@ -46,10 +46,9 @@ const char test_content[] = "hello world hello world hello world hello world hel
 
 // Don't change
 #define INPUT_SIZE 8            // "helo wrd"
-#define SEQ_LENGTH TIME_LEN * BATCH_SIZE
+#define SEQ_LENGTH 360          // less than sizeof(test_content)
 #define TEST_TIME_LEN 1
-#define TEST_BATCH_SIZE 1            // 
-#define TEST_SEQ_LENGTH TEST_TIME_LEN * TEST_BATCH_SIZE
+#define TEST_BATCH_SIZE 1
 
 namespace tensorflow {
 // Helpers for loading a TensorFlow plugin (a .so file).
@@ -244,20 +243,27 @@ int main() {
   TF_CHECK_OK(session.Run({assign_ada_w, assign_ada_b, assign_ada_w_y, assign_ada_b_y}, 
                           nullptr));
 
+  Tensor h_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+  Tensor cs_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+
   // loop
   int step = 0;
+  int input_timelen_index = 0;
   while(step < TRAINING_STEPS) {
-    int content_index = 0;
+    // Reach the end, reset
+    if(input_timelen_index + TIME_LEN > SEQ_LENGTH) {
+      input_timelen_index = 0;
+    }
 
     // Evaluate
     if(step % 100 == 0) 
     {
-        // Batch input with batch size of TEST_SEQ_LENGTH
+        // Batch input with batch size of TEST_TIME_LEN * TEST_BATCH_SIZE
         tensorflow::Tensor x_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({TEST_TIME_LEN, TEST_BATCH_SIZE, INPUT_SIZE}));
-        auto e_2d = x_tensor.shaped<float, 2>({TEST_SEQ_LENGTH, INPUT_SIZE});
-        char test_str[TEST_SEQ_LENGTH + 1]; 
-        test_str[TEST_SEQ_LENGTH] = '\0';
-        std::copy_n(&test_content[content_index], TEST_SEQ_LENGTH, test_str);
+        auto e_2d = x_tensor.shaped<float, 2>({TEST_TIME_LEN * TEST_BATCH_SIZE, INPUT_SIZE});
+        char test_str[TEST_TIME_LEN * TEST_BATCH_SIZE + 1]; 
+        test_str[TEST_TIME_LEN * TEST_BATCH_SIZE] = '\0';
+        std::copy_n(&test_content[input_timelen_index], TEST_TIME_LEN * TEST_BATCH_SIZE, test_str);
 
         // Prepare y, y value make no sense in the evaluation process
         tensorflow::Tensor y_tensor(tensorflow::DT_INT64, tensorflow::TensorShape({TEST_TIME_LEN, TEST_BATCH_SIZE}));
@@ -278,7 +284,7 @@ int main() {
 
           {
              // batch one-hot processing
-            for (int i = 0; i < TEST_SEQ_LENGTH; i++) {
+            for (int i = 0; i < TEST_TIME_LEN * TEST_BATCH_SIZE; i++) {
               // Ref: tensor_test.cc
 
               // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
@@ -333,17 +339,16 @@ int main() {
         } // for(int i = 0; i < 20; i++) {
     } // Evaluate
 
-
     // Train
     {
       // zeroed out when batch 0
-      Tensor h_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
-      typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
-      h_prev_t.setZero();
+      if(input_timelen_index == 0) {
+        typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
+        h_prev_t.setZero();
 
-      Tensor cs_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
-      typename TTypes<float>::Matrix cs_prev_t = cs_prev_tensor.matrix<float>();
-      cs_prev_t.setZero();
+        typename TTypes<float>::Matrix cs_prev_t = cs_prev_tensor.matrix<float>();
+        cs_prev_t.setZero();
+      }
 
       // Always zero
       Tensor cs_grad_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
@@ -354,8 +359,8 @@ int main() {
       Tensor x_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
       {
          // batch one-hot processing
-        auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, INPUT_SIZE});
-        int x_index = content_index;
+        auto e_2d = x_tensor.shaped<float, 2>({TIME_LEN * BATCH_SIZE, INPUT_SIZE});
+        int x_index = input_timelen_index;
         for (int i = 0; i < TIME_LEN; i++) {
           // Ref: tensor_test.cc
 
@@ -384,10 +389,10 @@ int main() {
       // y
       Tensor y_tensor(DT_INT64, TensorShape({TIME_LEN, BATCH_SIZE}));
       {
-        typename TTypes<int64>::Vec y_t = y_tensor.shaped<int64, 1>({SEQ_LENGTH});
+        typename TTypes<int64>::Vec y_t = y_tensor.shaped<int64, 1>({TIME_LEN * BATCH_SIZE});
 
         // Prepare y
-        int y_index = content_index + 1;
+        int y_index = input_timelen_index + 1;
         for (int i = 0; i < TIME_LEN; i++) {
           char test_char = test_content[y_index++];
           auto search = vocab_index_dic.find(test_char);
@@ -420,7 +425,13 @@ int main() {
         Eigen::Tensor<float, 0, Eigen::RowMajor> total_loss = outputs[0].flat<float>().sum();
         LOG(INFO) << "Print step: " << step << ", total_loss: " << total_loss();
       }
+
+      // update h_prev, cs_prev
+      h_prev_tensor = outputs[1];
+      cs_prev_tensor = outputs[2];
     }
+
+    input_timelen_index += TIME_LEN;
 
     step++;
   }

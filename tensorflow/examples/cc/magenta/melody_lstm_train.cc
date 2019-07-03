@@ -38,13 +38,13 @@ using namespace std;
 
 // Adjustable parameters
 #define NUM_UNIT 128             // HIDDEN_SIZE
-#define TIME_LEN 384             // NUM_STEPS
-#define BATCH_SIZE 10            // 
-#define TRAINING_STEPS 10000
+#define TIME_LEN 24
+#define BATCH_SIZE 10
+#define TRAINING_STEPS 20000
 
 // Don't change
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
-#define SEQ_LENGTH TIME_LEN * BATCH_SIZE
+#define SEQ_LENGTH 384
 
 namespace tensorflow {
 
@@ -328,19 +328,28 @@ int main() {
   TF_CHECK_OK(session.Run({assign_ada_w, assign_ada_b, assign_ada_w_y, assign_ada_b_y}, 
                           nullptr));
 
+  Tensor h_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+  Tensor cs_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+
   // loop
   int step = 0;
+  int input_timelen_index = 0;
   while(step < TRAINING_STEPS) {
+    // Reach the end, reset
+    if(input_timelen_index + TIME_LEN > SEQ_LENGTH) {
+      input_timelen_index = 0;
+    }
 
     // zeroed out when batch 0
-    Tensor h_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
-    typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
-    h_prev_t.setZero();
+    if(input_timelen_index == 0) {
+      typename TTypes<float>::Matrix h_prev_t = h_prev_tensor.matrix<float>();
+      h_prev_t.setZero();
 
-    Tensor cs_prev_tensor(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
-    typename TTypes<float>::Matrix cs_prev_t = cs_prev_tensor.matrix<float>();
-    cs_prev_t.setZero();
+      typename TTypes<float>::Matrix cs_prev_t = cs_prev_tensor.matrix<float>();
+      cs_prev_t.setZero();
+    }
 
+    // Always zero
     Tensor cs_grad_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
     typename TTypes<float, 3>::Tensor cs_grad_t = cs_grad_tensor.tensor<float, 3>();
     cs_grad_t.setZero();
@@ -350,10 +359,10 @@ int main() {
       // Note that every input batch in BATCH_SIZE is from a different example
       Tensor x_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
       {
-        auto e_2d = x_tensor.shaped<float, 2>({SEQ_LENGTH, INPUT_SIZE});
+        auto e_2d = x_tensor.shaped<float, 2>({TIME_LEN * BATCH_SIZE, INPUT_SIZE});
 
         for (int i = 0; i < TIME_LEN; i++) {
-          Eigen::DSizes<Eigen::DenseIndex, 2> indices_dataset(i, 0);
+          Eigen::DSizes<Eigen::DenseIndex, 2> indices_dataset(input_timelen_index + i, 0);
           Eigen::DSizes<Eigen::DenseIndex, 2> sizes_dataset(1, INPUT_SIZE);
           Eigen::Tensor<float, 2, Eigen::RowMajor> mat = dataset_outputs[1].matrix<float>().slice(indices_dataset, sizes_dataset);
 
@@ -369,11 +378,11 @@ int main() {
       // y
       Tensor y_tensor(DT_INT64, TensorShape({TIME_LEN, BATCH_SIZE}));
       {
-        typename TTypes<int64>::Vec y_t = y_tensor.shaped<int64, 1>({SEQ_LENGTH});
+        typename TTypes<int64>::Vec y_t = y_tensor.shaped<int64, 1>({TIME_LEN * BATCH_SIZE});
 
         // Prepare y
         for (int i = 0; i < TIME_LEN; i++) {
-          int64 label = dataset_outputs[0].vec<int64>()(i + 1); // i + 1 for the next one
+          int64 label = dataset_outputs[0].vec<int64>()(input_timelen_index + i + 1); // i + 1 for the next one
 
           for(int b = 0; b < BATCH_SIZE; b++) {
             y_t(i * BATCH_SIZE + b) = label;
@@ -398,12 +407,16 @@ int main() {
         Eigen::Tensor<float, 0, Eigen::RowMajor> total_loss = outputs[0].flat<float>().sum();
         LOG(INFO) << "Print step: " << step << ", total_loss: " << total_loss();
       }
+    
+      // update h_prev, cs_prev
+      h_prev_tensor = outputs[1];
+      cs_prev_tensor = outputs[2];
     }
+
+    input_timelen_index += TIME_LEN;
 
     step++;
   }
-
-  // Update h_prev_tensor and cs_prev_tensor, cs_grad_tensor for the next BATCH
 
   // Stop
   TF_CHECK_OK(coord.RequestStop());

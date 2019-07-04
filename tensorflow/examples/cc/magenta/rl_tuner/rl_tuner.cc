@@ -60,7 +60,7 @@ RLTuner::~RLTuner() {
 Status RLTuner::Init() {
   this->num_actions = INPUT_SIZE;
   this->actions_executed_so_far = 0;
-  this->num_steps = 10000;
+  this->num_steps = TRAINING_STEPS;
   this->num_times_train_called = 0;
   this->num_times_store_called = 0;
 
@@ -89,11 +89,11 @@ Status RLTuner::BuildGraph() {
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // taking_action
-  this->action_softmax = Softmax(this->scope, this->q_network);
+  this->action_softmax = Softmax(this->scope, this->action_scores);
   LOG(INFO) << "Node building status: " << this->scope.status();
   this->predicted_actions = OneHot(this->scope,
-                                   ArgMax(this->scope, this->q_network, 1),
-                                  num_actions, 1, 0);
+                                   ArgMax(this->scope, this->action_scores, 1),
+                                   this->num_actions, 1.0f, 0.0f);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // estimating_future_rewards
@@ -102,11 +102,11 @@ Status RLTuner::BuildGraph() {
 
   // Rewards are observed from the environment and are fed in later.
   this->rewards = Placeholder(this->scope, DT_FLOAT,
-                              Placeholder::Shape({MINIBATCH_SIZE, INPUT_SIZE}));
+                              Placeholder::Shape({MINIBATCH_SIZE}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // target_vals
-  this->target_vals = ReduceMax(this->scope, this->next_action_scores, 1);
+  this->target_vals = ReduceMax(this->scope, this->next_action_scores, {1});
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Total rewards are the observed rewards plus
@@ -118,12 +118,12 @@ Status RLTuner::BuildGraph() {
 
   // q_value_prediction
   this->action_mask = Placeholder(this->scope, DT_FLOAT,
-                                  Placeholder::Shape({INPUT_SIZE, this->num_actions}));
+                                  Placeholder::Shape({INPUT_SIZE, MINIBATCH_SIZE}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   this->masked_action_scores = ReduceSum(this->scope,
                                          MatMul(this->scope, this->action_scores, this->action_mask),
-                                         1);
+                                         {1});
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   this->temp_diff = Sub(this->scope, this->masked_action_scores, this->future_rewards);
@@ -132,7 +132,7 @@ Status RLTuner::BuildGraph() {
   // Prediction error is the mean squared error between the reward the
   // network actually received for a given action, and what it expected to
   // receive.
-  this->prediction_error = ReduceMean(this->scope, Square(this->scope, this->temp_diff), 0);
+  this->prediction_error = ReduceMean(this->scope, Square(this->scope, this->temp_diff), {0});
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Gradients
@@ -203,14 +203,19 @@ void RLTuner::Train() {
     Tensor new_reward_state_c = this->reward_rnn.cs_prev_tensor;
 
     // reward
-    double reward = this->CollectReward(last_observation, new_observation, reward_scores);
+    Tensor reward = this->CollectReward(last_observation, new_observation, reward_scores);
 
-    this->Store(last_observation, state_h, state_c, action, action/*TODO: reward*/, new_observation,
+    this->Store(last_observation, state_h, state_c, action, reward, new_observation,
                  new_state_h, new_state_c, new_reward_state_h, new_reward_state_c);
 
     this->TrainingStep();
 
-    // Update current state as last state.
+    if (step % 1000 == 0) {
+      LOG(INFO) << "Print step: " << step << ", reward_scores: " << reward_scores.DebugString();
+      LOG(INFO) << "Print step: " << step << ", new_observation: " << new_observation.DebugString();
+    }
+
+    // Update current state as last state. TODO
     this->last_observation = new_observation;
   }
 }
@@ -241,17 +246,17 @@ std::tuple<Tensor, Tensor, Tensor> RLTuner::Action() {
   // Run
   vector<Tensor> outputs;
   TF_CHECK_OK(session.Run({
-                           {this->q_network.x, last_observation},
+                           {this->q_network.x, this->last_observation},
                            {this->q_network.y, this->q_network.y_tensor},
                            {this->q_network.h_prev, this->q_network.h_prev_tensor},
                            {this->q_network.cs_prev, this->q_network.cs_prev_tensor},
-                           {this->reward_rnn.x, last_observation},
+                           {this->reward_rnn.x, this->last_observation},
                            {this->reward_rnn.y, this->reward_rnn.y_tensor},
                            {this->reward_rnn.h_prev, this->reward_rnn.h_prev_tensor},
                            {this->reward_rnn.cs_prev, this->reward_rnn.cs_prev_tensor},
                           },
                           {
-                            predicted_actions, action_softmax, reward_scores,
+                            this->predicted_actions, this->action_softmax, this->reward_scores,
                             this->q_network.block_lstm->h, this->q_network.block_lstm->cs,
                             this->reward_rnn.block_lstm->h, this->reward_rnn.block_lstm->cs
                           },
@@ -267,7 +272,10 @@ std::tuple<Tensor, Tensor, Tensor> RLTuner::Action() {
     Tensor note = this->GetRandomNote();
     return std::make_tuple(note, note, outputs[2]);
   } else {
-    return std::make_tuple(outputs[0], outputs[0], outputs[2]);
+    // Reshape and return
+    Tensor action;
+    CHECK(action.CopyFrom(outputs[0], TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE})));
+    return std::make_tuple(action, action, outputs[2]);
   }
 }
 
@@ -280,12 +288,6 @@ void RLTuner::TrainingStep() {
     // std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor>> samples;
     // std::sample(this->experience.begin(), this->experience.end(), std::back_inserter(samples),
     //             MINIBATCH_SIZE, std::mt19937{std::random_device{}()});
-
-    // Tensors for placeholders
-    Tensor observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
-    Tensor new_observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
-    Tensor action_mask(DT_FLOAT, TensorShape({MINIBATCH_SIZE, INPUT_SIZE}));
-    Tensor rewards(DT_FLOAT, TensorShape({MINIBATCH_SIZE, INPUT_SIZE}));
 
     // for (auto it = samples.cbegin(); it != samples.cend(); it++) {
     //   // TIME_LEN = 1 and BATCH_SIZE = 1
@@ -301,21 +303,28 @@ void RLTuner::TrainingStep() {
     //   // Fill in tensors
 
 
+    srand(time(NULL));
+    int rand_index = rand() % this->experience.size();
+    Tensor observations, state_h, state_c, action, rewards, new_observations,
+                 new_state_h, new_state_c, new_reward_state_h, new_reward_state_c;
+    std::tie(observations, state_h, state_c, action, rewards, new_observations,
+                 new_state_h, new_state_c, new_reward_state_h, new_reward_state_c) = this->experience[rand_index];
 
-    // }
+    Tensor action_mask;
+    CHECK(action_mask.CopyFrom(action, TensorShape({INPUT_SIZE, MINIBATCH_SIZE})));
 
     // Backprop
     vector<Tensor> outputs;
     TF_CHECK_OK(session.Run({
                               {this->q_network.x, observations},
                               {this->q_network.y, this->q_network.y_tensor},
-                              {this->q_network.h_prev, this->q_network.h_prev_tensor},
-                              {this->q_network.cs_prev, this->q_network.cs_prev_tensor},
+                              {this->q_network.h_prev, state_h},
+                              {this->q_network.cs_prev, state_c},
 
                               {this->target_q_network.x, new_observations},
                               {this->target_q_network.y, this->target_q_network.y_tensor},
-                              {this->target_q_network.h_prev, this->target_q_network.h_prev_tensor},
-                              {this->target_q_network.cs_prev, this->target_q_network.cs_prev_tensor},
+                              {this->target_q_network.h_prev, new_state_h},
+                              {this->target_q_network.cs_prev, new_state_c},
 
                               {this->action_mask, action_mask},
                               {this->rewards, rewards}
@@ -323,10 +332,44 @@ void RLTuner::TrainingStep() {
                             {
                               this->prediction_error,
                               this->apply_w, this->apply_b, this->apply_w_y, this->apply_b_y,
-                              this->target_vals
+                              this->future_rewards
                             },
                             {},
                             &outputs));
+
+    // //Tensors for placeholders
+    // Tensor observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
+    // Tensor new_observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
+    // Tensor action_mask(DT_FLOAT, TensorShape({INPUT_SIZE, MINIBATCH_SIZE}));
+    // Tensor rewards(DT_FLOAT, TensorShape({MINIBATCH_SIZE}));
+
+    // TF_CHECK_OK(session.Run({
+    //                           {this->q_network.x, observations},
+    //                           {this->q_network.y, this->q_network.y_tensor},
+    //                           {this->q_network.h_prev, this->q_network.h_prev_tensor},
+    //                           {this->q_network.cs_prev, this->q_network.cs_prev_tensor},
+
+    //                           {this->target_q_network.x, new_observations},
+    //                           {this->target_q_network.y, this->target_q_network.y_tensor},
+    //                           {this->target_q_network.h_prev, this->target_q_network.h_prev_tensor},
+    //                           {this->target_q_network.cs_prev, this->target_q_network.cs_prev_tensor},
+
+    //                           {this->action_mask, action_mask},
+    //                           {this->rewards, rewards}
+    //                         },
+    //                         {
+    //                           this->prediction_error,
+    //                           this->apply_w, this->apply_b, this->apply_w_y, this->apply_b_y,
+    //                           this->future_rewards
+    //                         },
+    //                         {},
+    //                         &outputs));
+    if (this->num_times_train_called % 1000 == 0) {
+      LOG(INFO) << "Print num_times_train_called: " << this->num_times_train_called
+                << ", prediction_error: " << outputs[0].DebugString();
+      LOG(INFO) << "Print num_times_train_called 111: " << this->num_times_train_called
+                << ", future_rewards: " << outputs[5].DebugString();
+    }
 
     // target_network_update
     TF_CHECK_OK(session.Run({},
@@ -346,7 +389,7 @@ Tensor RLTuner::GetRandomNote() {
 
   int randValue = rand() % INPUT_SIZE;
 
-  Tensor ret_tensor(DT_FLOAT, TensorShape({1, 1, INPUT_SIZE}));
+  Tensor ret_tensor(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
 
   // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
   Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, INPUT_SIZE);
@@ -400,33 +443,38 @@ void RLTuner::Store(const Tensor &observation, const Tensor &state_h, const Tens
 
 // RewardFromRewardRnnScores
 double RLTuner::RewardFromRewardRnnScores(const Tensor &action, const Tensor &reward_scores) {
-  // Eigen::Tensor<float, 1, Eigen::RowMajor> action_vec = action.shaped<float, 1>({INPUT_SIZE});
-  // action_vec.setRandom();
+#if TESTING
+  // Ref: https://github.com/eigenteam/eigen-git-mirror/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
 
-  // // argmax
-  // Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action_vec.argmax();
-
-
-  Eigen::Tensor<float, 4, Eigen::RowMajor> tensor(2,3,5,7);
+  // Test code
+  Eigen::Tensor<float, 4, Eigen::RowMajor> tensor(2, 3, 5, 7);
   tensor.setRandom();
   tensor = (tensor + tensor.constant(0.5)).log();
-  tensor(0,0,0,0) = 10.0;
+  tensor(0, 0, 0, 0) = 10.0;
 
-  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> tensor_argmax(1);
+  Eigen::Tensor<Eigen::DenseIndex, 0, Eigen::RowMajor> tensor_argmax;
 
   tensor_argmax = tensor.argmax();
 
-  // Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.vec<float>();
-
-  // // logsumexp
-  // Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_vec.exp().sum().log();
-
-  // return reward_scores_vec(static_cast<int>(action_note(0))) - normalization_constant();
-
   return 0.0;
+#endif
+
+  // reshape action
+  Eigen::Tensor<float, 1, Eigen::RowMajor> action_vec = action.shaped<float, 1>({INPUT_SIZE});
+
+  // argmax
+  Eigen::Tensor<Eigen::DenseIndex, 0, Eigen::RowMajor> action_note = action_vec.argmax();
+
+  // reshape reward_scores
+  Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.shaped<float, 1>({INPUT_SIZE});
+
+  // logsumexp
+  Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_vec.exp().sum().log();
+
+  return reward_scores_vec(static_cast<int>(action_note())) - normalization_constant();
 }
 
-double RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Tensor &reward_scores) {
+Tensor RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Tensor &reward_scores) {
     // Gets and saves log p(a|s) as output by reward_rnn.
     double note_rnn_reward = this->RewardFromRewardRnnScores(action, reward_scores);
     this->note_rnn_reward_last_n += note_rnn_reward;
@@ -435,7 +483,7 @@ double RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Te
 
     this->music_theory_reward_last_n += reward * REWARD_SCALER;
 
-    return reward * REWARD_SCALER + note_rnn_reward;
+    return Tensor(static_cast<float>(reward * REWARD_SCALER + note_rnn_reward));
 }
 
 
@@ -454,28 +502,16 @@ double RLTuner::RewardKey(const Tensor &action) {
 
   double reward = 0;
 
-  Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> action_note = action.vec<float>().argmax();
+  // reshape action
+  Eigen::Tensor<float, 1, Eigen::RowMajor> action_vec = action.shaped<float, 1>({INPUT_SIZE});
+
+  Eigen::Tensor<Eigen::DenseIndex, 0, Eigen::RowMajor> action_note = action_vec.argmax();
 
   std::unordered_set<int> key(C_MAJOR_KEY);
-  if (key.find(static_cast<int>(action_note(0))) == key.end())
+  if (key.find(static_cast<int>(action_note())) == key.end())
     reward = penalty_amount;
 
   return reward;
-
-  //
-  // Test
-  // Ref: https://github.com/eigenteam/eigen-git-mirror/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
-
-  // Eigen::Tensor<float, 1, Eigen::RowMajor> tensor(10);
-  // tensor.setRandom();
-  // // tensor = (tensor + tensor.constant(0.5)).log();
-  // tensor(0) = 10.0;
-
-  // Eigen::Tensor<Eigen::DenseIndex, 1, Eigen::RowMajor> tensor_argmax(1);
-
-  // tensor_argmax = tensor.argmax();
-
-  // return 0.0;
 }
 
 }  // namespace tensorflow

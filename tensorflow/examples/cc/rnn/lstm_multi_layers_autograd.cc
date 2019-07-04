@@ -485,7 +485,7 @@ int main() {
       }
     }
 
-    // update h_prev, cs_prev, cs_grad when batches > 0
+    // update h_prev, cs_prev when time sequence > 0
 
     step++;
   }

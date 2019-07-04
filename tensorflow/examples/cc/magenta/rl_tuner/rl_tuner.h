@@ -118,7 +118,7 @@ class RLTuner {
   // Reward
   double RewardFromRewardRnnScores(const Tensor &action,
                                    const Tensor &reward_scores);
-  double CollectReward(const Tensor &obs, const Tensor &action,
+  Tensor CollectReward(const Tensor &obs, const Tensor &action,
                        const Tensor &reward_scores);
   double RewardMusicTheory(const Tensor &action);
   double RewardKey(const Tensor &action);

@@ -30,4 +30,7 @@ limitations under the License.
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define SEQ_LENGTH TIME_LEN * BATCH_SIZE
 
+// #define VERBOSE 1
+// #define TESTING 1
+
 #endif  // TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_CONST_H_

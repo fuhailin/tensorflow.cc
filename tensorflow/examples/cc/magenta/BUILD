@@ -54,8 +54,6 @@ tf_cc_binary(
     name = "melody_cudnn_rnn",
     srcs = [
             "melody_cudnn_rnn.cc", 
-            "cudnn_rnn/cudnn_rnn_ops.cc",    
-            "cudnn_rnn/cudnn_rnn_ops.h",
            ],
     deps = [
         "//tensorflow/cc:cc_ops",

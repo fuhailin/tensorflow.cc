@@ -536,6 +536,7 @@ tf_gen_op_wrappers_cc(
         "training_ops",
         "rnn_ops",
         "rkz_rnn_ops",
+        "cudnn_rnn_ops",
         "dataset_ops",
         "user_ops",
     ],

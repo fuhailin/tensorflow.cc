@@ -1,6 +1,6 @@
 licenses(["notice"])  # Apache 2.0
 
-package(default_visibility = ["//visibility:public"])
+package(default_visibility = [":friends"])
 
 package_group(
     name = "friends",
@@ -16,6 +16,8 @@ cc_library(
         "graphdef_to_tfl_flatbuffer.h",
     ],
     deps = [
+        "//tensorflow/compiler/mlir/lite:common",
+        "//tensorflow/compiler/mlir/lite:tf_tfl_passes",
         "//tensorflow/compiler/mlir/lite:tf_to_tfl_flatbuffer",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:convert_graphdef",

@@ -28,9 +28,9 @@ limitations under the License.
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/SourceMgr.h"
+#include "mlir/IR/Function.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
 #include "mlir/IR/Module.h"  // TF:local_config_mlir
 #include "mlir/Parser.h"  // TF:local_config_mlir
@@ -78,9 +78,7 @@ static std::string TfLiteTensorString(const TfLiteTensor& tensor) {
 }
 
 int main(int argc, char** argv) {
-  llvm::PrettyStackTraceProgram x(argc, argv);
   llvm::InitLLVM y(argc, argv);
-
   llvm::cl::ParseCommandLineOptions(argc, argv, "MLIR TFLite runner\n");
 
   auto file_or_err = llvm::MemoryBuffer::getFileOrSTDIN(inputFileName.c_str());
@@ -94,12 +92,11 @@ int main(int argc, char** argv) {
   mlir::MLIRContext context;
   llvm::SourceMgr source_mgr;
   source_mgr.AddNewSourceBuffer(std::move(*file_or_err), llvm::SMLoc());
-  std::unique_ptr<mlir::Module> module(
-      mlir::parseSourceFile(source_mgr, &context));
+  mlir::OwningModuleRef module(mlir::parseSourceFile(source_mgr, &context));
   if (!module) return 1;
 
   // TODO(jpienaar): Expand to support inputs.
-  mlir::Function main = module->getNamedFunction("main");
+  mlir::FuncOp main = module->lookupSymbol<mlir::FuncOp>("main");
   QCHECK(main) << "No 'main' function specified.";
   if (main.getType().getNumInputs() != 0)
     LOG(QFATAL) << "NYI: Only nullary functions supported.";

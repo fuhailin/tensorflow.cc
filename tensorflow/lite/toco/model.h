@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "absl/types/optional.h"
@@ -174,6 +175,7 @@ enum class OperatorType : uint8 {
   kMatrixDiag,
   kMatrixSetDiag,
   kMatrixDiagV2,
+  kMatrixSetDiagV2
 };
 
 // Helper to deal with TensorFlow arrays using a different ordering of
@@ -552,6 +554,10 @@ struct FullyConnectedOperator : Operator {
   FullyConnectedOperator() : Operator(OperatorType::kFullyConnected) {}
   FullyConnectedWeightsFormat weights_format =
       FullyConnectedWeightsFormat::kDefault;
+
+  // `keep_num_dims` is supported in the FullyConnected kernel version 5, but
+  // it's never supported by Toco.
+  bool keep_num_dims = false;
 };
 
 // Dequantization operator, converting a quantized array of integers with
@@ -2126,6 +2132,14 @@ struct MatrixDiagV2Operator : Operator {
 //         tensor.
 struct MatrixSetDiagOperator : Operator {
   MatrixSetDiagOperator() : Operator(OperatorType::kMatrixSetDiag) {}
+};
+
+// Matrix Set Diag Operator V2:
+// Construct a batched diagonal tensor with given input and diagonal values.
+// Not fully supported, constains 1 extra inputs compared to MatrixSetDiag,
+// support default parameters settings which performs the same as MatrixSetDiag
+struct MatrixSetDiagV2Operator : Operator {
+  MatrixSetDiagV2Operator() : Operator(OperatorType::kMatrixSetDiagV2) {}
 };
 
 // Alloc's are used for transient arrays only. An Alloc specifies which interval

@@ -16,12 +16,14 @@ limitations under the License.
 #define TENSORFLOW_LITE_CORE_SUBGRAPH_H_
 
 #include <cstdlib>
+#include <map>
 #include <vector>
 
 #include "tensorflow/lite/allocation.h"
 #include "tensorflow/lite/c/c_api_internal.h"
 #include "tensorflow/lite/core/api/profiler.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
+#include "tensorflow/lite/experimental/resource_variable/resource_variable.h"
 #include "tensorflow/lite/memory_planner.h"
 #include "tensorflow/lite/util.h"
 
@@ -36,7 +38,8 @@ class Subgraph {
 
   Subgraph(ErrorReporter* error_reporter,
            TfLiteExternalContext** external_contexts,
-           std::vector<std::unique_ptr<Subgraph>>* subgraphs);
+           std::vector<std::unique_ptr<Subgraph>>* subgraphs,
+           ResourceVariableMap* resource_variables);
 
   Subgraph(const Subgraph&) = delete;
 
@@ -127,19 +130,19 @@ class Subgraph {
   // read/write access to structure
   TfLiteTensor* tensor(int tensor_index) {
     if (tensor_index < 0 ||
-        static_cast<size_t>(tensor_index) >= context_->tensors_size) {
+        static_cast<size_t>(tensor_index) >= context_.tensors_size) {
       return nullptr;
     }
-    return &context_->tensors[tensor_index];
+    return &context_.tensors[tensor_index];
   }
 
   // Get an immutable tensor data structure.
   const TfLiteTensor* tensor(int tensor_index) const {
     if (tensor_index < 0 ||
-        static_cast<size_t>(tensor_index) >= context_->tensors_size) {
+        static_cast<size_t>(tensor_index) >= context_.tensors_size) {
       return nullptr;
     }
-    return &context_->tensors[tensor_index];
+    return &context_.tensors[tensor_index];
   }
 
   // Read only access to list of inputs.
@@ -159,6 +162,10 @@ class Subgraph {
 
   // Read only access to list of variable tensors.
   const std::vector<int>& variables() const { return variables_; }
+
+  // WARNING: Experimental interface, subject to change.
+  // TODO(ycling): Move this function to an external context interface.
+  ResourceVariableMap& resource_variables() { return *resource_variables_; }
 
   size_t tensors_size() const { return tensors_.size(); }
 
@@ -223,7 +230,7 @@ class Subgraph {
   void UseNNAPI(bool enable);
 
   // Return the subgraph specific context.
-  TfLiteContext* context() { return context_; }
+  TfLiteContext* context() { return &context_; }
 
   // Set the value of an external context.
   void SetExternalContext(TfLiteExternalContextType type,
@@ -231,7 +238,7 @@ class Subgraph {
   // Get the half precision flag.
   // WARNING: This is an experimental API and subject to change.
   bool GetAllowFp16PrecisionForFp32() const {
-    return context_->allow_fp32_relax_to_fp16;
+    return context_.allow_fp32_relax_to_fp16;
   }
 
   // Sets the cancellation function pointer in order to cancel a request in the
@@ -249,14 +256,14 @@ class Subgraph {
   // TODO(b/119495520): make this private when refactoring complete.
   TfLiteStatus EnsureTensorDataIsReadable(int tensor_index) {
     TfLiteTensor* t = &tensors_[tensor_index];
-    TF_LITE_ENSURE(context_, t != nullptr);
+    TF_LITE_ENSURE(&context_, t != nullptr);
     if (t->data_is_stale) {
-      TF_LITE_ENSURE(context_, t->delegate != nullptr);
-      TF_LITE_ENSURE(context_, t->buffer_handle != kTfLiteNullBufferHandle);
-      TF_LITE_ENSURE(context_, t->delegate->CopyFromBufferHandle != nullptr);
+      TF_LITE_ENSURE(&context_, t->delegate != nullptr);
+      TF_LITE_ENSURE(&context_, t->buffer_handle != kTfLiteNullBufferHandle);
+      TF_LITE_ENSURE(&context_, t->delegate->CopyFromBufferHandle != nullptr);
       // TODO(b/120420546): we must add a test that exercise this code.
       TF_LITE_ENSURE_STATUS(t->delegate->CopyFromBufferHandle(
-          context_, t->delegate, t->buffer_handle, t));
+          &context_, t->delegate, t->buffer_handle, t));
       t->data_is_stale = false;
     }
     return kTfLiteOk;
@@ -279,7 +286,7 @@ class Subgraph {
 
   void SetProfiler(Profiler* profiler) {
     profiler_ = profiler;
-    context_->profiler = profiler;
+    context_.profiler = profiler;
   }
 
   Profiler* GetProfiler() { return profiler_; }
@@ -306,14 +313,14 @@ class Subgraph {
   void* OpInit(const TfLiteRegistration& op_reg, const char* buffer,
                size_t length) {
     if (op_reg.init == nullptr) return nullptr;
-    return op_reg.init(context_, buffer, length);
+    return op_reg.init(&context_, buffer, length);
   }
 
   // Let 'op_reg' release any memory it might have allocated via 'OpInit'.
   void OpFree(const TfLiteRegistration& op_reg, void* buffer) {
     if (op_reg.free == nullptr) return;
     if (buffer) {
-      op_reg.free(context_, buffer);
+      op_reg.free(&context_, buffer);
     }
   }
 
@@ -323,7 +330,7 @@ class Subgraph {
   // Invoke the operator represented by 'node'.
   TfLiteStatus OpInvoke(const TfLiteRegistration& op_reg, TfLiteNode* node) {
     if (op_reg.invoke == nullptr) return kTfLiteError;
-    return op_reg.invoke(context_, node);
+    return op_reg.invoke(&context_, node);
   }
 
   // Call OpPrepare() for as many ops as possible, allocating memory for their
@@ -453,9 +460,12 @@ class Subgraph {
     const size_t required_capacity = tensors_.size() + kTensorsCapacityHeadroom;
     if (required_capacity > tensors_.capacity()) {
       tensors_.reserve(required_capacity);
-      context_->tensors = tensors_.data();
+      context_.tensors = tensors_.data();
     }
   }
+
+  // Ensures the memory required is planned and allocated.
+  TfLiteStatus EnsureMemoryAllocations();
 
   // The state of the Interpreter.
   enum State {
@@ -466,7 +476,8 @@ class Subgraph {
     kStateInvokable,
     // The interpreter is ready to be invoked, and graph can't be further
     // modified. The interpreter will enter this state when calling
-    // `ModifyGraphWithDelegate` with `allow_dynamic_tensors=false`.
+    // `ModifyGraphWithDelegate` and the delegate doesn't support dynamic
+    // tensors.
     kStateInvokableAndImmutable,
   };
   State state_ = kStateUninvokable;
@@ -474,9 +485,11 @@ class Subgraph {
   // A pure C data structure used to communicate with the pure C plugin
   // interface. To avoid copying tensor metadata, this is also the definitive
   // structure to store tensors.
-  // TODO(b/119495520): Get rid of owned and just make context_ a instance.
-  TfLiteContext owned_context_;
-  TfLiteContext* context_;
+  TfLiteContext context_;
+
+  // A pointer to the external contexts (kTfLiteMaxExternalContexts) array that
+  // sits inside the associated TFLite interpreter instance.
+  TfLiteExternalContext** external_contexts_;
 
   // Node inputs/outputs are stored in TfLiteNode and TfLiteRegistration stores
   // function pointers to actual implementation.
@@ -514,14 +527,6 @@ class Subgraph {
   // NOTE: this relies on the order of nodes that is in topological order.
   int next_execution_plan_index_to_prepare_;
 
-  // This is similar to `next_execution_plan_index_to_prepare_`, but it tracks
-  // which nodes' allocation is planned with the arena planner.
-  //
-  // This is a workaround for b/127354079. It shouldn't be necessary if
-  // ArenaPlanner can "rewind" to a specific point.
-  // TODO(b/127354079): Improve ArenaPlanner and remove this mechanism.
-  int next_execution_plan_index_to_plan_allocation_;
-
   // WARNING: This is an experimental interface that is subject to change.
   // This is a list of node indices (to index into nodes_and_registration).
   // This represents a valid topological sort (dependency ordered) execution
@@ -555,9 +560,6 @@ class Subgraph {
   // trigger downstream reallocation after op invocation.
   bool tensor_resized_since_op_invoke_ = false;
 
-  // External contexts (kTfLiteMaxExternalContexts).
-  TfLiteExternalContext** external_contexts_;
-
   // Profiler for this interpreter instance.
   Profiler* profiler_ = nullptr;
 
@@ -578,6 +580,10 @@ class Subgraph {
   // Reference to data used by the cancellation function in
   // `check_cancelled_func_`.
   void* cancellation_data_ = nullptr;
+
+  // A map of resource variables. Owned by interpreter and shared by multiple
+  // subgraphs.
+  ResourceVariableMap* resource_variables_ = nullptr;
 };
 
 }  // namespace tflite

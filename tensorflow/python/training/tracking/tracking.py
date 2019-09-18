@@ -20,6 +20,7 @@ from __future__ import print_function
 import functools
 import weakref
 
+from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.eager import function as defun
 from tensorflow.python.framework import dtypes
@@ -27,6 +28,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.training.tracking import base
 from tensorflow.python.training.tracking import data_structures
 from tensorflow.python.util import tf_contextlib
+from tensorflow.python.util.tf_export import tf_export
 
 
 # global _RESOURCE_TRACKER_STACK
@@ -172,14 +174,21 @@ class CapturableResourceDeleter(object):
 
   def __init__(self, destroy_resource_fn=None):
     if destroy_resource_fn:
-      self.destroy_resource = destroy_resource_fn
+      self._destroy_resource = destroy_resource_fn
+      self._destruction_context = (
+          context.eager_mode if context.executing_eagerly()
+          else ops.get_default_graph().as_default)
+    else:
+      self._destroy_resource = None
 
   def destroy_resource(self):
-    """A function that destroys the resource."""
-    pass
+    if self._destroy_resource:
+      return self._destroy_resource()
 
   def __del__(self):
-    self.destroy_resource()
+    if self._destroy_resource:
+      with self._destruction_context():
+        self._destroy_resource()
 
 
 class CapturableResource(base.Trackable):
@@ -267,8 +276,44 @@ class TrackableResource(CapturableResource):
     super(TrackableResource, self).__init__(device=device, deleter=deleter)
 
 
-class TrackableAsset(base.Trackable):
-  """Base class for asset files which need to be tracked."""
+@tf_export("saved_model.Asset")
+class Asset(base.Trackable):
+  """Represents a file asset to hermetically include in a SavedModel.
+
+  A SavedModel can include arbitrary files, called assets, that are needed
+  for its use. For example a vocabulary file used initialize a lookup table.
+
+  When a trackable object is exported via `tf.saved_model.save()`, all the
+  `Asset`s reachable from it are copied into the SavedModel assets directory.
+  Upon loading, the assets and the serialized functions that depend on them
+  will refer to the correct filepaths inside the SavedModel directory.
+
+  Example:
+
+  ```
+  filename = tf.saved_model.Asset("file.txt")
+
+  @tf.function(input_signature=[])
+  def func():
+    return tf.io.read_file(filename)
+
+  trackable_obj = tf.train.Checkpoint()
+  trackable_obj.func = func
+  trackable_obj.filename = filename
+  tf.saved_model.save(trackable_obj, "/tmp/saved_model")
+
+  # The created SavedModel is hermetic, it does not depend on
+  # the original file and can be moved to another path.
+  tf.io.gfile.remove("file.txt")
+  tf.io.gfile.rename("/tmp/saved_model", "/tmp/new_location")
+
+  reloaded_obj = tf.saved_model.load("/tmp/new_location")
+  print(reloaded_obj.func())
+  ```
+
+  Attributes:
+    asset_path: A 0-D `tf.string` tensor with path to the asset.
+  """
 
   def __init__(self, path):
     """Record the full path to the asset."""
@@ -375,9 +420,11 @@ def cached_per_instance(f):
     if output is None:
       cache[item] = output = f(item)
     return output
+
+  wrapped.cache = cache
   return wrapped
 
 
 ops.register_tensor_conversion_function(
-    TrackableAsset,
+    Asset,
     lambda asset, **kw: ops.internal_convert_to_tensor(asset.asset_path, **kw))

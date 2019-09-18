@@ -17,11 +17,13 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/QuantOps/QuantTypes.h"  // TF:local_config_mlir
 #include "mlir/IR/Attributes.h"  // TF:local_config_mlir
 #include "mlir/IR/Builders.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
+#include "mlir/IR/Matchers.h"  // TF:local_config_mlir
 #include "mlir/IR/Module.h"  // TF:local_config_mlir
 #include "mlir/IR/Operation.h"  // TF:local_config_mlir
 #include "mlir/IR/OperationSupport.h"  // TF:local_config_mlir
@@ -29,8 +31,8 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"  // TF:local_config_mlir
 #include "mlir/Support/Functional.h"  // TF:local_config_mlir
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
+#include "tensorflow/compiler/mlir/lite/quantization/quantization_utils.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
-#include "tensorflow/compiler/mlir/lite/utils/quantization_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
 
 namespace mlir {
@@ -41,7 +43,16 @@ namespace TFL {
 //
 namespace {
 
-/// Applies quantization on the model in TFL dialect.
+// Full integer quantization rewrite pattern for TFLite.
+struct TFLFullQuantization
+    : public QuantizationPattern<TFLFullQuantization, QuantizeOp,
+                                 DequantizeOp> {
+  explicit TFLFullQuantization(MLIRContext* ctx) : BaseType(ctx) {}
+  static bool AllowHybridOperand() { return false; }
+  static bool AllowHybridResult() { return false; }
+};
+
+// Applies quantization on the model in TFL dialect.
 struct QuantizePass : public FunctionPass<QuantizePass> {
   void runOnFunction() override;
 };
@@ -51,14 +62,17 @@ struct QuantizePass : public FunctionPass<QuantizePass> {
 void QuantizePass::runOnFunction() {
   OwningRewritePatternList patterns;
   auto func = getFunction();
-  auto *context = func.getContext();
-  populateWithGenerated(context, &patterns);
-  applyPatternsGreedily(func, std::move(patterns));
+  auto* ctx = func.getContext();
+  TFL::populateWithGenerated(ctx, &patterns);
+  patterns.insert<TFLFullQuantization>(ctx);
+  applyPatternsGreedily(func, patterns);
 }
 }  // namespace
 
-/// Creates an instance of the TensorFlow Lite dialect QuantizeTFL pass.
-FunctionPassBase *CreateQuantizePass() { return new QuantizePass(); }
+// Creates an instance of the TensorFlow Lite dialect QuantizeTFL pass.
+std::unique_ptr<OpPassBase<FuncOp>> CreateQuantizePass() {
+  return std::make_unique<QuantizePass>();
+}
 
 static PassRegistration<QuantizePass> pass(
     "tfl-quantize", "Apply quantization on models in TensorFlow Lite dialect");

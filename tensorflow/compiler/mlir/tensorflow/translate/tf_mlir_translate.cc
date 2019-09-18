@@ -19,13 +19,14 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Attributes.h"  // TF:local_config_mlir
+#include "mlir/IR/Function.h"  // TF:local_config_mlir
 #include "mlir/IR/Identifier.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
 #include "mlir/IR/Module.h"  // TF:local_config_mlir
 #include "mlir/IR/Operation.h"  // TF:local_config_mlir
 #include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
 #include "mlir/Parser.h"  // TF:local_config_mlir
-#include "tensorflow/compiler/mlir/tensorflow/translate/import_graphdef.h"
+#include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/import_utils.h"
@@ -39,12 +40,13 @@ namespace tensorflow {
 using stream_executor::port::Status;
 using stream_executor::port::StatusOr;
 
-static StatusOr<std::unique_ptr<mlir::Module>> GraphdefToMlirImport(
+static StatusOr<mlir::OwningModuleRef> GraphdefToMlirImport(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
     absl::string_view inference_type, absl::string_view min_values,
     absl::string_view max_values, bool prune_unused_nodes,
+    bool convert_legacy_fed_inputs, bool graph_as_function,
     mlir::MLIRContext* context) {
   GraphDef graphdef;
   TF_RETURN_IF_ERROR(tensorflow::LoadProtoFromFile(input_filename, &graphdef));
@@ -56,6 +58,8 @@ static StatusOr<std::unique_ptr<mlir::Module>> GraphdefToMlirImport(
 
   NodeSpecs specs;
   specs.prune_unused_nodes = prune_unused_nodes;
+  specs.convert_legacy_fed_inputs = convert_legacy_fed_inputs;
+  specs.graph_as_function = graph_as_function;
   TF_RETURN_IF_ERROR(ParseInputArrayInfo(
       input_arrays, input_dtypes, input_shapes, inference_type, min_values,
       max_values, &specs.inputs));
@@ -64,42 +68,79 @@ static StatusOr<std::unique_ptr<mlir::Module>> GraphdefToMlirImport(
   return ConvertGraphdefToMlir(graphdef, debug_info, specs, context);
 }
 
-std::unique_ptr<mlir::Module> GraphdefToMlirTranslateFunction(
+mlir::OwningModuleRef GraphdefToMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
     absl::string_view inference_type, absl::string_view min_values,
     absl::string_view max_values, bool prune_unused_nodes,
+    bool convert_legacy_fed_inputs, bool graph_as_function,
     mlir::MLIRContext* context) {
   auto module_or = GraphdefToMlirImport(
       input_filename, debug_info_file, input_arrays, input_dtypes, input_shapes,
       output_arrays, inference_type, min_values, max_values, prune_unused_nodes,
-      context);
+      convert_legacy_fed_inputs, graph_as_function, context);
   if (!module_or.status().ok()) {
     LOG(ERROR) << "Graph import failed: " << module_or.status();
+    return nullptr;
+  }
+
+  return module_or.ConsumeValueOrDie();
+}
+
+mlir::OwningModuleRef SavedModelToMlirImport(
+    absl::string_view saved_model_dir,
+    const std::unordered_set<std::string>& tags,
+    absl::string_view debug_info_file, mlir::MLIRContext* context) {
+  SessionOptions session_options;
+  RunOptions run_options;
+  tensorflow::SavedModelBundle bundle;
+  auto load_status = LoadSavedModel(
+      session_options, run_options,
+      std::string(saved_model_dir.data(), saved_model_dir.length()), tags,
+      &bundle);
+  if (!load_status.ok()) {
+    LOG(ERROR) << "Failed to load saved model '" << saved_model_dir
+               << "': " << load_status;
+    return nullptr;
+  }
+
+  GraphDebugInfo debug_info;
+  if (!debug_info_file.empty()) {
+    if (!LoadProtoFromFile(debug_info_file, &debug_info).ok()) {
+      LOG(ERROR) << "Failed to load debug info file: " << debug_info_file;
+      return nullptr;
+    }
+  }
+
+  auto module_or = ConvertSavedModelToMlir(bundle, debug_info, context);
+
+  if (!module_or.status().ok()) {
+    LOG(ERROR) << "SavedModel import failed: " << module_or.status();
     return nullptr;
   }
   return module_or.ConsumeValueOrDie();
 }
 
-std::unique_ptr<mlir::Module> GraphdefToSplattedMlirTranslateFunction(
+mlir::OwningModuleRef GraphdefToSplattedMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
     absl::string_view inference_type, absl::string_view min_values,
     absl::string_view max_values, bool prune_unused_nodes,
+    bool convert_legacy_fed_inputs, bool graph_as_function,
     mlir::MLIRContext* context) {
   auto module_or = GraphdefToMlirImport(
       input_filename, debug_info_file, input_arrays, input_dtypes, input_shapes,
       output_arrays, inference_type, min_values, max_values, prune_unused_nodes,
-      context);
+      convert_legacy_fed_inputs, graph_as_function, context);
   if (!module_or.status().ok()) {
     LOG(ERROR) << "Graph import failed: " << module_or.status();
     return nullptr;
   }
   auto& module = module_or.ValueOrDie();
   std::srand(0);
-  for (auto fn : *module) {
+  for (auto fn : module->getOps<mlir::FuncOp>()) {
     for (auto& bb : fn) {
       for (auto& inst : bb) {
         auto attr_id = mlir::Identifier::get("value", context);
@@ -119,7 +160,7 @@ std::unique_ptr<mlir::Module> GraphdefToSplattedMlirTranslateFunction(
               break;
             default:
               inst.emitWarning()
-                  << "Skipping splat converstion for "
+                  << "Skipping splat conversion for "
                   << "an unsupported attribute type " << element_type;
               continue;
           }

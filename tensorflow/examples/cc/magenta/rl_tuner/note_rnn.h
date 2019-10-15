@@ -47,7 +47,9 @@ class NoteRNN {
   operator ::tensorflow::Output() const { return logits; }
   operator ::tensorflow::Input() const { return logits; }
 
- public:
+ private:
+  friend class RLTuner;
+
   Output w;
   Output b;
   Output w_y;

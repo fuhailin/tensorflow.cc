@@ -41,8 +41,8 @@ using tensorflow::DT_UINT8;
 using tensorflow::Output;
 using tensorflow::TensorShape;
 using std::vector;
-using namespace tensorflow::ops;
-using namespace tensorflow::ops::internal;
+using namespace tensorflow::ops;              // NOLINT(build/namespaces)
+using namespace tensorflow::ops::internal;    // NOLINT(build/namespaces)
 
 namespace tensorflow {
 
@@ -76,6 +76,8 @@ Status RLTuner::Init() {
   this->reward_rnn.Init();
   this->reward_rnn.Restore(GRAPH_PATH);
 
+  this->x_tensor = Tensor(DT_FLOAT, TensorShape({1, BATCH_SIZE, INPUT_SIZE}));
+
   return Status::OK();
 }
 
@@ -102,7 +104,7 @@ Status RLTuner::BuildGraph() {
 
   // Rewards are observed from the environment and are fed in later.
   this->rewards = Placeholder(this->scope, DT_FLOAT,
-                              Placeholder::Shape({MINIBATCH_SIZE}));
+                              Placeholder::Shape({BATCH_SIZE}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // target_vals
@@ -118,11 +120,11 @@ Status RLTuner::BuildGraph() {
 
   // q_value_prediction
   this->action_mask = Placeholder(this->scope, DT_FLOAT,
-                                  Placeholder::Shape({INPUT_SIZE, MINIBATCH_SIZE}));
+                                  Placeholder::Shape({BATCH_SIZE, INPUT_SIZE}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   this->masked_action_scores = ReduceSum(this->scope,
-                                         MatMul(this->scope, this->action_scores, this->action_mask),
+                                         Mul(this->scope, this->action_scores, this->action_mask),
                                          {1});
   LOG(INFO) << "Node building status: " << this->scope.status();
 
@@ -163,44 +165,70 @@ Status RLTuner::BuildGraph() {
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // target_network_update: w, b, w_y, b_y
-  this->update_target_w = this->AssignSub(this->target_q_network.w, this->q_network.w);
+  this->update_target_w = this->AssignSub(&this->target_q_network.w, this->q_network.w);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  this->update_target_b = this->AssignSub(this->target_q_network.b, this->q_network.b);
+  this->update_target_b = this->AssignSub(&this->target_q_network.b, this->q_network.b);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  this->update_target_w_y = this->AssignSub(this->target_q_network.w_y, this->q_network.w_y);
+  this->update_target_w_y = this->AssignSub(&this->target_q_network.w_y, this->q_network.w_y);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  this->update_target_b_y = this->AssignSub(this->target_q_network.b_y, this->q_network.b_y);
+  this->update_target_b_y = this->AssignSub(&this->target_q_network.b_y, this->q_network.b_y);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   return this->scope.status();
 }
 
 // target = (1 - TARGET_NETWORK_UPDATE_RATE) * target + TARGET_NETWORK_UPDATE_RATE * source;
-Output RLTuner::AssignSub(Output &target, const Output &source) {
-  target = Add(this->scope,
-                  Mul(this->scope, Cast(this->scope, 1 - TARGET_NETWORK_UPDATE_RATE,  DT_FLOAT), target),
+Output RLTuner::AssignSub(Output* target, const Output& source) {
+  *target = Add(this->scope,
+                  Mul(this->scope, Cast(this->scope, 1 - TARGET_NETWORK_UPDATE_RATE,  DT_FLOAT), *target),
                   Mul(this->scope, Cast(this->scope, TARGET_NETWORK_UPDATE_RATE,  DT_FLOAT), source));
 
-  return target;
+  return *target;
 }
 
 void RLTuner::Train() {
   // last_observation
   this->last_observation = this->PrimeInternalModels();
 
+  // Set data as NO_EVENT, and put the last observation on the tail
+  auto e_2d = this->x_tensor.shaped<float, 2>({BATCH_SIZE, INPUT_SIZE});
+  for (int i = 0; i < BATCH_SIZE; i++) {
+    // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
+    Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, INPUT_SIZE);
+    m.setZero();
+
+    // one-hot processing for one character
+    m(0, 1) = 1.0f;
+
+    // set e_2d
+    Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+    e_2d.slice(indices, sizes) = m;
+  }
+
+  // set e_2d
+  Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
+  Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+  e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
+
   // loop
   Tensor action, new_observation, reward_scores;
   for (int step = 0; step < this->num_steps; step++) {
-    Tensor state_h = this->q_network.h_prev_tensor;
-    Tensor state_c = this->q_network.cs_prev_tensor;
+    Tensor state_h = this->q_network.h_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
+    Tensor state_c = this->q_network.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
 
     std::tie(action, new_observation, reward_scores) = this->Action();
 
-    Tensor new_state_h = this->q_network.h_prev_tensor;
-    Tensor new_state_c = this->q_network.cs_prev_tensor;
+    if (step % 1000 == 0) {
+      LOG(INFO) << "Print step: " << step << ", reward_scores: " << reward_scores.DebugString();
+      LOG(INFO) << "Print step: " << step << ", new_observation: " << new_observation.DebugString();
+    }
 
-    Tensor new_reward_state_h = this->reward_rnn.h_prev_tensor;
-    Tensor new_reward_state_c = this->reward_rnn.cs_prev_tensor;
+    Tensor new_state_h = this->q_network.h_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
+    Tensor new_state_c = this->q_network.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
+
+    Tensor new_reward_state_h = this->reward_rnn.h_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
+    Tensor new_reward_state_c = this->reward_rnn.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
 
     // reward
     Tensor reward = this->CollectReward(last_observation, new_observation, reward_scores);
@@ -210,13 +238,22 @@ void RLTuner::Train() {
 
     this->TrainingStep();
 
-    if (step % 1000 == 0) {
-      LOG(INFO) << "Print step: " << step << ", reward_scores: " << reward_scores.DebugString();
-      LOG(INFO) << "Print step: " << step << ", new_observation: " << new_observation.DebugString();
-    }
-
     // Update current state as last state. TODO
     this->last_observation = new_observation;
+
+    // Left shift the input data and add the new observation
+    for (int i = 0; i < BATCH_SIZE - 1; i++) {
+      // set e_2d
+      Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+      Eigen::DSizes<Eigen::DenseIndex, 2> indices2(i + 1, 0);
+      Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+      e_2d.slice(indices, sizes) = e_2d.slice(indices2, sizes);
+    }
+
+    // set e_2d
+    Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
+    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+    e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
   }
 }
 
@@ -246,11 +283,11 @@ std::tuple<Tensor, Tensor, Tensor> RLTuner::Action() {
   // Run
   vector<Tensor> outputs;
   TF_CHECK_OK(session.Run({
-                           {this->q_network.x, this->last_observation},
+                           {this->q_network.x, this->x_tensor},
                            {this->q_network.y, this->q_network.y_tensor},
                            {this->q_network.h_prev, this->q_network.h_prev_tensor},
                            {this->q_network.cs_prev, this->q_network.cs_prev_tensor},
-                           {this->reward_rnn.x, this->last_observation},
+                           {this->reward_rnn.x, this->x_tensor},
                            {this->reward_rnn.y, this->reward_rnn.y_tensor},
                            {this->reward_rnn.h_prev, this->reward_rnn.h_prev_tensor},
                            {this->reward_rnn.cs_prev, this->reward_rnn.cs_prev_tensor},
@@ -267,51 +304,79 @@ std::tuple<Tensor, Tensor, Tensor> RLTuner::Action() {
   this->q_network.UpdateState(outputs[3], outputs[4]);
   this->reward_rnn.UpdateState(outputs[5], outputs[6]);
 
+  Tensor ret_tensor_3(DT_FLOAT, TensorShape({INPUT_SIZE}));
+  ret_tensor_3.flat<float>() = outputs[2].SubSlice(BATCH_SIZE - 1).unaligned_flat<float>();
+
   // return
   if (this->Random() < exploration_p) {
     Tensor note = this->GetRandomNote();
-    return std::make_tuple(note, note, outputs[2]);
+    return std::make_tuple(note, note, ret_tensor_3);
   } else {
     // Reshape and return
-    Tensor action;
-    CHECK(action.CopyFrom(outputs[0], TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE})));
-    return std::make_tuple(action, action, outputs[2]);
+    Tensor action(DT_FLOAT, TensorShape({1, INPUT_SIZE}));
+    action.flat<float>() = outputs[0].SubSlice(BATCH_SIZE - 1).unaligned_flat<float>();
+    // CHECK(action.CopyFrom(outputs[0].SubSlice(BATCH_SIZE - 1), TensorShape({1, INPUT_SIZE})));
+    return std::make_tuple(action, action, ret_tensor_3);
   }
 }
 
 void RLTuner::TrainingStep() {
   if (this->num_times_train_called % TRAIN_EVERY_NTH == 0) {
-    if (this->experience.size() < MINIBATCH_SIZE)
+    if (this->experience.size() < BATCH_SIZE)
       return;
 
-    // radom samples, TODO
-    // std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor>> samples;
-    // std::sample(this->experience.begin(), this->experience.end(), std::back_inserter(samples),
-    //             MINIBATCH_SIZE, std::mt19937{std::random_device{}()});
+    // radom samples
 
-    // for (auto it = samples.cbegin(); it != samples.cend(); it++) {
-    //   // TIME_LEN = 1 and BATCH_SIZE = 1
-    //   // last_observation and new_observation are in the shape of {TIME_LEN, BATCH_SIZE, INPUT_SIZE}
-    //   // *state_* are in the shape of {BATCH_SIZE, NUM_UNIT}
-    //   // action is in the shape of {BATCH_SIZE, INPUT_SIZE}
-    //   // reward is in the shape of {BATCH_SIZE, NUM_UNIT}
-    //   Tensor last_observation, state_h, state_c, action, reward, new_observation,
-    //              new_state_h, new_state_c, new_reward_state_h, new_reward_state_c;
-    //   std::tie(last_observation, state_h, state_c, action, reward, new_observation,
-    //              new_state_h, new_state_c, new_reward_state_h, new_reward_state_c) = *it;
+#define ENABLE_CPP17 1    // need to add "copts = ["-std=c++17"]," in BUILD
+#ifdef ENABLE_CPP17
+    std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor>> samples;
+    std::sample(this->experience.begin(), this->experience.end(), std::back_inserter(samples),
+                BATCH_SIZE, std::mt19937{std::random_device {} ()});
 
-    //   // Fill in tensors
+    // observation are in the shape of {TIME_LEN(1), BATCH_SIZE, INPUT_SIZE}
+    // *state_* are in the shape of {BATCH_SIZE, NUM_UNIT}
+    // action_mask is in the shape of {INPUT_SIZE, BATCH_SIZE}
+    // rewards is in the shape of {BATCH_SIZE}
+    Tensor observations(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
+    Tensor new_observations(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, INPUT_SIZE}));
+    Tensor state_h(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor state_c(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor rewards(DT_FLOAT, TensorShape({BATCH_SIZE}));
+    Tensor new_state_h(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor new_state_c(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor new_reward_state_h(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor new_reward_state_c(DT_FLOAT, TensorShape({BATCH_SIZE, NUM_UNIT}));
+    Tensor action_mask(DT_FLOAT, TensorShape({BATCH_SIZE, INPUT_SIZE}));
 
+    int index = 0;
+    for (auto it = samples.cbegin(); it != samples.cend(); it++, index++) {
+      // last_observation and new_observation are in the shape of {TIME_LEN(1), 1, INPUT_SIZE}
+      // *state_* are in the shape of {1, NUM_UNIT}
+      // action is in the shape of {1, INPUT_SIZE}
+      // reward is in the shape of {1}
+      Tensor last_observation, state_h_one, state_c_one, action, reward, new_observation_one,
+                 new_state_h_one, new_state_c_one, new_reward_state_h_one, new_reward_state_c_one;
+      std::tie(last_observation, state_h_one, state_c_one, action, reward, new_observation_one,
+                 new_state_h_one, new_state_c_one, new_reward_state_h_one, new_reward_state_c_one) = *it;
 
-    srand(time(NULL));
-    int rand_index = rand() % this->experience.size();
-    Tensor observations, state_h, state_c, action, rewards, new_observations,
-                 new_state_h, new_state_c, new_reward_state_h, new_reward_state_c;
-    std::tie(observations, state_h, state_c, action, rewards, new_observations,
-                 new_state_h, new_state_c, new_reward_state_h, new_reward_state_c) = this->experience[rand_index];
+      // Fill in tensors
+      observations.SubSlice(0).SubSlice(index).unaligned_flat<float>() = last_observation.unaligned_flat<float>();
+      new_observations.SubSlice(0).SubSlice(index).unaligned_flat<float>() =
+                                                                      new_observation_one.unaligned_flat<float>();
+      state_h.SubSlice(index).unaligned_flat<float>() = state_h_one.unaligned_flat<float>();
+      state_c.SubSlice(index).unaligned_flat<float>() = state_c_one.unaligned_flat<float>();
+      new_state_h.SubSlice(index).unaligned_flat<float>() = new_state_h_one.unaligned_flat<float>();
+      new_state_c.SubSlice(index).unaligned_flat<float>() = new_state_c_one.unaligned_flat<float>();
+      new_reward_state_h.SubSlice(index).unaligned_flat<float>() = new_reward_state_h_one.unaligned_flat<float>();
+      new_reward_state_c.SubSlice(index).unaligned_flat<float>() = new_reward_state_c_one.unaligned_flat<float>();
+      rewards.SubSlice(index).unaligned_flat<float>() = reward.unaligned_flat<float>();
+      action_mask.SubSlice(index).unaligned_flat<float>() = reward.unaligned_flat<float>();
+    }
 
-    Tensor action_mask;
-    CHECK(action_mask.CopyFrom(action, TensorShape({INPUT_SIZE, MINIBATCH_SIZE})));
+#else
+    // Not implemented yet...
+    // use rand function instead of C++17 std::sample
+#endif
 
     // Backprop
     vector<Tensor> outputs;
@@ -337,33 +402,6 @@ void RLTuner::TrainingStep() {
                             {},
                             &outputs));
 
-    // //Tensors for placeholders
-    // Tensor observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
-    // Tensor new_observations(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
-    // Tensor action_mask(DT_FLOAT, TensorShape({INPUT_SIZE, MINIBATCH_SIZE}));
-    // Tensor rewards(DT_FLOAT, TensorShape({MINIBATCH_SIZE}));
-
-    // TF_CHECK_OK(session.Run({
-    //                           {this->q_network.x, observations},
-    //                           {this->q_network.y, this->q_network.y_tensor},
-    //                           {this->q_network.h_prev, this->q_network.h_prev_tensor},
-    //                           {this->q_network.cs_prev, this->q_network.cs_prev_tensor},
-
-    //                           {this->target_q_network.x, new_observations},
-    //                           {this->target_q_network.y, this->target_q_network.y_tensor},
-    //                           {this->target_q_network.h_prev, this->target_q_network.h_prev_tensor},
-    //                           {this->target_q_network.cs_prev, this->target_q_network.cs_prev_tensor},
-
-    //                           {this->action_mask, action_mask},
-    //                           {this->rewards, rewards}
-    //                         },
-    //                         {
-    //                           this->prediction_error,
-    //                           this->apply_w, this->apply_b, this->apply_w_y, this->apply_b_y,
-    //                           this->future_rewards
-    //                         },
-    //                         {},
-    //                         &outputs));
     if (this->num_times_train_called % 1000 == 0) {
       LOG(INFO) << "Print num_times_train_called: " << this->num_times_train_called
                 << ", prediction_error: " << outputs[0].DebugString();
@@ -387,9 +425,9 @@ void RLTuner::TrainingStep() {
 Tensor RLTuner::GetRandomNote() {
   srand(time(NULL));
 
-  int randValue = rand() % INPUT_SIZE;
+  int randValue = rand() % INPUT_SIZE;    // NOLINT
 
-  Tensor ret_tensor(DT_FLOAT, TensorShape({1, MINIBATCH_SIZE, INPUT_SIZE}));
+  Tensor ret_tensor(DT_FLOAT, TensorShape({1, 1, INPUT_SIZE}));
 
   // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
   Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, INPUT_SIZE);
@@ -415,7 +453,7 @@ Tensor RLTuner::PrimeInternalModels() {
   return this->PrimeInternalModel(this->q_network);
 }
 
-Tensor RLTuner::PrimeInternalModel(const NoteRNN &q_network) {
+Tensor RLTuner::PrimeInternalModel(const NoteRNN& q_network) {
   // zero out variables
 
   // return
@@ -429,10 +467,10 @@ double RLTuner::LinearAnnealing(int n, int total, double p_initial, double p_fin
     return p_initial - (static_cast<double>(n) * (p_initial - p_final)) / (static_cast<double>(total));
 }
 
-void RLTuner::Store(const Tensor &observation, const Tensor &state_h, const Tensor &state_c,
-             const Tensor &action, const Tensor &reward,
-             const Tensor &newobservation, const Tensor &newstate_h, const Tensor &newstate_c,
-             const Tensor &new_reward_state_h, const Tensor &new_reward_state_c) {
+void RLTuner::Store(const Tensor& observation, const Tensor& state_h, const Tensor& state_c,
+             const Tensor& action, const Tensor& reward,
+             const Tensor& newobservation, const Tensor& newstate_h, const Tensor& newstate_c,
+             const Tensor& new_reward_state_h, const Tensor& new_reward_state_c) {
     if (this->num_times_store_called % STORE_EVERY_NTH == 0) {
       this->experience.emplace_back(observation, state_h, state_c, action, reward,
                               newobservation, newstate_h, newstate_c, new_reward_state_h, new_reward_state_c);
@@ -442,7 +480,7 @@ void RLTuner::Store(const Tensor &observation, const Tensor &state_h, const Tens
 }
 
 // RewardFromRewardRnnScores
-double RLTuner::RewardFromRewardRnnScores(const Tensor &action, const Tensor &reward_scores) {
+double RLTuner::RewardFromRewardRnnScores(const Tensor& action, const Tensor& reward_scores) {
 #if TESTING
   // Ref: https://github.com/eigenteam/eigen-git-mirror/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
 
@@ -474,7 +512,7 @@ double RLTuner::RewardFromRewardRnnScores(const Tensor &action, const Tensor &re
   return reward_scores_vec(static_cast<int>(action_note())) - normalization_constant();
 }
 
-Tensor RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Tensor &reward_scores) {
+Tensor RLTuner::CollectReward(const Tensor& obs, const Tensor& action, const Tensor& reward_scores) {
     // Gets and saves log p(a|s) as output by reward_rnn.
     double note_rnn_reward = this->RewardFromRewardRnnScores(action, reward_scores);
     this->note_rnn_reward_last_n += note_rnn_reward;
@@ -488,7 +526,7 @@ Tensor RLTuner::CollectReward(const Tensor &obs, const  Tensor &action, const Te
 
 
 // Music Theory
-double RLTuner::RewardMusicTheory(const Tensor &action) {
+double RLTuner::RewardMusicTheory(const Tensor& action) {
   double reward = this->RewardKey(action);
 
   // More MT rewards TODO
@@ -497,7 +535,7 @@ double RLTuner::RewardMusicTheory(const Tensor &action) {
   return reward;
 }
 
-double RLTuner::RewardKey(const Tensor &action) {
+double RLTuner::RewardKey(const Tensor& action) {
   double penalty_amount = -1.0;
 
   double reward = 0;

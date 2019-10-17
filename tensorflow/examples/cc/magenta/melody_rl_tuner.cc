@@ -19,7 +19,7 @@ limitations under the License.
 //
 // Draft 2! Working in progress!!
 //
-// Code check supports: cpplint --filter=-build/namespaces --linelength=120 xxx
+// Code check supports: cpplint --linelength=120 xxx
 //
 // Author: Rock Zhuang
 // Date  : Jun 25, 2019

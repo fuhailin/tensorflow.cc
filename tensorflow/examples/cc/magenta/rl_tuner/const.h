@@ -19,18 +19,22 @@ limitations under the License.
 // #define VERBOSE 1
 // #define TESTING 1
 
+//
 // Adjustable parameters
+//
+
 #define NUM_UNIT 128             // HIDDEN_SIZE
-#define TIME_LEN 1               // NUM_STEPS, Here, it is always 1
-#define MINIBATCH_SIZE 1
-#define BATCH_SIZE MINIBATCH_SIZE            // BATCH_SIZE
+// #define MINIBATCH_SIZE 32
+#define BATCH_SIZE 32            // BATCH_SIZE
 #define TRAINING_STEPS 10000
 
-// Don't change
-#define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
-#define SEQ_LENGTH TIME_LEN * BATCH_SIZE
+//
+// Don't change below
+//
 
-// #define VERBOSE 1
-// #define TESTING 1
+#define TIME_LEN 1               // NUM_STEPS, Here, it is always 1
+
+// (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
+#define INPUT_SIZE 38
 
 #endif  // TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_CONST_H_

@@ -35,14 +35,14 @@ namespace tensorflow {
 
 class NoteRNN {
  public:
-  explicit NoteRNN(const ::tensorflow::Scope& s, const ClientSession &ses);
+  explicit NoteRNN(const Scope& s, const ClientSession& ses);
   ~NoteRNN();
 
   Status Init();
 
   // restore from frozen graph file
   Status Restore(const string path);
-  Status UpdateState(const Tensor &h, const Tensor &c);
+  Status UpdateState(const Tensor& h, const Tensor& c);
 
   operator ::tensorflow::Output() const { return logits; }
   operator ::tensorflow::Input() const { return logits; }
@@ -73,7 +73,7 @@ class NoteRNN {
 
  private:
   const Scope& scope;
-  const ClientSession &session;
+  const ClientSession& session;
 
   std::shared_ptr<RNNSoftmaxLoss> rnn_softmax_loss;
 

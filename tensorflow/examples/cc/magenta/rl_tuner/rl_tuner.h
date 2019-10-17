@@ -88,6 +88,8 @@ class RLTuner {
   Tensor last_observation;
   Tensor new_observation;
 
+  Tensor x_tensor;
+
   std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor,
                          Tensor, Tensor, Tensor, Tensor, Tensor>> experience;
 
@@ -99,29 +101,29 @@ class RLTuner {
   void TrainingStep();
   Tensor GetRandomNote();
   Tensor PrimeInternalModels();
-  Tensor PrimeInternalModel(const NoteRNN &q_network);
+  Tensor PrimeInternalModel(const NoteRNN& q_network);
   double LinearAnnealing(int n, int total, double p_initial, double p_final);
-  void Store(const Tensor &observation,
-             const Tensor &state_h,
-             const Tensor &state_c,
-             const Tensor &action,
-             const Tensor &reward,
-             const Tensor &newobservation,
-             const Tensor &newstate_h,
-             const Tensor &newstate_c,
-             const Tensor &new_reward_state_h,
-             const Tensor &new_reward_state_c);
+  void Store(const Tensor& observation,
+             const Tensor& state_h,
+             const Tensor& state_c,
+             const Tensor& action,
+             const Tensor& reward,
+             const Tensor& newobservation,
+             const Tensor& newstate_h,
+             const Tensor& newstate_c,
+             const Tensor& new_reward_state_h,
+             const Tensor& new_reward_state_c);
 
   double Random();
-  Output AssignSub(Output &target, const Output &source);
+  Output AssignSub(Output* target, const Output& source);
 
   // Reward
-  double RewardFromRewardRnnScores(const Tensor &action,
-                                   const Tensor &reward_scores);
-  Tensor CollectReward(const Tensor &obs, const Tensor &action,
-                       const Tensor &reward_scores);
-  double RewardMusicTheory(const Tensor &action);
-  double RewardKey(const Tensor &action);
+  double RewardFromRewardRnnScores(const Tensor& action,
+                                   const Tensor& reward_scores);
+  Tensor CollectReward(const Tensor& obs, const Tensor& action,
+                       const Tensor& reward_scores);
+  double RewardMusicTheory(const Tensor& action);
+  double RewardKey(const Tensor& action);
 };
 
 }  // namespace tensorflow

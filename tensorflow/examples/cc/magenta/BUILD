@@ -89,5 +89,6 @@ tf_cc_binary(
         "//tensorflow/cc:array_grad",
         "//tensorflow/cc:nn_grad",
     ],
+    copts = ["-std=c++17"],
     linkopts = ["-g"],
 )

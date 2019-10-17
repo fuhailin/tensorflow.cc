@@ -16,13 +16,13 @@ limitations under the License.
 #include "tensorflow/examples/cc/magenta/rl_tuner/const.h"
 #include "tensorflow/examples/cc/magenta/rl_tuner/note_rnn.h"
 
-using namespace tensorflow::ops;
-using namespace tensorflow::ops::internal;
-using namespace std;
+using namespace tensorflow::ops;              // NOLINT(build/namespaces)
+using namespace tensorflow::ops::internal;    // NOLINT(build/namespaces)
+using namespace std;                          // NOLINT(build/namespaces)
 
 namespace tensorflow {
 
-NoteRNN::NoteRNN(const ::tensorflow::Scope& s, const ClientSession &ses)
+NoteRNN::NoteRNN(const ::tensorflow::Scope& s, const ClientSession& ses)
     : scope(s), session(ses) {
   this->BuildGraph();
 }
@@ -68,7 +68,7 @@ Status NoteRNN::BuildGraph() {
 
   // LSTM
   this->block_lstm = std::shared_ptr<BlockLSTM>(new BlockLSTM(this->scope,
-                              Const<int64>(this->scope, {TIME_LEN}),  // seq_len_max,
+                              Const<int64>(this->scope, TIME_LEN, TensorShape({1})),  // seq_len_max,
                               this->x,
                               this->cs_prev,
                               this->h_prev,
@@ -87,13 +87,13 @@ Status NoteRNN::BuildGraph() {
                               this->block_lstm->cs));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  // logits, with shape of {MINIBATCH_SIZE, INPUT_SIZE}
-  // Note: time_len here is with fixed value of 1, so Slice is not needed
+  // // logits, with shape of {BATCH_SIZE, INPUT_SIZE}
+  // // Note: time_len here is with fixed value of 1, so Slice is not needed
   // this->logits = Reshape(this->scope,
   //                        Slice(this->scope, this->rnn_softmax_loss->logits, 0, 1),
-  //                        {MINIBATCH_SIZE, INPUT_SIZE});
-  // this->logits = Reshape(this->scope, this->rnn_softmax_loss->logits, {MINIBATCH_SIZE, INPUT_SIZE});
-  this->logits = Squeeze(this->scope, this->rnn_softmax_loss->logits, Squeeze::Axis({0}));
+  //                        {BATCH_SIZE, INPUT_SIZE});
+  this->logits = Reshape(this->scope, this->rnn_softmax_loss->logits, {BATCH_SIZE, INPUT_SIZE});
+  // this->logits = Squeeze(this->scope, this->rnn_softmax_loss->logits, Squeeze::Axis({0}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Graph for initialization
@@ -156,7 +156,7 @@ Status NoteRNN::Restore(const string graph_path) {
   return load_graph_status;
 }
 
-Status NoteRNN::UpdateState(const Tensor &h, const Tensor &c) {
+Status NoteRNN::UpdateState(const Tensor& h, const Tensor& c) {
   CHECK(this->h_prev_tensor.CopyFrom(h.Slice(0, 1), {h.dim_size(1), h.dim_size(2)}));
   CHECK(this->cs_prev_tensor.CopyFrom(c.Slice(0, 1), {c.dim_size(1), c.dim_size(2)}));
 

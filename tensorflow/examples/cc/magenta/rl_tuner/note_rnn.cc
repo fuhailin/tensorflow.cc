@@ -67,7 +67,8 @@ Status NoteRNN::BuildGraph() {
   cs_prev_t.setZero();
 
   // LSTM
-  this->block_lstm = std::shared_ptr<BlockLSTM>(new BlockLSTM(this->scope,
+  this->block_lstm = std::shared_ptr<BlockLSTM>(
+                              new BlockLSTM(this->scope,
                               Const<int64>(this->scope, TIME_LEN, TensorShape({1})),  // seq_len_max,
                               this->x,
                               this->cs_prev,
@@ -79,7 +80,8 @@ Status NoteRNN::BuildGraph() {
                               this->b));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  this->rnn_softmax_loss = std::shared_ptr<RNNSoftmaxLoss>(new RNNSoftmaxLoss(this->scope,
+  this->rnn_softmax_loss = std::shared_ptr<RNNSoftmaxLoss>(
+                              new RNNSoftmaxLoss(this->scope,
                               this->block_lstm->h,
                               this->y,
                               this->w_y,
@@ -97,63 +99,112 @@ Status NoteRNN::BuildGraph() {
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Graph for initialization
+  this->w_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE + NUM_UNIT, NUM_UNIT * 4}));
+  this->b_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({NUM_UNIT * 4}));
+  this->w_y_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE, NUM_UNIT}));
+  this->b_y_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE}));
+
   this->rate = Const(this->scope, {0.01f});
-  this->random_value = RandomNormal(this->scope, {INPUT_SIZE + NUM_UNIT, NUM_UNIT * 4}, DT_FLOAT);
+  this->random_value = Multiply(this->scope,
+                                RandomNormal(this->scope, {INPUT_SIZE + NUM_UNIT, NUM_UNIT * 4}, DT_FLOAT),
+                                rate);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  this->assign_w = Assign(this->scope, this->w, Multiply(this->scope, random_value, rate));
+
+  this->assign_w = Assign(this->scope, this->w, this->w_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   Tensor b_zero_tensor(DT_FLOAT, TensorShape({NUM_UNIT * 4}));
   b_zero_tensor.vec<float>().setZero();
-  this->assign_b = Assign(this->scope, this->b, ZerosLike(this->scope, b_zero_tensor));
+  this->zero_like = ZerosLike(this->scope, b_zero_tensor);
+
+  this->assign_b = Assign(this->scope, this->b, this->b_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  this->random_value2 = RandomNormal(this->scope, {INPUT_SIZE, NUM_UNIT}, DT_FLOAT);
+  this->random_value2 = Multiply(this->scope,
+                                 RandomNormal(this->scope, {INPUT_SIZE, NUM_UNIT}, DT_FLOAT),
+                                 rate);
   LOG(INFO) << "Node building status: " << this->scope.status();
-  this->assign_w_y = Assign(this->scope, this->w_y, Multiply(this->scope, random_value2, rate));
+  this->assign_w_y = Assign(this->scope, this->w_y, this->w_y_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   Tensor b_y_zero_tensor(DT_FLOAT, TensorShape({INPUT_SIZE}));
   b_y_zero_tensor.vec<float>().setZero();
-  this->assign_b_y = Assign(this->scope, this->b_y, ZerosLike(this->scope, b_y_zero_tensor));
+  this->zero_like2 = ZerosLike(this->scope, b_y_zero_tensor);
+  this->assign_b_y = Assign(this->scope, this->b_y, this->b_y_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Tensor cs_zero_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
   // cs_zero_tensor.tensor<float, 3>().setZero();
   // auto assign_cs = Assign(this->scope, cs, ZerosLike(this->scope, cs_zero_tensor));
 
-  this->assign_ada_w = Assign(this->scope, this->ada_w, ZerosLike(this->scope, this->w));
+  this->ada_w_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE + NUM_UNIT, NUM_UNIT * 4}));
+  this->ada_b_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({NUM_UNIT * 4}));
+  this->ada_w_y_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE, NUM_UNIT}));
+  this->ada_b_y_ph = Placeholder(this->scope, DT_FLOAT, Placeholder::Shape({INPUT_SIZE}));
+
+  this->zero_like3 = ZerosLike(this->scope, this->w);
+  this->zero_like4 = ZerosLike(this->scope, this->b);
+  this->zero_like5 = ZerosLike(this->scope, this->w_y);
+  this->zero_like6 = ZerosLike(this->scope, this->b_y);
+
+  this->assign_ada_w = Assign(this->scope, this->ada_w, this->ada_w_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  this->assign_ada_b = Assign(this->scope, this->ada_b, ZerosLike(this->scope, this->b));
+  this->assign_ada_b = Assign(this->scope, this->ada_b, this->ada_b_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  this->assign_ada_w_y = Assign(this->scope, this->ada_w_y, ZerosLike(this->scope, this->w_y));
+  this->assign_ada_w_y = Assign(this->scope, this->ada_w_y, this->ada_w_y_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
-  this->assign_ada_b_y = Assign(this->scope, this->ada_b_y, ZerosLike(this->scope, this->b_y));
+  this->assign_ada_b_y = Assign(this->scope, this->ada_b_y, this->ada_b_y_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   return this->scope.status();
 }
 
-Status NoteRNN::Init() {
-  TF_CHECK_OK(session.Run({this->assign_w, this->assign_b, this->assign_w_y, this->assign_b_y},
-                          nullptr));
-  TF_CHECK_OK(session.Run({this->assign_ada_w, this->assign_ada_b, this->assign_ada_w_y, this->assign_ada_b_y},
-                          nullptr));
-  LOG(INFO) << "NoteRNN::Init: " << this->scope.status();
+Status NoteRNN::Restore(const string& file_path) {
+  auto restorev2 = RestoreV2(this->scope,
+                       Const<string>(this->scope, file_path, TensorShape({})),                   // prefix
+                       Const(this->scope, std::initializer_list<string>{"w", "b", "w_y", "b_y",   // tensor_names
+                                                                 "ada_w", "ada_b", "ada_w_y", "ada_b_y"}),
+                       Const(this->scope, std::initializer_list<string>{"", "", "", "", "", "", "", ""}),
+                       std::initializer_list<DataType>{DT_FLOAT, DT_FLOAT, DT_FLOAT, DT_FLOAT,
+                                                       DT_FLOAT, DT_FLOAT, DT_FLOAT, DT_FLOAT});
 
-  return Status::OK();
-}
+  vector<Tensor> outputs;
 
-Status NoteRNN::Restore(const string graph_path) {
-  Status load_graph_status = session.RestoreModel(graph_path);
-  if (!load_graph_status.ok()) {
-    LOG(ERROR) << load_graph_status;
+  // Run
+  Status status = session.Run({}, restorev2.tensors,
+                              {}, &outputs);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+
+    status = session.Run({}, {this->random_value, this->zero_like, this->random_value2, this->zero_like2,
+                              this->zero_like3, this->zero_like4, this->zero_like5, this->zero_like6
+                             }, {}, &outputs);
+    if (!status.ok()) {
+      LOG(ERROR) << status;
+      return status;
+    }
+
+  } else {
+    LOG(INFO) << "NoteRNN::Init Done outputs: " << outputs.size();
+    LOG(INFO) << "NoteRNN::Init Done outputs[0]: " << outputs[0].DebugString();
   }
 
-  return load_graph_status;
+  // Assign
+  TF_CHECK_OK(session.Run({{this->w_ph, outputs[0]}, {this->b_ph, outputs[1]},
+                           {this->w_y_ph, outputs[2]}, {this->b_y_ph, outputs[3]},
+                           {this->ada_w_ph, outputs[4]}, {this->ada_b_ph, outputs[5]},
+                           {this->ada_w_y_ph, outputs[6]}, {this->ada_b_y_ph, outputs[7]}
+                          },
+                          {this->assign_w, this->assign_b, this->assign_w_y, this->assign_b_y,
+                           this->assign_ada_w, this->assign_ada_b, this->assign_ada_w_y, this->assign_ada_b_y
+                          },
+                          {},
+                          nullptr));
+
+  return Status::OK();
 }
 
 Status NoteRNN::UpdateState(const Tensor& h, const Tensor& c) {

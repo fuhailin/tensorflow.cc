@@ -32,4 +32,5 @@
 <p>sh tensorflow/examples/cc/cnn/mnist/data/download_data.sh</p>
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist</p> 
 <p>bazel run -c opt //tensorflow/examples/cc/cnn/mnist:mnist_rkz</p> 
-
+<p>7) Reinforcement Learning Tuner</p>
+<p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_rl_tuner</p>

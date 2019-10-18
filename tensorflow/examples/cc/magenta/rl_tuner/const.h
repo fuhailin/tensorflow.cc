@@ -26,7 +26,7 @@ limitations under the License.
 #define NUM_UNIT 128             // HIDDEN_SIZE
 // #define MINIBATCH_SIZE 32
 #define BATCH_SIZE 32            // BATCH_SIZE
-#define TRAINING_STEPS 10000
+#define TRAINING_STEPS 100000
 
 //
 // Don't change below

@@ -38,10 +38,8 @@ class NoteRNN {
   explicit NoteRNN(const Scope& s, const ClientSession& ses);
   ~NoteRNN();
 
-  Status Init();
+  Status Restore(const string& file_path);
 
-  // restore from frozen graph file
-  Status Restore(const string path);
   Status UpdateState(const Tensor& h, const Tensor& c);
 
   operator ::tensorflow::Output() const { return logits; }
@@ -50,6 +48,7 @@ class NoteRNN {
  private:
   friend class RLTuner;
 
+  // Trainable variables
   Output w;
   Output b;
   Output w_y;
@@ -60,6 +59,7 @@ class NoteRNN {
   Output ada_w_y;
   Output ada_b_y;
 
+  // Inputs
   Output x;
   Output y;
   Output cs_prev;
@@ -81,11 +81,29 @@ class NoteRNN {
 
   Output logits;
 
+  // Placeholders for assigning variables
+  Output w_ph;
+  Output b_ph;
+  Output w_y_ph;
+  Output b_y_ph;
+  Output ada_w_ph;
+  Output ada_b_ph;
+  Output ada_w_y_ph;
+  Output ada_b_y_ph;
+
+  // Initial values for assigning variables
   Output rate;
   Output random_value;
+  Output random_value2;
+  Output zero_like;
+  Output zero_like2;
+  Output zero_like3;
+  Output zero_like4;
+  Output zero_like5;
+  Output zero_like6;
+
   Output assign_w;
   Output assign_b;
-  Output random_value2;
   Output assign_w_y;
   Output assign_b_y;
   Output assign_ada_w;

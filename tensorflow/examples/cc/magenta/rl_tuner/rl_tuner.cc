@@ -34,7 +34,8 @@ limitations under the License.
 #define REWARD_SCALER 0.1
 #define C_MAJOR_KEY {0, 1, 2, 4, 6, 7, 9, 11, 13, 14, 16, 18, 19, 21, 23, 25, 26, 28, 30, 31, 33, 35, 37}
 
-#define GRAPH_PATH "/tmp/magenta_frozen.pb"
+// Generated in melody_lstm_autograd.cc
+#define GRAPH_PATH "/tmp/magenta-ckpt.meta"
 
 using tensorflow::DT_FLOAT;
 using tensorflow::DT_UINT8;
@@ -67,16 +68,13 @@ Status RLTuner::Init() {
   this->note_rnn_reward_last_n = 0.0;
   this->music_theory_reward_last_n = 0.0;
 
+  this->x_tensor = Tensor(DT_FLOAT, TensorShape({1, BATCH_SIZE, INPUT_SIZE}));
+
   this->BuildGraph();
 
-  this->q_network.Init();
   this->q_network.Restore(GRAPH_PATH);
-  this->target_q_network.Init();
   this->target_q_network.Restore(GRAPH_PATH);
-  this->reward_rnn.Init();
   this->reward_rnn.Restore(GRAPH_PATH);
-
-  this->x_tensor = Tensor(DT_FLOAT, TensorShape({1, BATCH_SIZE, INPUT_SIZE}));
 
   return Status::OK();
 }

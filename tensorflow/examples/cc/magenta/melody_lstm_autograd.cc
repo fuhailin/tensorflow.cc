@@ -45,7 +45,7 @@ using namespace std;                          // NOLINT(build/namespaces)
 #define NUM_UNIT 128             // HIDDEN_SIZE
 #define TIME_LEN 384             // NUM_STEPS
 #define BATCH_SIZE 32            //
-#define TRAINING_STEPS 1000
+#define TRAINING_STEPS 10000
 
 // Don't change
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
@@ -421,6 +421,38 @@ int main() {
   // Stop
   TF_CHECK_OK(coord.RequestStop());
   TF_CHECK_OK(coord.Join());
+
+  //
+  // SAVE checkpoint
+  //
+
+  // Version 1
+  auto save = Save(root,
+                   Const<string>(root, "/tmp/magenta-ckpt.meta", TensorShape({})),                   // filename
+                   Const<string>(root,
+                                 std::initializer_list<string>{"w", "b", "w_y", "b_y", "ada_w",    // tensor_names
+                                                                         "ada_b", "ada_w_y", "ada_b_y"},
+                                 TensorShape({8})),
+                   InputList(std::initializer_list<Output>{w, b, w_y, b_y,                         // data
+                                                               ada_w, ada_b, ada_w_y, ada_b_y}));
+  // Run
+  TF_CHECK_OK(session.Run({}, {}, {save}, nullptr));
+
+  // Version 2
+  auto savev2 = SaveV2(root,
+                   Const<string>(root, "/tmp/magenta-ckpt", TensorShape({})),                        // prefix
+                   Const<string>(root,
+                                 std::initializer_list<string>{"w", "b", "w_y", "b_y", "ada_w",    // tensor_names
+                                                               "ada_b", "ada_w_y", "ada_b_y"},
+                                 TensorShape({8})),
+                   Const<string>(root,                                                             // shape_and_slices
+                                 std::initializer_list<string>{"", "", "", "",
+                                                               "", "", "", ""},
+                                 TensorShape({8})),
+                   InputList(std::initializer_list<Output>{w, b, w_y, b_y,                         // tensors
+                                                           ada_w, ada_b, ada_w_y, ada_b_y}));
+  // Run
+  TF_CHECK_OK(session.Run({}, {}, {savev2}, nullptr));
 
   return 0;
 }

@@ -74,6 +74,11 @@ class RLTuner {
   Output temp_diff;
   Output lr;
 
+  Output l2norm0;
+  Output l2norm2;
+  Output gradients0;
+  Output gradients2;
+
   int discount_rate;
   int num_actions;
   int actions_executed_so_far;
@@ -81,6 +86,8 @@ class RLTuner {
   double exploration_p;
   int num_times_train_called;
   int num_times_store_called;
+  int beat;
+  int num_notes_in_melody;
 
   double note_rnn_reward_last_n;
   double music_theory_reward_last_n;
@@ -113,6 +120,10 @@ class RLTuner {
              const Tensor& newstate_c,
              const Tensor& new_reward_state_h,
              const Tensor& new_reward_state_c);
+
+  void ResetComposition();
+  void ResetXTensor();
+  void UpdateXTensor();
 
   double Random();
   Output AssignSub(Output* target, const Output& source);

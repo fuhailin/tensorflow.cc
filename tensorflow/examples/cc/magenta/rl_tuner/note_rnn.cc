@@ -94,8 +94,8 @@ Status NoteRNN::BuildGraph() {
   // this->logits = Reshape(this->scope,
   //                        Slice(this->scope, this->rnn_softmax_loss->logits, 0, 1),
   //                        {BATCH_SIZE, INPUT_SIZE});
-  this->logits = Reshape(this->scope, this->rnn_softmax_loss->logits, {BATCH_SIZE, INPUT_SIZE});
-  // this->logits = Squeeze(this->scope, this->rnn_softmax_loss->logits, Squeeze::Axis({0}));
+  // this->logits = Reshape(this->scope, this->rnn_softmax_loss->logits, {BATCH_SIZE, INPUT_SIZE});
+  this->logits = Squeeze(this->scope, this->rnn_softmax_loss->logits, Squeeze::Axis({0}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // Graph for initialization
@@ -133,6 +133,7 @@ Status NoteRNN::BuildGraph() {
   this->assign_b_y = Assign(this->scope, this->b_y, this->b_y_ph);
   LOG(INFO) << "Node building status: " << this->scope.status();
 
+  // Not needed
   // Tensor cs_zero_tensor(DT_FLOAT, TensorShape({TIME_LEN, BATCH_SIZE, NUM_UNIT}));
   // cs_zero_tensor.tensor<float, 3>().setZero();
   // auto assign_cs = Assign(this->scope, cs, ZerosLike(this->scope, cs_zero_tensor));

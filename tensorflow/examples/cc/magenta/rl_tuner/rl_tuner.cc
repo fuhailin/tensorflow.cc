@@ -64,6 +64,8 @@ Status RLTuner::Init() {
   this->num_steps = TRAINING_STEPS;
   this->num_times_train_called = 0;
   this->num_times_store_called = 0;
+  this->beat = 0;
+  this->num_notes_in_melody = 32;
 
   this->note_rnn_reward_last_n = 0.0;
   this->music_theory_reward_last_n = 0.0;
@@ -143,20 +145,35 @@ Status RLTuner::BuildGraph() {
 
   this->lr = Cast(this->scope, 0.03, DT_FLOAT);
 
-  // Clip gradients. TODO(Rock)
+  // Clip gradients
       // for i, (grad, var) in enumerate(this->gradients):
       //   if grad is not None:
       //     this->gradients[i] = (tf.clip_by_norm(grad, 5), var)
+  auto clip_norm = Const<float>(this->scope, 5.0, TensorShape({}));
+  this->l2norm0 = ReduceSum(this->scope,
+                          Square(this->scope, this->grad_outputs[0]),
+                          {0, 1});
+  this->gradients0 = Where3(this->scope,
+      Greater(this->scope, this->l2norm0, clip_norm),                                        // l2sum > 5(clip_norm)
+      Div(this->scope, Mul(this->scope, this->grad_outputs[0], clip_norm), this->l2norm0),  // t * clip_norm / l2norm(t)
+      this->grad_outputs[0]);
+  this->l2norm2 = ReduceSum(this->scope,
+                          Square(this->scope, this->grad_outputs[2]),
+                          {0, 1});
+  this->gradients2 = Where3(this->scope,
+      Greater(this->scope, this->l2norm2, clip_norm),                                        // l2sum > 5(clip_norm)
+      Div(this->scope, Mul(this->scope, this->grad_outputs[2], clip_norm), this->l2norm2),  // t * clip_norm / l2norm(t)
+      this->grad_outputs[2]);
 
   // alternative of ApplyAdagrad
   this->apply_w = ApplyAdagradTrick(this->scope, this->q_network.w,
-                                    this->q_network.ada_w, this->lr, this->grad_outputs[0]);
+                                    this->q_network.ada_w, this->lr, this->gradients0);
   LOG(INFO) << "Node building status: " << this->scope.status();
   this->apply_b = ApplyAdagradTrick(this->scope, this->q_network.b, this->q_network.ada_b,
                                     this->lr, this->grad_outputs[1]);
   LOG(INFO) << "Node building status: " << this->scope.status();
   this->apply_w_y = ApplyAdagradTrick(this->scope, this->q_network.w_y, this->q_network.ada_w_y,
-                                      this->lr, this->grad_outputs[2]);
+                                      this->lr, this->gradients2);
   LOG(INFO) << "Node building status: " << this->scope.status();
   this->apply_b_y = ApplyAdagradTrick(this->scope, this->q_network.b_y, this->q_network.ada_b_y,
                                       this->lr, this->grad_outputs[3]);
@@ -188,26 +205,7 @@ void RLTuner::Train() {
   // last_observation
   this->last_observation = this->PrimeInternalModels();
 
-  // Set data as NO_EVENT, and put the last observation on the tail
-  auto e_2d = this->x_tensor.shaped<float, 2>({BATCH_SIZE, INPUT_SIZE});
-  for (int i = 0; i < BATCH_SIZE; i++) {
-    // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
-    Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, INPUT_SIZE);
-    m.setZero();
-
-    // one-hot processing for one character
-    m(0, 1) = 1.0f;
-
-    // set e_2d
-    Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
-    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
-    e_2d.slice(indices, sizes) = m;
-  }
-
-  // set e_2d
-  Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
-  Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
-  e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
+  this->ResetXTensor();
 
   // loop
   Tensor action, new_observation, reward_scores;
@@ -217,10 +215,12 @@ void RLTuner::Train() {
 
     std::tie(action, new_observation, reward_scores) = this->Action();
 
+#ifdef VERBOSE
     if (step % 1000 == 0) {
       LOG(INFO) << "Print step: " << step << ", reward_scores: " << reward_scores.DebugString();
       LOG(INFO) << "Print step: " << step << ", new_observation: " << new_observation.DebugString();
     }
+#endif
 
     Tensor new_state_h = this->q_network.h_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
     Tensor new_state_c = this->q_network.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
@@ -234,41 +234,22 @@ void RLTuner::Train() {
     this->Store(last_observation, state_h, state_c, action, reward, new_observation,
                  new_state_h, new_state_c, new_reward_state_h, new_reward_state_c);
 
+    this->beat++;
+
     this->TrainingStep();
 
-    // Update current state as last state. TODO
+    // Update current state as last state.
     this->last_observation = new_observation;
 
-    // Left shift the input data and add the new observation
-    for (int i = 0; i < BATCH_SIZE - 1; i++) {
-      // set e_2d
-      Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
-      Eigen::DSizes<Eigen::DenseIndex, 2> indices2(i + 1, 0);
-      Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
-      e_2d.slice(indices, sizes) = e_2d.slice(indices2, sizes);
-    }
+    if(this->beat % this->num_notes_in_melody == 0) {
+      this->ResetComposition();
+      this->last_observation = this->PrimeInternalModels();
 
-    // set e_2d
-    Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
-    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
-    e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
+      this->ResetXTensor();
+    } else {
+      this->UpdateXTensor();
+    }    
   }
-}
-
-// return a random value between [0, 1)
-double RLTuner::Random() {
-  std::mt19937_64 rng;
-
-  // initialize the random number generator with time-dependent seed
-  uint64_t timeSeed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-  std::seed_seq ss{uint32_t(timeSeed & 0xffffffff), uint32_t(timeSeed>>32)};
-  rng.seed(ss);
-
-  // initialize a uniform distribution between 0 and 1
-  std::uniform_real_distribution<double> unif(0, 1);
-
-  // ready to generate random numbers
-  return unif (rng);
 }
 
 std::tuple<Tensor, Tensor, Tensor> RLTuner::Action() {
@@ -452,9 +433,7 @@ Tensor RLTuner::PrimeInternalModels() {
 }
 
 Tensor RLTuner::PrimeInternalModel(const NoteRNN& q_network) {
-  // zero out variables
-
-  // return
+  // for priming_mode == 'random_note'
   return this->GetRandomNote();
 }
 
@@ -475,6 +454,66 @@ void RLTuner::Store(const Tensor& observation, const Tensor& state_h, const Tens
     }
 
     this->num_times_store_called += 1;
+}
+
+void RLTuner::ResetComposition() {
+  this->beat = 0;
+}
+
+// Set data as NO_EVENT, and put the last observation on the tail
+void RLTuner::ResetXTensor() {
+  auto e_2d = this->x_tensor.shaped<float, 2>({BATCH_SIZE, INPUT_SIZE});
+  for (int i = 0; i < BATCH_SIZE; i++) {
+    // Assign a 1 x INPUT_SIZE * 1 matrix (really vector) to a slice of size
+    Eigen::Tensor<float, 2, Eigen::RowMajor> m(1, INPUT_SIZE);
+    m.setZero();
+
+    // one-hot processing for one character
+    m(0, 1) = 1.0f;
+
+    // set e_2d
+    Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+    e_2d.slice(indices, sizes) = m;
+  }
+
+  // set e_2d
+  Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
+  Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+  e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
+}
+
+// Left shift the input data and add the new observation
+void RLTuner::UpdateXTensor() {
+  auto e_2d = this->x_tensor.shaped<float, 2>({BATCH_SIZE, INPUT_SIZE});
+  for (int i = 0; i < BATCH_SIZE - 1; i++) {
+    // set e_2d
+    Eigen::DSizes<Eigen::DenseIndex, 2> indices(i, 0);
+    Eigen::DSizes<Eigen::DenseIndex, 2> indices2(i + 1, 0);
+    Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+    e_2d.slice(indices, sizes) = e_2d.slice(indices2, sizes);
+  }
+
+  // set e_2d
+  Eigen::DSizes<Eigen::DenseIndex, 2> indices(BATCH_SIZE - 1, 0);
+  Eigen::DSizes<Eigen::DenseIndex, 2> sizes(1, INPUT_SIZE);
+  e_2d.slice(indices, sizes) = this->last_observation.shaped<float, 2>({1, INPUT_SIZE});
+}
+
+// return a random value between [0, 1)
+double RLTuner::Random() {
+  std::mt19937_64 rng;
+
+  // initialize the random number generator with time-dependent seed
+  uint64_t timeSeed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  std::seed_seq ss{uint32_t(timeSeed & 0xffffffff), uint32_t(timeSeed>>32)};
+  rng.seed(ss);
+
+  // initialize a uniform distribution between 0 and 1
+  std::uniform_real_distribution<double> unif(0, 1);
+
+  // ready to generate random numbers
+  return unif (rng);
 }
 
 // RewardFromRewardRnnScores

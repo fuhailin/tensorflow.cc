@@ -73,19 +73,18 @@ def TfDevice_LaunchOp : TfDevice_Op<"launch",
   }];
 
   let builders = [
-    OpBuilder<[{Builder *builder, OperationState *result,
+    OpBuilder<[{Builder *builder, OperationState &result,
                 StringAttr device, ArrayRef<Type> result_types}],
       [{
-        result->addAttribute("device", device);
-        result->addTypes(result_types);
-        result->addRegion();
+        result.addAttribute("device", device);
+        result.addTypes(result_types);
+        result.addRegion();
       }]
     >
   ];
 }
 
-def TfDevice_ReturnOp : TfDevice_Op<"return",
-                                    [Terminator, HasParent<"LaunchOp">]> {
+def TfDevice_ReturnOp : TfDevice_Op<"return", [Terminator]> {
   let summary = [{
     The `tf_device.return` operation terminates and returns values from
     `tf_device.launch` operation;
@@ -96,13 +95,14 @@ def TfDevice_ReturnOp : TfDevice_Op<"return",
   );
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState *result",
+    "Builder *builder, OperationState &result",
     [{
       build(builder, result, {});
     }]>
    ];
 
-  let verifier = ?;
+  let parser = [{ return Parse$cppClass(&parser, &result); }];
+  let printer = [{ return Print(*this, &p); }];
 }
 
 def TfDevice_LaunchFuncOp : TfDevice_Op<"launch_func", []> {

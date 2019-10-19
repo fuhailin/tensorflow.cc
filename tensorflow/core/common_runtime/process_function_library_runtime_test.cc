@@ -49,14 +49,17 @@ class TestClusterFLR : public DistributedFunctionLibraryRuntime {
  public:
   explicit TestClusterFLR(DeviceMgr* device_mgr) : device_mgr_(device_mgr) {}
 
-  Status Instantiate(const string& function_name,
-                     const FunctionLibraryDefinition& lib_def, AttrSlice attrs,
-                     const FunctionLibraryRuntime::InstantiateOptions& options,
-                     FunctionLibraryRuntime::LocalHandle* handle) override {
-    mutex_lock l(mu_);
-    *handle = next_handle_;
-    next_handle_++;
-    return Status::OK();
+  void Instantiate(const string& function_name,
+                   const FunctionLibraryDefinition& lib_def, AttrSlice attrs,
+                   const FunctionLibraryRuntime::InstantiateOptions& options,
+                   FunctionLibraryRuntime::LocalHandle* handle,
+                   FunctionLibraryRuntime::DoneCallback done) override {
+    {
+      mutex_lock l(mu_);
+      *handle = next_handle_;
+      next_handle_++;
+    }
+    done(Status::OK());
   }
 
   void Run(const FunctionLibraryRuntime::Options& opts,
@@ -121,8 +124,9 @@ class ProcessFunctionLibraryRuntimeTest : public ::testing::Test {
     OptimizerOptions opts;
     cluster_flr_.reset(new TestClusterFLR(device_mgr_.get()));
     proc_flr_.reset(new ProcessFunctionLibraryRuntime(
-        device_mgr_.get(), Env::Default(), TF_GRAPH_DEF_VERSION, lib_def_.get(),
-        opts, nullptr, cluster_flr_.get(), nullptr, session_metadata));
+        device_mgr_.get(), Env::Default(), /*config=*/nullptr,
+        TF_GRAPH_DEF_VERSION, lib_def_.get(), opts, nullptr, cluster_flr_.get(),
+        nullptr, session_metadata));
     rendezvous_ = new IntraProcessRendezvous(device_mgr_.get());
   }
 
@@ -295,8 +299,8 @@ TEST_F(ProcessFunctionLibraryRuntimeTest, GetFLRNull) {
   OptimizerOptions opts;
   std::unique_ptr<ProcessFunctionLibraryRuntime> proc_flr(
       new ProcessFunctionLibraryRuntime(
-          nullptr /* device_mgr */, Env::Default(), TF_GRAPH_DEF_VERSION,
-          lib_def.get(), opts, nullptr, nullptr /* cluster_flr */));
+          nullptr /* device_mgr */, Env::Default(), /*config=*/nullptr,
+          TF_GRAPH_DEF_VERSION, lib_def.get(), opts));
   FunctionLibraryRuntime* flr =
       proc_flr->GetFLR(ProcessFunctionLibraryRuntime::kDefaultFLRDevice);
   EXPECT_NE(flr, nullptr);

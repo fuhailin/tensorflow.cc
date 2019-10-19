@@ -612,7 +612,6 @@ tf_gen_op_wrappers_cc(
         "resource_variable_ops",
     ],
     pkg = "//tensorflow/core",
-    visibility = ["//tensorflow:internal"],
 )
 
 tf_gen_op_wrappers_cc(

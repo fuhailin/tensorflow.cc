@@ -60,9 +60,9 @@ def main(unused_argv):
 
   writer.close()
 
-  tf.logging.info('File /tmp/test1.tfrecord generated!')
+  tf.compat.v1.logging.info('File /tmp/test1.tfrecord generated!')
   
 
 if __name__ == '__main__':
-  tf.logging.set_verbosity(tf.logging.INFO)
-  tf.app.run(main=main, argv=sys.argv)
+  tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
+  tf.compat.v1.app.run(main=main, argv=sys.argv)

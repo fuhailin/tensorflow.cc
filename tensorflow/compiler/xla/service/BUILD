@@ -116,7 +116,9 @@ cc_library(
     deps = [
         ":bfloat16_support",
         ":hlo",
+        ":hlo_dce",
         ":hlo_pass",
+        ":tuple_simplifier",
         "//tensorflow/compiler/xla:shape_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:xla_data_proto",
@@ -1788,7 +1790,6 @@ cc_library(
         "//tensorflow/compiler/xla:window_util",
         "//tensorflow/compiler/xla:xla_data_proto",
         "//tensorflow/core:lib",
-        "//tensorflow/core/lib/core:bits",
         "//tensorflow/core/platform:logging",
         "//tensorflow/core/platform:types",
         "//tensorflow/stream_executor/lib",
@@ -2282,6 +2283,7 @@ cc_library(
     hdrs = ["dynamic_padder.h"],
     deps = [
         ":dynamic_dimension_inference",
+        ":hlo",
         ":hlo_dce",
         ":hlo_pass",
         "//tensorflow/compiler/xla:literal",
@@ -2293,6 +2295,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -2302,6 +2305,7 @@ xla_test(
     deps = [
         ":dynamic_padder",
         ":hlo",
+        ":hlo_get_dimension_size_rewriter",
         ":hlo_matchers",
         ":hlo_parser",
         ":hlo_runner",
@@ -4423,5 +4427,17 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
+    name = "collective_ops_utils",
+    srcs = ["collective_ops_utils.cc"],
+    hdrs = ["collective_ops_utils.h"],
+    deps = [
+        ":computation_placer",
+        ":hlo",
+        "//tensorflow/compiler/xla:executable_run_options",
+        "//tensorflow/compiler/xla:statusor",
     ],
 )

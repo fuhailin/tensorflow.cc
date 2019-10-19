@@ -70,10 +70,6 @@ Status EagerExecutor::ShutDown() {
   return status_;
 }
 
-bool EagerExecutor::Async() const {
-  return thread_ != nullptr;
-}
-
 const char* EagerExecutor::StateStringLocked() {
   switch (state_) {
     case ExecutorState::kActive:
@@ -92,13 +88,19 @@ Status EagerExecutor::AddOrExecute(std::unique_ptr<EagerNode> node) {
   item->node = std::move(node);
   item->state = NodeState::kPENDING;
 
+  status = item->node->Prepare();
+  if (!status.ok()) {
+    item->node->Abort(status);
+    return status;
+  }
+
   // If we are unable to add the node to the queue, we must call Abort. However,
   // we want to do that outside of the scope of the lock since the Abort may
   // try to call EagerExecutor::Add()
   {
     tensorflow::mutex_lock l(node_queue_mutex_);
-    VLOG(3) << "Add node [id " << item->id << "]" << item->node->DebugString()
-            << " with status: " << status_.ToString();
+    DVLOG(3) << "Add node [id " << item->id << "]" << item->node->DebugString()
+             << " with status: " << status_.ToString();
     if (state_ != ExecutorState::kActive) {
       status = errors::FailedPrecondition(
           "EagerExecutor accepts new EagerNodes to run only in Active state. "
@@ -147,7 +149,7 @@ tensorflow::Status EagerExecutor::WaitForAllPendingNodesLocked(
   // node_queue_ must be empty in sync mode.
   DCHECK(Async() || node_queue_.empty());
   auto last_id = next_node_id_ - 1;
-  VLOG(3) << "Wait for Node: [id " << last_id << "] ";
+  DVLOG(3) << "Wait for Node: [id " << last_id << "] ";
   node_done_notifications_.insert(std::make_pair(last_id, &cond));
   cond.wait(*lock);
   // Note that we could be woken up if an error occurs, even though the node has
@@ -174,8 +176,8 @@ tensorflow::Status EagerExecutor::status() const {
 
 void EagerExecutor::NodeDone(core::RefCountPtr<NodeItem> item,
                              const Status& status) {
-  VLOG(3) << "Node Done: [id " << item->id << "] " << item->node->DebugString()
-          << " with status: " << status.ToString();
+  DVLOG(3) << "Node Done: [id " << item->id << "] " << item->node->DebugString()
+           << " with status: " << status.ToString();
   std::vector<core::RefCountPtr<NodeItem>> items_to_destroy;
   {
     mutex_lock l(node_queue_mutex_);
@@ -200,12 +202,14 @@ void EagerExecutor::NodeDone(core::RefCountPtr<NodeItem> item,
     if (!status.ok()) {
       need_notification = true;
       status_ = status;
-      // We remove any pending ops so that we don't try to execute them if
-      // ClearError is called.
-      errors::AppendToMessage(&status_,
-                              "Encountered when executing an operation using "
-                              "EagerExecutor. This error cancels all future "
-                              "operations and poisons their output tensors.");
+      if (Async()) {
+        // We remove any pending ops so that we don't try to execute them if
+        // ClearError is called.
+        errors::AppendToMessage(&status_,
+                                "Encountered when executing an operation using "
+                                "EagerExecutor. This error cancels all future "
+                                "operations and poisons their output tensors.");
+      }
       while (!node_queue_.empty()) {
         items_to_destroy.push_back(std::move(node_queue_.front()));
         node_queue_.pop();
@@ -224,8 +228,8 @@ void EagerExecutor::NodeDone(core::RefCountPtr<NodeItem> item,
       } else {
         upperbound_id = next_node_id_ - 1;
       }
-      VLOG(3) << "Notify node done: [id " << item->id << " to " << upperbound_id
-              << "] ";
+      DVLOG(3) << "Notify node done: [id " << item->id << " to "
+               << upperbound_id << "] ";
       // Note that we notify all waiting threads in case an error has
       // occurred. These calling threads are responsible for checking status_
       // before proceeding.
@@ -276,8 +280,8 @@ void EagerExecutor::Run() {
 }
 
 void EagerExecutor::RunItem(core::RefCountPtr<NodeItem> item) {
-  VLOG(3) << "Running Node: [id " << item->id << "] "
-          << item->node->DebugString();
+  DVLOG(3) << "Running Node: [id " << item->id << "] "
+           << item->node->DebugString();
   AsyncEagerNode* async_node = item->node->AsAsync();
   if (async_node == nullptr) {
     core::RefCountPtr<NodeItem> new_ref(item.get());
@@ -298,7 +302,7 @@ void EagerExecutor::RunItem(core::RefCountPtr<NodeItem> item) {
     if (!node_queue_.empty() && item.get() == node_queue_.front().get()) {
       node_queue_.pop();
     }
-    VLOG(3) << "Add Node: [id " << item->id << "] to unfinished map.";
+    DVLOG(3) << "Add Node: [id " << item->id << "] to unfinished map.";
     unfinished_nodes_.emplace_hint(unfinished_nodes_.end(), item->id,
                                    std::move(item));
   }

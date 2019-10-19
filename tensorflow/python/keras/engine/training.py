@@ -28,6 +28,7 @@ from tensorflow.python.distribute import distribution_strategy_context
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.eager import monitoring
+from tensorflow.python.framework import composite_tensor
 from tensorflow.python.framework import composite_tensor_utils
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
@@ -41,7 +42,6 @@ from tensorflow.python.keras import losses
 from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras import optimizers
 from tensorflow.python.keras.distribute import distributed_training_utils
-from tensorflow.python.keras.engine import data_adapter
 from tensorflow.python.keras.engine import network
 from tensorflow.python.keras.engine import training_arrays
 from tensorflow.python.keras.engine import training_distributed
@@ -170,14 +170,58 @@ class Model(network.Network):
         return super(Model, self).get_weights()
     return super(Model, self).get_weights()
 
-  def load_weights(self, filepath, by_name=False):
-    """Loads all layer weights, either from a TensorFlow or an HDF5 file."""
+  def load_weights(self, filepath, by_name=False, skip_mismatch=False):
+    """Loads all layer weights, either from a TensorFlow or an HDF5 weight file.
+
+    If `by_name` is False weights are loaded based on the network's
+    topology. This means the architecture should be the same as when the weights
+    were saved.  Note that layers that don't have weights are not taken into
+    account in the topological ordering, so adding or removing layers is fine as
+    long as they don't have weights.
+
+    If `by_name` is True, weights are loaded into layers only if they share the
+    same name. This is useful for fine-tuning or transfer-learning models where
+    some of the layers have changed.
+
+    Only topological loading (`by_name=False`) is supported when loading weights
+    from the TensorFlow format. Note that topological loading differs slightly
+    between TensorFlow and HDF5 formats for user-defined classes inheriting from
+    `tf.keras.Model`: HDF5 loads based on a flattened list of weights, while the
+    TensorFlow format loads based on the object-local names of attributes to
+    which layers are assigned in the `Model`'s constructor.
+
+    Arguments:
+        filepath: String, path to the weights file to load. For weight files in
+            TensorFlow format, this is the file prefix (the same as was passed
+            to `save_weights`).
+        by_name: Boolean, whether to load weights by name or by topological
+            order. Only topological loading is supported for weight files in
+            TensorFlow format.
+        skip_mismatch: Boolean, whether to skip loading of layers where there is
+            a mismatch in the number of weights, or a mismatch in the shape of
+            the weight (only valid when `by_name=True`).
+
+    Returns:
+        When loading a weight file in TensorFlow format, returns the same status
+        object as `tf.train.Checkpoint.restore`. When graph building, restore
+        ops are run automatically as soon as the network is built (on first call
+        for user-defined classes inheriting from `Model`, immediately if it is
+        already built).
+
+        When loading weights in HDF5 format, returns `None`.
+
+    Raises:
+        ImportError: If h5py is not available and the weight file is in HDF5
+            format.
+        ValueError: If `skip_mismatch` is set to `True` when `by_name` is
+          `False`.
+    """
     if distributed_training_utils.is_tpu_strategy(self._distribution_strategy):
       if (self._distribution_strategy.extended.steps_per_run > 1 and
           (not network._is_hdf5_filepath(filepath))):  # pylint: disable=protected-access
         raise ValueError('Load weights is not yet supported with TPUStrategy '
                          'with steps_per_run greater than 1.')
-    return super(Model, self).load_weights(filepath, by_name)
+    return super(Model, self).load_weights(filepath, by_name, skip_mismatch)
 
   @trackable.no_automatic_dependency_tracking
   def compile(self,
@@ -246,6 +290,22 @@ class Model(network.Network):
     self._run_eagerly = kwargs.pop('run_eagerly', None)
     self._experimental_run_tf_function = kwargs.pop(
         'experimental_run_tf_function', True)
+
+    # Prepare Session arguments (legacy).
+    kwargs.pop('cloning', None)  # Legacy DistStrat argument, never used.
+    allowed_kwargs = {'feed_dict', 'fetches', 'options', 'run_metadata'}
+    unknown_kwargs = set(kwargs.keys()) - allowed_kwargs
+    if unknown_kwargs:
+      raise TypeError(
+          'Invalid keyword argument(s) in `compile`: %s' % (unknown_kwargs,))
+    self._function_kwargs = kwargs
+    if self._function_kwargs:
+      self._experimental_run_tf_function = False
+      if self.run_eagerly:
+        raise ValueError(
+            'Session keyword arguments are not supported '
+            'when `run_eagerly=True`. You passed the following '
+            'Session arguments: %s' % (self._function_kwargs,))
 
     self._set_optimizer(optimizer)
     is_any_optimizer_v1 = any(isinstance(opt, optimizers.Optimizer)
@@ -372,8 +432,6 @@ class Model(network.Network):
       # Functions for train, test and predict will
       # be compiled lazily when required.
       # This saves time when the user is not using all functions.
-      self._function_kwargs = kwargs
-
       self.train_function = None
       self.test_function = None
       self.predict_function = None
@@ -490,18 +548,11 @@ class Model(network.Network):
 
     # Experiment training loop with default DS path.
     if context.executing_eagerly() and self._experimental_run_tf_function:
-      try:
-        valid_adapter = data_adapter.select_data_adapter(inputs, None)
-      except ValueError as data_failure_exception:
-        valid_adapter = None
-        logging.warning('Falling back from v2 loop because of error: '
-                        '%s' % data_failure_exception)
-      if valid_adapter:
-        if self._in_multi_worker_mode():
-          return training_distributed.DistributionMultiWorkerTrainingLoop(
-              training_v2.Loop())
-        else:
-          return training_v2.Loop()
+      if self._in_multi_worker_mode():
+        return training_distributed.DistributionMultiWorkerTrainingLoop(
+            training_v2.Loop())
+      else:
+        return training_v2.Loop()
 
     # Case 1: distribution strategy.
     if self._distribution_strategy:
@@ -609,7 +660,7 @@ class Model(network.Network):
               - tuple `(x_val, y_val, val_sample_weights)` of Numpy arrays
               - dataset
             For the first two cases, `batch_size` must be provided.
-            For the last case, `validation_steps` must be provided.
+            For the last case, `validation_steps` could be provided.
         shuffle: Boolean (whether to shuffle the training data
             before each epoch) or str (for 'batch').
             'batch' is a special option for dealing with the
@@ -651,9 +702,13 @@ class Model(network.Network):
         validation_steps: Only relevant if `validation_data` is provided and
             is a `tf.data` dataset. Total number of steps (batches of
             samples) to draw before stopping when performing validation
-            at the end of every epoch. If validation_data is a `tf.data` dataset
-            and 'validation_steps' is None, validation
-            will run until the `validation_data` dataset is exhausted.
+            at the end of every epoch. If 'validation_steps' is None, validation
+            will run until the `validation_data` dataset is exhausted. In the
+            case of a infinite dataset, it will run into a infinite loop.
+            If 'validation_steps' is specified and only part of the dataset
+            will be consumed, the evaluation will start from the beginning of
+            the dataset at each epoch. This ensures that the same validation
+            samples are used every time.
         validation_freq: Only relevant if validation data is provided. Integer
             or `collections_abc.Container` instance (e.g. list, tuple, etc.).
             If an integer, specifies how many training epochs to run before a
@@ -756,7 +811,7 @@ class Model(network.Network):
         batch_size: Integer or `None`.
             Number of samples per gradient update.
             If unspecified, `batch_size` will default to 32.
-            Do not specify the `batch_size` is your data is in the
+            Do not specify the `batch_size` if your data is in the
             form of symbolic tensors, dataset,
             generators, or `keras.utils.Sequence` instances (since they generate
             batches).
@@ -850,7 +905,7 @@ class Model(network.Network):
         batch_size: Integer or `None`.
             Number of samples per gradient update.
             If unspecified, `batch_size` will default to 32.
-            Do not specify the `batch_size` is your data is in the
+            Do not specify the `batch_size` if your data is in the
             form of symbolic tensors, dataset,
             generators, or `keras.utils.Sequence` instances (since they generate
             batches).
@@ -2435,7 +2490,7 @@ class Model(network.Network):
     # part of the graph.
     # Note: in this case, `any` and `all` are equivalent since we disallow
     # mixed symbolic/value inputs.
-      
+
     # self.run_eagerly is not free to compute, so we want to reuse the value.
     run_eagerly = self.run_eagerly
     if (not run_eagerly and is_build_called and is_compile_called and
@@ -2488,7 +2543,19 @@ class Model(network.Network):
       for (a, b) in zip(flat_inputs, flat_expected_inputs):
         converted_x.append(_convert_scipy_sparse_tensor(a, b))
       x = nest.pack_sequence_as(x, converted_x, expand_composites=False)
-      x_shapes = nest.map_structure(type_spec.type_spec_from_value, x)
+
+      def _type_spec_from_value(value):
+        """Grab type_spec without converting array-likes to tensors."""
+        if isinstance(value, composite_tensor.CompositeTensor):
+          return value._type_spec  # pylint: disable=protected-access
+        # Get a TensorSpec for array-like data without
+        # converting the data to a Tensor
+        if hasattr(value, 'shape') and hasattr(value, 'dtype'):
+          return tensor_spec.TensorSpec(value.shape, value.dtype)
+        else:
+          return type_spec.type_spec_from_value(value)
+
+      x_shapes = nest.map_structure(_type_spec_from_value, x)
 
     flat_inputs = nest.flatten(x_shapes, expand_composites=False)
     flat_expected_inputs = nest.flatten(self.inputs, expand_composites=False)
@@ -2735,6 +2802,10 @@ class Model(network.Network):
         input_shape = (None,) + tuple(inputs.shape[1:])
       self._build_input_shape = input_shape
 
+    # Cast inputs to the compute dtype. This is primarily used
+    # when saving to determine the correct dtype in the input signature.
+    inputs = self._maybe_cast_inputs(inputs)
+
     # On-the-fly setting of symbolic model inputs (either by using the tensor
     # provided, or by creating a placeholder if Numpy data was provided).
     model_inputs = training_utils.ModelInputs(inputs)
@@ -2874,6 +2945,14 @@ class Model(network.Network):
 
   def _in_multi_worker_mode(self):
     """Method to infer if this `Model` is working in multi-worker settings.
+
+    Multi-worker training refers to the setup where the training is
+    distributed across multiple workers, as opposed to the case where
+    only a local process performs the training. This function is
+    used to infer for example whether or not a distribute coordinator
+    should be run, and thus TensorFlow servers should be started for
+    communication with other servers in the cluster, or whether or not
+    saving/restoring checkpoints is relevant for preemption fault tolerance.
 
     Experimental. Signature and implementation are subject to change.
 

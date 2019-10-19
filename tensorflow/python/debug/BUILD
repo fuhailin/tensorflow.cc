@@ -26,13 +26,17 @@ py_library(
     deps = [
         ":check_numerics_callback",
         ":debug_data",
+        ":debug_events_reader",
+        ":debug_events_writer",
         ":debug_gradients",
         ":debug_graphs",
         ":debug_utils",
+        ":dumping_callback",
         ":grpc_debug_server",
         ":grpc_debug_test_server",
         ":hooks",
         ":local_cli_wrapper",
+        "//tensorflow/python:debug_ops_gen",
         "//tensorflow/python:util",
     ],
 )
@@ -56,12 +60,37 @@ py_library(
 )
 
 py_library(
+    name = "op_callbacks_common",
+    srcs = ["lib/op_callbacks_common.py"],
+    srcs_version = "PY2AND3",
+)
+
+py_library(
     name = "check_numerics_callback",
     srcs = ["lib/check_numerics_callback.py"],
     srcs_version = "PY2AND3",
     deps = [
+        ":op_callbacks_common",
         ":source_utils",
         "//tensorflow/python:array_ops",
+        "//tensorflow/python:op_callbacks",
+        "//third_party/py/numpy",
+    ],
+)
+
+py_library(
+    name = "dumping_callback",
+    srcs = ["lib/dumping_callback.py"],
+    srcs_version = "PY2AND3",
+    tags = [
+        "no_windows",  # TODO(b/142475891): Enable this test on Windows.
+    ],
+    deps = [
+        ":debug_events_writer",
+        ":op_callbacks_common",
+        ":source_utils",
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:debug_ops_gen",
         "//tensorflow/python:op_callbacks",
         "//third_party/py/numpy",
     ],
@@ -71,6 +100,26 @@ py_library(
     name = "common",
     srcs = ["lib/common.py"],
     srcs_version = "PY2AND3",
+)
+
+py_library(
+    name = "debug_events_reader",
+    srcs = ["lib/debug_events_reader.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        "//tensorflow/core:protos_all_py",
+        "//tensorflow/python:framework",
+    ],
+)
+
+py_library(
+    name = "debug_events_writer",
+    srcs = ["lib/debug_events_writer.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        "//tensorflow/core:protos_all_py",
+        "//tensorflow/python:framework",
+    ],
 )
 
 py_library(
@@ -583,6 +632,23 @@ py_test(
 )
 
 py_test(
+    name = "debug_events_writer_test",
+    size = "medium",
+    srcs = ["lib/debug_events_writer_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY2AND3",
+    tags = [
+        "no_windows",  # b/142475891
+    ],
+    deps = [
+        ":debug_events_writer",
+        "//tensorflow/core:protos_all_py",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_test_lib",
+    ],
+)
+
+py_test(
     name = "debug_graphs_test",
     size = "small",
     srcs = ["lib/debug_graphs_test.py"],
@@ -614,11 +680,47 @@ py_test(
 
 cuda_py_test(
     name = "check_numerics_callback_test",
-    size = "small",
+    size = "medium",
     srcs = ["lib/check_numerics_callback_test.py"],
     additional_deps = [
         ":check_numerics_callback",
         "//third_party/py/numpy",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:platform_test",
+        "//tensorflow/python:variables",
+    ],
+)
+
+cuda_py_test(
+    name = "dumping_callback_test",
+    size = "medium",
+    srcs = ["lib/dumping_callback_test.py"],
+    additional_deps = [
+        ":debug_events_reader",
+        ":debug_events_writer",
+        ":dumping_callback",
+        "//third_party/py/numpy",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:platform_test",
+        "//tensorflow/python:variables",
+        "//tensorflow/python/keras",
+    ],
+    shard_count = 4,
+    tags = ["notap"],  # TODO(b/142890611)
+    xla_enable_strict_auto_jit = False,  # Node names are different with autojit
+)
+
+cuda_py_test(
+    name = "debug_v2_ops_test",
+    size = "medium",
+    srcs = ["lib/debug_v2_ops_test.py"],
+    additional_deps = [
+        ":debug_events_reader",
+        ":debug_events_writer",
+        "//third_party/py/numpy",
+        "//tensorflow/python:debug_ops_gen",
         "//tensorflow/python:framework_test_lib",
         "//tensorflow/python:gradients",
         "//tensorflow/python:math_ops",
@@ -627,6 +729,9 @@ cuda_py_test(
         "//tensorflow/python:variables",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/keras",
+    ],
+    tags = [
+        "no_windows",  # b/142475891
     ],
 )
 
@@ -882,7 +987,7 @@ cuda_py_test(
         "//tensorflow/python:platform_test",
         "//tensorflow/python:variables",
     ],
-    xla_enable_strict_auto_jit = False,  # Tests TF:Classic implementation
+    xla_enable_strict_auto_jit = False,  # Tests TF:Classic implementation.
 )
 
 cuda_py_test(
@@ -1258,6 +1363,7 @@ sh_test(
     ],
     tags = [
         "no_windows",
+        "v1only",
     ],
 )
 

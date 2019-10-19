@@ -50,6 +50,10 @@ class EagerNode {
 
   virtual ~EagerNode() {}
 
+  // Prepares the node when adding it into EagerExecutor. If any errors happens,
+  // EagerExecutor will abort the node immediately.
+  virtual Status Prepare() { return Status::OK(); }
+
   // Runs the computation corresponding to this node and blocks till the
   // execution is done.
   virtual Status Run() = 0;
@@ -209,6 +213,8 @@ class EagerExecutor {
   // until state_ is set to kShuttingDown. It is `nullptr` in sync mode.
   const std::unique_ptr<Thread> thread_;
 };
+
+inline bool EagerExecutor::Async() const { return thread_ != nullptr; }
 
 }  // namespace tensorflow
 

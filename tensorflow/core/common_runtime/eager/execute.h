@@ -49,9 +49,8 @@ Status EagerExecute(EagerOperation* op, TensorHandle** retvals,
 // `kernel->device()`, with the inputs op_inputs, in the context 'ctx'.
 Status EagerKernelExecute(EagerContext* ctx,
                           const gtl::InlinedVector<TensorHandle*, 4>& op_inputs,
+                          const absl::optional<int64>& op_id,
                           const core::RefCountPtr<KernelAndDevice>& kernel,
-                          NodeExecStats* maybe_stats,
-                          StepStats* maybe_step_stats,
                           GraphCollector* graph_collector,
                           CancellationManager* cancellation_manager,
                           absl::Span<TensorHandle*> retvals);

@@ -90,11 +90,15 @@ Status NoteRNN::BuildGraph() {
   LOG(INFO) << "Node building status: " << this->scope.status();
 
   // // logits, with shape of {BATCH_SIZE, INPUT_SIZE}
-  // // Note: time_len here is with fixed value of 1, so Slice is not needed
+  // logits calculation doesn't use y
+
+  // Option 1, Note: time_len here is with fixed value of 1, so Slice is not needed
   // this->logits = Reshape(this->scope,
   //                        Slice(this->scope, this->rnn_softmax_loss->logits, 0, 1),
   //                        {BATCH_SIZE, INPUT_SIZE});
+  // Option 2
   // this->logits = Reshape(this->scope, this->rnn_softmax_loss->logits, {BATCH_SIZE, INPUT_SIZE});
+  // Option 3
   this->logits = Squeeze(this->scope, this->rnn_softmax_loss->logits, Squeeze::Axis({0}));
   LOG(INFO) << "Node building status: " << this->scope.status();
 
@@ -190,7 +194,9 @@ Status NoteRNN::Restore(const string& file_path) {
 
   } else {
     LOG(INFO) << "NoteRNN::Init Done outputs: " << outputs.size();
+#ifdef VERBOSE
     LOG(INFO) << "NoteRNN::Init Done outputs[0]: " << outputs[0].DebugString();
+#endif
   }
 
   // Assign

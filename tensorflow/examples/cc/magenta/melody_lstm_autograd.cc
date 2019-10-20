@@ -45,7 +45,7 @@ using namespace std;                          // NOLINT(build/namespaces)
 #define NUM_UNIT 128             // HIDDEN_SIZE
 #define TIME_LEN 384             // NUM_STEPS
 #define BATCH_SIZE 32            //
-#define TRAINING_STEPS 10000
+#define TRAINING_STEPS 50000
 
 // Don't change
 #define INPUT_SIZE 38            // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))

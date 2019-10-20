@@ -208,16 +208,16 @@ void RLTuner::Train() {
   this->ResetXTensor();
 
   // loop
-  Tensor action, new_observation, reward_scores;
+  Tensor action, new_observation, reward_scores_l;
   for (int step = 0; step < this->num_steps; step++) {
     Tensor state_h = this->q_network.h_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
     Tensor state_c = this->q_network.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
 
-    std::tie(action, new_observation, reward_scores) = this->Action();
+    std::tie(action, new_observation, reward_scores_l) = this->Action();
 
 #ifdef VERBOSE
     if (step % 1000 == 0) {
-      LOG(INFO) << "Print step: " << step << ", reward_scores: " << reward_scores.DebugString();
+      LOG(INFO) << "Print step: " << step << ", reward_scores_l: " << reward_scores_l.DebugString();
       LOG(INFO) << "Print step: " << step << ", new_observation: " << new_observation.DebugString();
     }
 #endif
@@ -229,7 +229,7 @@ void RLTuner::Train() {
     Tensor new_reward_state_c = this->reward_rnn.cs_prev_tensor.Slice(BATCH_SIZE - 1, BATCH_SIZE);
 
     // reward
-    Tensor reward = this->CollectReward(last_observation, new_observation, reward_scores);
+    Tensor reward = this->CollectReward(last_observation, new_observation, reward_scores_l);
 
     this->Store(last_observation, state_h, state_c, action, reward, new_observation,
                  new_state_h, new_state_c, new_reward_state_h, new_reward_state_c);
@@ -241,14 +241,14 @@ void RLTuner::Train() {
     // Update current state as last state.
     this->last_observation = new_observation;
 
-    if(this->beat % this->num_notes_in_melody == 0) {
+    if (this->beat % this->num_notes_in_melody == 0) {
       this->ResetComposition();
       this->last_observation = this->PrimeInternalModels();
 
       this->ResetXTensor();
     } else {
       this->UpdateXTensor();
-    }    
+    }
   }
 }
 
@@ -384,8 +384,10 @@ void RLTuner::TrainingStep() {
     if (this->num_times_train_called % 1000 == 0) {
       LOG(INFO) << "Print num_times_train_called: " << this->num_times_train_called
                 << ", prediction_error: " << outputs[0].DebugString();
+#ifdef VERBOSE
       LOG(INFO) << "Print num_times_train_called 111: " << this->num_times_train_called
                 << ", future_rewards: " << outputs[5].DebugString();
+#endif
     }
 
     // target_network_update
@@ -517,7 +519,7 @@ double RLTuner::Random() {
 }
 
 // RewardFromRewardRnnScores
-double RLTuner::RewardFromRewardRnnScores(const Tensor& action, const Tensor& reward_scores) {
+double RLTuner::RewardFromRewardRnnScores(const Tensor& action, const Tensor& reward_scores_l) {
 #if TESTING
   // Ref: https://github.com/eigenteam/eigen-git-mirror/blob/master/unsupported/test/cxx11_tensor_argmax.cpp
 
@@ -540,18 +542,18 @@ double RLTuner::RewardFromRewardRnnScores(const Tensor& action, const Tensor& re
   // argmax
   Eigen::Tensor<Eigen::DenseIndex, 0, Eigen::RowMajor> action_note = action_vec.argmax();
 
-  // reshape reward_scores
-  Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_vec = reward_scores.shaped<float, 1>({INPUT_SIZE});
+  // reshape reward_scores_l
+  Eigen::Tensor<float, 1, Eigen::RowMajor> reward_scores_l_vec = reward_scores_l.shaped<float, 1>({INPUT_SIZE});
 
   // logsumexp
-  Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_vec.exp().sum().log();
+  Eigen::Tensor<float, 0, Eigen::RowMajor> normalization_constant = reward_scores_l_vec.exp().sum().log();
 
-  return reward_scores_vec(static_cast<int>(action_note())) - normalization_constant();
+  return reward_scores_l_vec(static_cast<int>(action_note())) - normalization_constant();
 }
 
-Tensor RLTuner::CollectReward(const Tensor& obs, const Tensor& action, const Tensor& reward_scores) {
+Tensor RLTuner::CollectReward(const Tensor& obs, const Tensor& action, const Tensor& reward_scores_l) {
     // Gets and saves log p(a|s) as output by reward_rnn.
-    double note_rnn_reward = this->RewardFromRewardRnnScores(action, reward_scores);
+    double note_rnn_reward = this->RewardFromRewardRnnScores(action, reward_scores_l);
     this->note_rnn_reward_last_n += note_rnn_reward;
 
     double reward = this->RewardMusicTheory(action);
@@ -560,7 +562,6 @@ Tensor RLTuner::CollectReward(const Tensor& obs, const Tensor& action, const Ten
 
     return Tensor(static_cast<float>(reward * REWARD_SCALER + note_rnn_reward));
 }
-
 
 // Music Theory
 double RLTuner::RewardMusicTheory(const Tensor& action) {

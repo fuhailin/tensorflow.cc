@@ -22,10 +22,10 @@ limitations under the License.
 //
 
 #include "tensorflow/cc/client/client_session.h"
-#include "tensorflow/cc/ops/standard_ops.h"
-#include "tensorflow/cc/ops/dataset_ops_internal.h"
-#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/cc/framework/gradients.h"
+#include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/core/framework/tensor.h"
 
 using namespace tensorflow;
 using namespace tensorflow::ops;
@@ -37,20 +37,20 @@ using namespace std;
 // #define DEBUG_RKZ 1
 
 // Adjustable Parameters
-#define VALIDATION_SIZE 5000   // Size of the validation set.
-#define SEED 66478             // Set to None for random seed.
+#define VALIDATION_SIZE 5000  // Size of the validation set.
+#define SEED 66478            // Set to None for random seed.
 #define BATCH_SIZE 64
 
 #ifdef DEBUG_RKZ
-  #define BATCHES_PER_EPOCHS 1 // (55000 / BATCH_SIZE) = 859 max 
-  #define NUM_EPOCHS 1
+#define BATCHES_PER_EPOCHS 1  // (55000 / BATCH_SIZE) = 859 max
+#define NUM_EPOCHS 1
 #else
-  #define BATCHES_PER_EPOCHS 859 // (55000 / BATCH_SIZE) = 859 max 
-  #define NUM_EPOCHS 10
+#define BATCHES_PER_EPOCHS 859  // (55000 / BATCH_SIZE) = 859 max
+#define NUM_EPOCHS 10
 #endif
 
 #define EVAL_BATCH_SIZE 64
-#define EVAL_FREQUENCY 100     // Number of steps between evaluations.
+#define EVAL_FREQUENCY 100  // Number of steps between evaluations.
 #define DECAY_RATE 0.95f
 #define MOMENTUM 0.9f
 #define BASE_LEARNING_RATE 0.01f
@@ -62,7 +62,7 @@ using namespace std;
 #define NUM_LABELS 10
 #define INPUTS_HEADER_BYTES 16
 #define LABELS_HEADER_BYTES 8
-#define NUM_IMAGES (BATCH_SIZE * BATCHES_PER_EPOCHS)         // 55000 images max
+#define NUM_IMAGES (BATCH_SIZE * BATCHES_PER_EPOCHS)  // 55000 images max
 
 //
 // Python code: seed1, seed2 = random_seed.get_seed(seed)
@@ -70,39 +70,36 @@ using namespace std;
 const int DEFAULT_GRAPH_SEED = 87654321;
 const int MAXINT32 = std::pow(2, 31) - 1;
 
-static int get_seed1(int seed) {
-  return DEFAULT_GRAPH_SEED;
-}
+static int get_seed1(int seed) { return DEFAULT_GRAPH_SEED; }
 
-static int get_seed2(int seed) {
-  return seed % MAXINT32;
-}
+static int get_seed2(int seed) { return seed % MAXINT32; }
 
-static string DetailedDebugString(const Tensor &tensor) {
+static string DetailedDebugString(const Tensor& tensor) {
   return strings::StrCat("Tensor<type: ", DataTypeString(tensor.dtype()),
                          " shape: ", tensor.shape().DebugString(),
                          " values: ", tensor.SummarizeValue(-1, true), ">");
 }
 
-static Status Dropout(const Scope& scope, const Input x, const int rate, Output& dropout) {
+static Status Dropout(const Scope& scope, const Input x, const int rate,
+                      Output& dropout) {
   float keep_prob = 1 - rate;
-  auto random_value5 = RandomUniform(scope, Shape(scope, x), DT_FLOAT, RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
-  auto random_tensor = Add(scope, random_value5, Const<float>(scope, {keep_prob}));
+  auto random_value5 = RandomUniform(
+      scope, Shape(scope, x), DT_FLOAT,
+      RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_tensor =
+      Add(scope, random_value5, Const<float>(scope, {keep_prob}));
   auto binary_tensor = Floor(scope, random_tensor);
-  auto result = Multiply(scope, Div(scope, x, Const<float>(scope, {keep_prob})), binary_tensor);
+  auto result = Multiply(scope, Div(scope, x, Const<float>(scope, {keep_prob})),
+                         binary_tensor);
 
   dropout = result.z;
 
   return scope.status();
 }
 
-
 #ifdef TESTING
 
-static void test() {
-
-
-}
+static void test() {}
 #endif
 
 int main() {
@@ -117,29 +114,38 @@ int main() {
   //
 
   // Read file and decompress data
-  auto inputs_contents = ReadFile(scope, Const<string>(scope, "/tmp/data/train-images-idx3-ubyte.gz", TensorShape({})));
-  auto inputs_decode_compressed = DecodeCompressed(scope, inputs_contents, DecodeCompressed::CompressionType("GZIP"));
+  auto inputs_contents = ReadFile(
+      scope, Const<string>(scope, "/tmp/data/train-images-idx3-ubyte.gz",
+                           TensorShape({})));
+  auto inputs_decode_compressed = DecodeCompressed(
+      scope, inputs_contents, DecodeCompressed::CompressionType("GZIP"));
 
-  auto labels_contents = ReadFile(scope, Const<string>(scope, "/tmp/data/train-labels-idx1-ubyte.gz", TensorShape({})));
-  auto labels_decode_compressed = DecodeCompressed(scope, labels_contents, DecodeCompressed::CompressionType("GZIP"));
+  auto labels_contents = ReadFile(
+      scope, Const<string>(scope, "/tmp/data/train-labels-idx1-ubyte.gz",
+                           TensorShape({})));
+  auto labels_decode_compressed = DecodeCompressed(
+      scope, labels_contents, DecodeCompressed::CompressionType("GZIP"));
 
   vector<Tensor> outputs;
   ClientSession session(scope);
 
   // Load data into tensors
-  Tensor inputs(DT_FLOAT, TensorShape({NUM_IMAGES, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS}));
+  Tensor inputs(DT_FLOAT, TensorShape({NUM_IMAGES, IMAGE_SIZE, IMAGE_SIZE,
+                                       NUM_CHANNELS}));
   Tensor labels(DT_INT64, TensorShape({NUM_IMAGES}));
 
-  Status status = session.Run({}, {inputs_decode_compressed, labels_decode_compressed}, {}, &outputs);
-  if(status.ok()) {
+  Status status = session.Run(
+      {}, {inputs_decode_compressed, labels_decode_compressed}, {}, &outputs);
+  if (status.ok()) {
     // inputs
     std::string inputs_str = outputs[0].scalar<string>()();
-    const char *inputs_str_data = inputs_str.c_str();
+    const char* inputs_str_data = inputs_str.c_str();
 
     float* inputs_data = inputs.tensor<float, 4>().data();
     int count = NUM_IMAGES * IMAGE_SIZE * IMAGE_SIZE * NUM_CHANNELS;
-    for(int i = 0; i < count; i++) {
-      float data = (unsigned char)(*(inputs_str_data + INPUTS_HEADER_BYTES + i));
+    for (int i = 0; i < count; i++) {
+      float data =
+          (unsigned char)(*(inputs_str_data + INPUTS_HEADER_BYTES + i));
       data = (data - (PIXEL_DEPTH / 2.0f)) / PIXEL_DEPTH;
 
       inputs_data[i] = data;
@@ -147,11 +153,12 @@ int main() {
 
     // labels
     std::string labels_str = outputs[1].scalar<string>()();
-    const char *labels_str_data = labels_str.c_str();
+    const char* labels_str_data = labels_str.c_str();
 
     int64* labels_data = labels.vec<int64>().data();
-    for(int i = 0; i < NUM_IMAGES; i++) {
-      labels_data[i] = (unsigned char)(*(labels_str_data + LABELS_HEADER_BYTES + i));
+    for (int i = 0; i < NUM_IMAGES; i++) {
+      labels_data[i] =
+          (unsigned char)(*(labels_str_data + LABELS_HEADER_BYTES + i));
     }
   } else {
     LOG(INFO) << "Print: status: " << status;
@@ -164,140 +171,156 @@ int main() {
   LOG(INFO) << "Print: labels: " << DetailedDebugString(labels);
 #endif
 
-  // 
+  //
   // Convolutional Net
   //
 
-  auto ph_inputs = Placeholder(scope, DT_FLOAT, Placeholder::Shape({BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS}));
-  auto ph_labels = Placeholder(scope, DT_INT64, Placeholder::Shape({BATCH_SIZE}));
+  auto ph_inputs = Placeholder(
+      scope, DT_FLOAT,
+      Placeholder::Shape({BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS}));
+  auto ph_labels =
+      Placeholder(scope, DT_INT64, Placeholder::Shape({BATCH_SIZE}));
 
   // Trainable variables
   auto rate = Const(scope, {0.1f});
 
   auto conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT);
-  auto random_value = TruncatedNormal(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT, 
-                                              TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
-  auto assign_conv1_weights = Assign(scope, conv1_weights, Multiply(scope, random_value, rate));
+  auto random_value = TruncatedNormal(
+      scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT,
+      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto assign_conv1_weights =
+      Assign(scope, conv1_weights, Multiply(scope, random_value, rate));
 
   auto conv1_biases = Variable(scope, {32}, DT_FLOAT);
   Tensor b_zero_tensor(DT_FLOAT, TensorShape({32}));
-  b_zero_tensor.vec<float>().setZero();  
+  b_zero_tensor.vec<float>().setZero();
   auto assign_conv1_biases = Assign(scope, conv1_biases, b_zero_tensor);
 
   auto conv2_weights = Variable(scope, {5, 5, 32, 64}, DT_FLOAT);
-  auto random_value2 = TruncatedNormal(scope, {5, 5, 32, 64}, DT_FLOAT, 
-                                              TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
-  auto assign_conv2_weights = Assign(scope, conv2_weights, Multiply(scope, random_value2, rate));
+  auto random_value2 = TruncatedNormal(
+      scope, {5, 5, 32, 64}, DT_FLOAT,
+      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto assign_conv2_weights =
+      Assign(scope, conv2_weights, Multiply(scope, random_value2, rate));
 
   auto conv2_biases = Variable(scope, {64}, DT_FLOAT);
-  auto assign_conv2_biases = Assign(scope, conv2_biases, Const<float>(scope, 0.1f, TensorShape({64})));
+  auto assign_conv2_biases =
+      Assign(scope, conv2_biases, Const<float>(scope, 0.1f, TensorShape({64})));
 
   int s1 = IMAGE_SIZE;
   s1 = s1 / 4;
   s1 = std::pow(s1, 2) * 64;
   auto fc1_weights = Variable(scope, {s1, 512}, DT_FLOAT);
-  auto random_value3 = TruncatedNormal(scope, {s1, 512}, DT_FLOAT, 
-                                              TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
-  auto assign_fc1_weights = Assign(scope, fc1_weights, Multiply(scope, random_value3, rate));
+  auto random_value3 = TruncatedNormal(
+      scope, {s1, 512}, DT_FLOAT,
+      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto assign_fc1_weights =
+      Assign(scope, fc1_weights, Multiply(scope, random_value3, rate));
 
   auto fc1_biases = Variable(scope, {512}, DT_FLOAT);
-  auto assign_fc1_biases = Assign(scope, fc1_biases, Const<float>(scope, 0.1f, TensorShape({512})));
+  auto assign_fc1_biases =
+      Assign(scope, fc1_biases, Const<float>(scope, 0.1f, TensorShape({512})));
 
   auto fc2_weights = Variable(scope, {512, NUM_LABELS}, DT_FLOAT);
-  auto random_value4 = TruncatedNormal(scope, {512, NUM_LABELS}, DT_FLOAT, 
-                                              TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
-  auto assign_fc2_weights = Assign(scope, fc2_weights, Multiply(scope, random_value4, rate));
+  auto random_value4 = TruncatedNormal(
+      scope, {512, NUM_LABELS}, DT_FLOAT,
+      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto assign_fc2_weights =
+      Assign(scope, fc2_weights, Multiply(scope, random_value4, rate));
 
   auto fc2_biases = Variable(scope, {NUM_LABELS}, DT_FLOAT);
-  auto assign_fc2_biases = Assign(scope, fc2_biases, Const<float>(scope, 0.1f, TensorShape({NUM_LABELS})));
+  auto assign_fc2_biases = Assign(
+      scope, fc2_biases, Const<float>(scope, 0.1f, TensorShape({NUM_LABELS})));
 
   // Gradient accum parameters start here
-  auto accum_conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT);
-  auto assign_accum_conv1_weights = Assign(scope, accum_conv1_weights, ZerosLike(scope, conv1_weights));
+  auto accum_conv1_weights =
+      Variable(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT);
+  auto assign_accum_conv1_weights =
+      Assign(scope, accum_conv1_weights, ZerosLike(scope, conv1_weights));
 
   auto accum_conv1_biases = Variable(scope, {32}, DT_FLOAT);
-  auto assign_accum_conv1_biases = Assign(scope, accum_conv1_biases, ZerosLike(scope, conv1_biases));
+  auto assign_accum_conv1_biases =
+      Assign(scope, accum_conv1_biases, ZerosLike(scope, conv1_biases));
 
   auto accum_conv2_weights = Variable(scope, {5, 5, 32, 64}, DT_FLOAT);
-  auto assign_accum_conv2_weights = Assign(scope, accum_conv2_weights, ZerosLike(scope, conv2_weights));
+  auto assign_accum_conv2_weights =
+      Assign(scope, accum_conv2_weights, ZerosLike(scope, conv2_weights));
 
   auto accum_conv2_biases = Variable(scope, {64}, DT_FLOAT);
-  auto assign_accum_conv2_biases = Assign(scope, accum_conv2_biases, ZerosLike(scope, conv2_biases));
+  auto assign_accum_conv2_biases =
+      Assign(scope, accum_conv2_biases, ZerosLike(scope, conv2_biases));
 
   auto accum_fc1_weights = Variable(scope, {s1, 512}, DT_FLOAT);
-  auto assign_accum_fc1_weights = Assign(scope, accum_fc1_weights, ZerosLike(scope, fc1_weights));
+  auto assign_accum_fc1_weights =
+      Assign(scope, accum_fc1_weights, ZerosLike(scope, fc1_weights));
 
   auto accum_fc1_biases = Variable(scope, {512}, DT_FLOAT);
-  auto assign_accum_fc1_biases = Assign(scope, accum_fc1_biases, ZerosLike(scope, fc1_biases));
+  auto assign_accum_fc1_biases =
+      Assign(scope, accum_fc1_biases, ZerosLike(scope, fc1_biases));
 
   auto accum_fc2_weights = Variable(scope, {512, NUM_LABELS}, DT_FLOAT);
-  auto assign_accum_fc2_weights = Assign(scope, accum_fc2_weights, ZerosLike(scope, fc2_weights));
+  auto assign_accum_fc2_weights =
+      Assign(scope, accum_fc2_weights, ZerosLike(scope, fc2_weights));
 
   auto accum_fc2_biases = Variable(scope, {NUM_LABELS}, DT_FLOAT);
-  auto assign_accum_fc2_biases = Assign(scope, accum_fc2_biases, ZerosLike(scope, fc2_biases));
+  auto assign_accum_fc2_biases =
+      Assign(scope, accum_fc2_biases, ZerosLike(scope, fc2_biases));
 
   // Initialize variables
-  TF_CHECK_OK(session.Run({assign_conv1_weights, assign_conv1_biases, assign_conv2_weights, assign_conv2_biases,
-                            assign_fc1_weights, assign_fc1_biases, assign_fc2_weights, assign_fc2_biases}, 
-                          nullptr));
-  TF_CHECK_OK(session.Run({assign_accum_conv1_weights, assign_accum_conv1_biases, assign_accum_conv2_weights, assign_accum_conv2_biases,
-                            assign_accum_fc1_weights, assign_accum_fc1_biases, assign_accum_fc2_weights, assign_accum_fc2_biases}, 
-                          nullptr));
- 
+  TF_CHECK_OK(session.Run(
+      {assign_conv1_weights, assign_conv1_biases, assign_conv2_weights,
+       assign_conv2_biases, assign_fc1_weights, assign_fc1_biases,
+       assign_fc2_weights, assign_fc2_biases},
+      nullptr));
+  TF_CHECK_OK(
+      session.Run({assign_accum_conv1_weights, assign_accum_conv1_biases,
+                   assign_accum_conv2_weights, assign_accum_conv2_biases,
+                   assign_accum_fc1_weights, assign_accum_fc1_biases,
+                   assign_accum_fc2_weights, assign_accum_fc2_biases},
+                  nullptr));
 
   // Convnet Model begin
-  auto conv2d_1 = RKZConv2D(scope, 
-                        ph_inputs,
-                        conv1_weights, 
-                        1,
-                        2);
+  auto conv2d_1 = RKZConv2D(scope, ph_inputs, conv1_weights, 1, 2);
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto relu_1 = Relu(scope, BiasAdd(scope, conv2d_1, conv1_biases));
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto max_pool_1 = MaxPool(scope, 
-                        relu_1, 
-                        gtl::ArraySlice<int>{1, 2, 2, 1}, 
-                        gtl::ArraySlice<int>{1, 2, 2, 1},
-                        "SAME");
+  auto max_pool_1 = MaxPool(scope, relu_1, gtl::ArraySlice<int>{1, 2, 2, 1},
+                            gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto conv2d_2 = RKZConv2D(scope, 
-                        max_pool_1,
-                        conv2_weights, 
-                        1,
-                        2);
+  auto conv2d_2 = RKZConv2D(scope, max_pool_1, conv2_weights, 1, 2);
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto relu_2 = Relu(scope, BiasAdd(scope, conv2d_2, conv2_biases));
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto max_pool_2 = MaxPool(scope, 
-                        relu_2, 
-                        gtl::ArraySlice<int>{1, 2, 2, 1}, 
-                        gtl::ArraySlice<int>{1, 2, 2, 1},
-                        "SAME");
+  auto max_pool_2 = MaxPool(scope, relu_2, gtl::ArraySlice<int>{1, 2, 2, 1},
+                            gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
 
   // reshape
   auto reshape1 = Reshape(scope, max_pool_2, {BATCH_SIZE, s1});
   LOG(INFO) << "Node building status: " << scope.status();
 
-  // 
-  auto hidden = Relu(scope, Add(scope, MatMul(scope, reshape1, fc1_weights), fc1_biases));
+  //
+  auto hidden =
+      Relu(scope, Add(scope, MatMul(scope, reshape1, fc1_weights), fc1_biases));
   LOG(INFO) << "Node building status: " << scope.status();
 
   // dropout
   Output dropout_output;
   if (!Dropout(scope, hidden, 0.5f, dropout_output).ok()) {
-    LOG(ERROR) << "-----------------------------------------status: " << scope.status();
+    LOG(ERROR) << "-----------------------------------------status: "
+               << scope.status();
 
     return scope.status().code();
   }
 
   // model output
-  auto logits = Add(scope, MatMul(scope, dropout_output, fc2_weights), fc2_biases);
+  auto logits =
+      Add(scope, MatMul(scope, dropout_output, fc2_weights), fc2_biases);
   // Convnet Model ends
 
   // loss
@@ -307,78 +330,99 @@ int main() {
   auto reduce_mean = ReduceMean(scope, sscewl.loss, {0});
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto regularization = AddN(scope,
-                             initializer_list<Input>{L2Loss(scope, fc1_weights),
-                                                     L2Loss(scope, fc1_biases),
-                                                     L2Loss(scope, fc2_weights),
-                                                     L2Loss(scope, fc2_biases)});
+  auto regularization =
+      AddN(scope, initializer_list<Input>{
+                      L2Loss(scope, fc1_weights), L2Loss(scope, fc1_biases),
+                      L2Loss(scope, fc2_weights), L2Loss(scope, fc2_biases)});
   LOG(INFO) << "Node building status: " << scope.status();
 
   float f1 = 5e-4;
-  auto loss = Add(scope, reduce_mean, 
-                          Multiply(scope, regularization, Const<float>(scope, {f1}))
-                 );
+  auto loss = Add(scope, reduce_mean,
+                  Multiply(scope, regularization, Const<float>(scope, {f1})));
   LOG(INFO) << "Node building status: " << scope.status();
 
   std::vector<Output> grad_outputs;
-  TF_CHECK_OK(AddSymbolicGradients(scope, {loss}, 
-                                   {conv1_weights, conv2_weights, fc1_weights, fc2_weights, 
-                                          conv1_biases, conv2_biases, fc1_biases, fc2_biases}, 
-                                   &grad_outputs));
+  TF_CHECK_OK(AddSymbolicGradients(
+      scope, {loss},
+      {conv1_weights, conv2_weights, fc1_weights, fc2_weights, conv1_biases,
+       conv2_biases, fc1_biases, fc2_biases},
+      &grad_outputs));
   LOG(INFO) << "Node building status: " << scope.status();
 
   // update the weights and bias using gradient descent
   auto ph_lr = Placeholder(scope, DT_FLOAT, Placeholder::Shape({}));
 
-  auto apply_conv1_weights = ApplyMomentum(scope, conv1_weights, accum_conv1_weights, ph_lr, grad_outputs[0], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_conv1_weights =
+      ApplyMomentum(scope, conv1_weights, accum_conv1_weights, ph_lr,
+                    grad_outputs[0], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_conv2_weights = ApplyMomentum(scope, conv2_weights, accum_conv2_weights, ph_lr, grad_outputs[1], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_conv2_weights =
+      ApplyMomentum(scope, conv2_weights, accum_conv2_weights, ph_lr,
+                    grad_outputs[1], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_fc1_weights = ApplyMomentum(scope, fc1_weights, accum_fc1_weights, ph_lr, grad_outputs[2], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_fc1_weights =
+      ApplyMomentum(scope, fc1_weights, accum_fc1_weights, ph_lr,
+                    grad_outputs[2], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_fc2_weights = ApplyMomentum(scope, fc2_weights, accum_fc2_weights, ph_lr, grad_outputs[3], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_fc2_weights =
+      ApplyMomentum(scope, fc2_weights, accum_fc2_weights, ph_lr,
+                    grad_outputs[3], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_conv1_biases = ApplyMomentum(scope, conv1_biases, accum_conv1_biases, ph_lr, grad_outputs[4], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_conv1_biases =
+      ApplyMomentum(scope, conv1_biases, accum_conv1_biases, ph_lr,
+                    grad_outputs[4], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_conv2_biases = ApplyMomentum(scope, conv2_biases, accum_conv2_biases, ph_lr, grad_outputs[5], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_conv2_biases =
+      ApplyMomentum(scope, conv2_biases, accum_conv2_biases, ph_lr,
+                    grad_outputs[5], Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_fc1_biases = ApplyMomentum(scope, fc1_biases, accum_fc1_biases, ph_lr, grad_outputs[6], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_fc1_biases =
+      ApplyMomentum(scope, fc1_biases, accum_fc1_biases, ph_lr, grad_outputs[6],
+                    Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
-  auto apply_fc2_biases = ApplyMomentum(scope, fc2_biases, accum_fc2_biases, ph_lr, grad_outputs[7], Cast(scope, MOMENTUM,  DT_FLOAT));
+  auto apply_fc2_biases =
+      ApplyMomentum(scope, fc2_biases, accum_fc2_biases, ph_lr, grad_outputs[7],
+                    Cast(scope, MOMENTUM, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
 
   int global_step = 0;
 
-  for(int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
+  for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
     // update when each epoch
-    float decayed_learning_rate = BASE_LEARNING_RATE * std::pow(DECAY_RATE, epoch);
+    float decayed_learning_rate =
+        BASE_LEARNING_RATE * std::pow(DECAY_RATE, epoch);
     Tensor lr_tensor(decayed_learning_rate);
 
-    for(int bidx = 0; bidx < BATCHES_PER_EPOCHS; bidx++) {
+    for (int bidx = 0; bidx < BATCHES_PER_EPOCHS; bidx++) {
       // Input X
       Tensor x_tensor;
-      CHECK(x_tensor.CopyFrom(inputs.Slice(bidx * BATCH_SIZE, (bidx + 1) * BATCH_SIZE), TensorShape({BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS})));
-      
+      CHECK(x_tensor.CopyFrom(
+          inputs.Slice(bidx * BATCH_SIZE, (bidx + 1) * BATCH_SIZE),
+          TensorShape({BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS})));
+
       // Labels
       Tensor y_tensor;
-      CHECK(y_tensor.CopyFrom(labels.Slice(bidx * BATCH_SIZE, (bidx + 1) * BATCH_SIZE), TensorShape({BATCH_SIZE})));
+      CHECK(y_tensor.CopyFrom(
+          labels.Slice(bidx * BATCH_SIZE, (bidx + 1) * BATCH_SIZE),
+          TensorShape({BATCH_SIZE})));
 
-      // Run 
+      // Run
       vector<Tensor> outputs;
-      TF_CHECK_OK(session.Run({{ph_inputs, x_tensor}, {ph_labels, y_tensor}, {ph_lr, lr_tensor}}, 
-                              {loss,
-                                  apply_conv1_weights, apply_conv2_weights, apply_fc1_weights, apply_fc2_weights,
-                                  apply_conv1_biases, apply_conv2_biases, apply_fc1_biases, apply_fc2_biases}, 
-                              {}, 
-                              &outputs));
+      TF_CHECK_OK(session.Run(
+          {{ph_inputs, x_tensor}, {ph_labels, y_tensor}, {ph_lr, lr_tensor}},
+          {loss, apply_conv1_weights, apply_conv2_weights, apply_fc1_weights,
+           apply_fc2_weights, apply_conv1_biases, apply_conv2_biases,
+           apply_fc1_biases, apply_fc2_biases},
+          {}, &outputs));
 
-      if(global_step % EVAL_FREQUENCY == 0) {
-        LOG(INFO) << "Print step: " << global_step << ", decayed_learning_rate: " << decayed_learning_rate << ", loss: " << outputs[0].DebugString();
+      if (global_step % EVAL_FREQUENCY == 0) {
+        LOG(INFO) << "Print step: " << global_step
+                  << ", decayed_learning_rate: " << decayed_learning_rate
+                  << ", loss: " << outputs[0].DebugString();
       }
 
       global_step++;
     }
-
   }
 
   return 0;

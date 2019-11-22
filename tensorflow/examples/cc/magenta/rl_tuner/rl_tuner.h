@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_RL_TUNER_H_
 #define TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_RL_TUNER_H_
 
-#include <vector>
 #include <tuple>
+#include <vector>
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -97,8 +97,9 @@ class RLTuner {
 
   Tensor x_tensor;
 
-  std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor,
-                         Tensor, Tensor, Tensor, Tensor, Tensor>> experience;
+  std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor,
+                         Tensor, Tensor, Tensor>>
+      experience;
 
  private:
   Status Init();
@@ -110,15 +111,10 @@ class RLTuner {
   Tensor PrimeInternalModels();
   Tensor PrimeInternalModel(const NoteRNN& q_network);
   double LinearAnnealing(int n, int total, double p_initial, double p_final);
-  void Store(const Tensor& observation,
-             const Tensor& state_h,
-             const Tensor& state_c,
-             const Tensor& action,
-             const Tensor& reward,
-             const Tensor& newobservation,
-             const Tensor& newstate_h,
-             const Tensor& newstate_c,
-             const Tensor& new_reward_state_h,
+  void Store(const Tensor& observation, const Tensor& state_h,
+             const Tensor& state_c, const Tensor& action, const Tensor& reward,
+             const Tensor& newobservation, const Tensor& newstate_h,
+             const Tensor& newstate_c, const Tensor& new_reward_state_h,
              const Tensor& new_reward_state_c);
 
   void ResetComposition();

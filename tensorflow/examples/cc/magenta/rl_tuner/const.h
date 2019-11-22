@@ -23,16 +23,16 @@ limitations under the License.
 // Adjustable parameters
 //
 
-#define NUM_UNIT 128             // HIDDEN_SIZE
+#define NUM_UNIT 128  // HIDDEN_SIZE
 // #define MINIBATCH_SIZE 32
-#define BATCH_SIZE 32            // BATCH_SIZE
+#define BATCH_SIZE 32  // BATCH_SIZE
 #define TRAINING_STEPS 100000
 
 //
 // Don't change below
 //
 
-#define TIME_LEN 1               // NUM_STEPS, Here, it is always 1
+#define TIME_LEN 1  // NUM_STEPS, Here, it is always 1
 
 // (DEFAULT_MAX_NOTE(84) - DEFAULT_MIN_NOTE(48) + NUM_SPECIAL_MELODY_EVENTS(2))
 #define INPUT_SIZE 38

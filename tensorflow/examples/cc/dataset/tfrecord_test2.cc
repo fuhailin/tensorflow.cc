@@ -17,11 +17,11 @@ limitations under the License.
 // Example for parsing tfrecord files in C++ using ops wrapper
 // Author: Rock Zhuang
 // Date  : Dec 26, 2018
-// 
+//
 
 #include "tensorflow/cc/client/client_session.h"
-#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 
 using namespace tensorflow;
 using namespace tensorflow::ops;
@@ -29,48 +29,63 @@ using namespace tensorflow::ops::internal;
 using namespace std;
 
 int main() {
-
   Scope root = Scope::NewRootScope();
 
   // TFRecordDataset Node
-  Tensor filenames("/tmp/test1.tfrecord"); // Check tfrecord_test.py which generates the tfrecord file
+  Tensor filenames("/tmp/test1.tfrecord");  // Check tfrecord_test.py which
+                                            // generates the tfrecord file
   Tensor compression_type("ZLIB");
   Tensor buffer_size((int64)1024);
-  
-  Output dataset_output = TFRecordDataset(root, filenames, compression_type, buffer_size);
-  Output iterator_output = Iterator(root, "iterator1", "", vector<tensorflow::DataType>({tensorflow::DT_STRING}), vector<tensorflow::PartialTensorShape>({{}}));
-  Operation make_iterator_op = MakeIterator(root, dataset_output, iterator_output);
-  auto iterator_get_next = IteratorGetNext(root, iterator_output, vector<tensorflow::DataType>({tensorflow::DT_STRING}), vector<tensorflow::PartialTensorShape>({{}}));
-  
+
+  Output dataset_output =
+      TFRecordDataset(root, filenames, compression_type, buffer_size);
+  Output iterator_output =
+      Iterator(root, "iterator1", "",
+               vector<tensorflow::DataType>({tensorflow::DT_STRING}),
+               vector<tensorflow::PartialTensorShape>({{}}));
+  Operation make_iterator_op =
+      MakeIterator(root, dataset_output, iterator_output);
+  auto iterator_get_next =
+      IteratorGetNext(root, iterator_output,
+                      vector<tensorflow::DataType>({tensorflow::DT_STRING}),
+                      vector<tensorflow::PartialTensorShape>({{}}));
+
   vector<Tensor> outputs;
   ClientSession session(root);
 
   // Run make_iterator_output first, then iterator_get_next_output
   TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
-  TF_CHECK_OK(session.Run({}, {dataset_output, iterator_output, iterator_get_next[0]}, {iterator_get_next.operation}, &outputs));
+  TF_CHECK_OK(
+      session.Run({}, {dataset_output, iterator_output, iterator_get_next[0]},
+                  {iterator_get_next.operation}, &outputs));
 
-  // LOG(INFO) << "Print: " << outputs[0].DebugString() << ", " << outputs[1].DebugString() << ", " << outputs[2].DebugString();
+  // LOG(INFO) << "Print: " << outputs[0].DebugString() << ", " <<
+  // outputs[1].DebugString() << ", " << outputs[2].DebugString();
 
   auto result = outputs[2].template scalar<string>()();
   LOG(INFO) << "Print: result: " << result;
 
   // Input for ParseExample
   int record_index = 0;
-  tensorflow::Tensor record_string(tensorflow::DT_STRING, tensorflow::TensorShape({3}));
+  tensorflow::Tensor record_string(tensorflow::DT_STRING,
+                                   tensorflow::TensorShape({3}));
   record_string.template vec<string>()(record_index++) = result;
 
   // Iterator get_next
-  while(session.Run({}, {iterator_get_next[0]}, {iterator_get_next.operation}, &outputs).ok()) {
+  while (session
+             .Run({}, {iterator_get_next[0]}, {iterator_get_next.operation},
+                  &outputs)
+             .ok()) {
     result = outputs[0].template scalar<string>()();
     record_string.template vec<string>()(record_index++) = result;
 
     LOG(INFO) << "Print: result: " << result;
   }
-  
+
   // ParseExample, which supports batch input
   const int batch_size = 3;
 
-  // Prepare inputs  
+  // Prepare inputs
   Tensor names(DT_STRING, TensorShape({batch_size}));
 
   vector<Output> sparse_keys;
@@ -85,11 +100,14 @@ int main() {
   sparse_types.push_back(DT_INT64);
   sparse_types.push_back(DT_STRING);
 
-  auto parse_example = ParseExample(root, record_string, names, InputList(sparse_keys), InputList(dense_keys), InputList(dense_defaults), sparse_types, dense_shapes);
+  auto parse_example = ParseExample(
+      root, record_string, names, InputList(sparse_keys), InputList(dense_keys),
+      InputList(dense_defaults), sparse_types, dense_shapes);
 
   // Run parse_example_output
   TF_CHECK_OK(session.Run(parse_example.sparse_values, &outputs));
-  LOG(INFO) << "Print parse_example: " << outputs[0].DebugString() << ", " << outputs[1].DebugString();
+  LOG(INFO) << "Print parse_example: " << outputs[0].DebugString() << ", "
+            << outputs[1].DebugString();
 
   return 0;
 }

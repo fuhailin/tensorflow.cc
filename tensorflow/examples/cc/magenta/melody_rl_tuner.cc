@@ -17,8 +17,6 @@ limitations under the License.
 // C++ implementation of Magenta rl_tuner module
 // Using reinforcement learning with RNN(LSTM)
 //
-// Code check supports: cpplint --linelength=120 xxx
-//
 // Author: Rock Zhuang
 // Date  : Jun 25, 2019
 //

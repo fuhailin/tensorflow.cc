@@ -14,14 +14,14 @@ limitations under the License.
 ==============================================================================*/
 
 //
-// Example of GeneratorDataset op with FUNCTION 
+// Example of GeneratorDataset op with FUNCTION
 // Author: Rock Zhuang
 // Date  : Jan 08, 2019
-// 
+//
 
 #include "tensorflow/cc/client/client_session.h"
-#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 
 using namespace tensorflow;
 using namespace tensorflow::ops;
@@ -109,37 +109,40 @@ int main() {
   (*final_fn.mutable_attr())["T"].set_type(DT_FLOAT);
 
   auto generator_dataset = ops::internal::GeneratorDataset(
-        root.WithOpName("GeneratorDataset"), 
-        std::initializer_list<Input>{x},
-        std::initializer_list<Input>{b},
-        std::initializer_list<Input>{},
-        init_fn,
-        next_fn,
-        final_fn,
-        {DT_FLOAT},
-        {{1}}
-        );
+      root.WithOpName("GeneratorDataset"), std::initializer_list<Input>{x},
+      std::initializer_list<Input>{b}, std::initializer_list<Input>{}, init_fn,
+      next_fn, final_fn, {DT_FLOAT}, {{1}});
 
   std::vector<tensorflow::Tensor> outputs;
   tensorflow::ClientSession session(root);
 
-  tensorflow::Tensor x_tensor1(tensorflow::DT_FLOAT, tensorflow::TensorShape({1}));
-  x_tensor1.vec<float>()(0) = 2; 
+  tensorflow::Tensor x_tensor1(tensorflow::DT_FLOAT,
+                               tensorflow::TensorShape({1}));
+  x_tensor1.vec<float>()(0) = 2;
 
-  tensorflow::Tensor b_tensor1(tensorflow::DT_FLOAT, tensorflow::TensorShape({1}));
-  b_tensor1.vec<float>()(0) = 3; 
+  tensorflow::Tensor b_tensor1(tensorflow::DT_FLOAT,
+                               tensorflow::TensorShape({1}));
+  b_tensor1.vec<float>()(0) = 3;
 
-  Output iterator_output = Iterator(root, "iterator1", "", std::initializer_list<DataType>{DT_FLOAT}, std::initializer_list<PartialTensorShape>{{}});
-  Operation make_iterator_op = MakeIterator(root, generator_dataset, iterator_output);
-  auto iterator_get_next = IteratorGetNext(root, iterator_output, std::initializer_list<DataType>{DT_FLOAT}, std::initializer_list<PartialTensorShape>{{}});
+  Output iterator_output =
+      Iterator(root, "iterator1", "", std::initializer_list<DataType>{DT_FLOAT},
+               std::initializer_list<PartialTensorShape>{{}});
+  Operation make_iterator_op =
+      MakeIterator(root, generator_dataset, iterator_output);
+  auto iterator_get_next = IteratorGetNext(
+      root, iterator_output, std::initializer_list<DataType>{DT_FLOAT},
+      std::initializer_list<PartialTensorShape>{{}});
 
   // Run make_iterator first
-  TF_CHECK_OK(session.Run({{x, x_tensor1}, {b, b_tensor1}}, {}, {make_iterator_op}, nullptr));
+  TF_CHECK_OK(session.Run({{x, x_tensor1}, {b, b_tensor1}}, {},
+                          {make_iterator_op}, nullptr));
   TF_CHECK_OK(session.Run({}, iterator_get_next.components, {}, &outputs));
   LOG(INFO) << "Print iterator_get_next, debug: " << outputs[0].DebugString();
 
-  for(int i = 0; i < 10; i++) {
-    TF_CHECK_OK(session.Run({{x, x_tensor1}, {b, outputs[0]}}, {}, {make_iterator_op}, nullptr)); // INIT will be invoked again
+  for (int i = 0; i < 10; i++) {
+    TF_CHECK_OK(session.Run({{x, x_tensor1}, {b, outputs[0]}}, {},
+                            {make_iterator_op},
+                            nullptr));  // INIT will be invoked again
     TF_CHECK_OK(session.Run({}, iterator_get_next.components, {}, &outputs));
     LOG(INFO) << "Print iterator_get_next, debug: " << outputs[0].DebugString();
   }

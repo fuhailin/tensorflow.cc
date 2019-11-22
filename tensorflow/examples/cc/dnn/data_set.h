@@ -1,10 +1,14 @@
+#include <iostream>
+#include <vector>
+
 using namespace std;
 
 // Meta data used to normalize the data set. Useful to
 // go back and forth between normalized data.
 class DataSetMetaData {
-friend class DataSet;
-private:
+  friend class DataSet;
+
+ private:
   float mean_km;
   float std_km;
   float mean_age;
@@ -13,17 +17,12 @@ private:
   float max_price;
 };
 
-enum class Fuel {
-    DIESEL,
-    GAZOLINE
-};
+enum class Fuel { DIESEL, GAZOLINE };
 
 class DataSet {
-public:
+ public:
   // Construct a data set from the given csv file path.
-  DataSet(string dir, string file_name) {
-    ReadCSVFile(dir, file_name);
-  }
+  DataSet(string dir, string file_name) { ReadCSVFile(dir, file_name); }
 
   // getters
   vector<float>& x() { return x_; }
@@ -40,7 +39,8 @@ public:
 
   // convert a price outputted by the DNN to a human price
   float output(float price);
-private:
+
+ private:
   DataSetMetaData data_set_metadata;
   vector<float> x_;
   vector<float> y_;

@@ -1,14 +1,16 @@
 #include "tensorflow/cc/client/client_session.h"
+#include "tensorflow/cc/framework/gradients.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/cc/framework/gradients.h"
 
 #include "data_set.h"
 
 //
-// Cloned from https://github.com/theflofly/dnn_tensorflow_cpp with blos post: https://matrices.io/
-// Rock Zhuang: I like to put it here as an example for training with tensorflow C++
-// 
+// Cloned from https://github.com/theflofly/dnn_tensorflow_cpp with blos post:
+//     https://matrices.io/
+// Rock Zhuang: I like to put it here as an example for
+// training with tensorflow C++
+//
 // Instructions:
 //  $ cp -r tensorflow/examples/cc/toydnn/data /tmp/
 //  $ bazel run -c opt //tensorflow/examples/cc/toydnn:toydnn
@@ -21,7 +23,7 @@ using namespace std;
 int main() {
   DataSet data_set("/tmp/data/", "normalized_car_features.csv");
   Tensor x_data(DataTypeToEnum<float>::v(),
-                TensorShape{static_cast<int>(data_set.x().size())/3, 3});
+                TensorShape{static_cast<int>(data_set.x().size()) / 3, 3});
   copy_n(data_set.x().begin(), data_set.x().size(),
          x_data.flat<float>().data());
 
@@ -61,52 +63,66 @@ int main() {
   auto layer_3 = Tanh(scope, Add(scope, MatMul(scope, layer_2, w3), b3));
 
   // regularization
-  auto regularization = AddN(scope,
-                             initializer_list<Input>{L2Loss(scope, w1),
-                                                     L2Loss(scope, w2),
-                                                     L2Loss(scope, w3)});
+  auto regularization =
+      AddN(scope, initializer_list<Input>{L2Loss(scope, w1), L2Loss(scope, w2),
+                                          L2Loss(scope, w3)});
 
   // loss calculation
-  auto loss = Add(scope,
-                  ReduceMean(scope, Square(scope, Sub(scope, layer_3, y)), {0, 1}),
-                  Mul(scope, Cast(scope, 0.01,  DT_FLOAT), regularization));
+  auto loss = Add(
+      scope, ReduceMean(scope, Square(scope, Sub(scope, layer_3, y)), {0, 1}),
+      Mul(scope, Cast(scope, 0.01, DT_FLOAT), regularization));
 
   // add the gradients operations to the graph
   std::vector<Output> grad_outputs;
-  TF_CHECK_OK(AddSymbolicGradients(scope, {loss}, {w1, w2, w3, b1, b2, b3}, &grad_outputs));
+  TF_CHECK_OK(AddSymbolicGradients(scope, {loss}, {w1, w2, w3, b1, b2, b3},
+                                   &grad_outputs));
 
   // update the weights and bias using gradient descent
-  auto apply_w1 = ApplyGradientDescent(scope, w1, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[0]});
-  auto apply_w2 = ApplyGradientDescent(scope, w2, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[1]});
-  auto apply_w3 = ApplyGradientDescent(scope, w3, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[2]});
-  auto apply_b1 = ApplyGradientDescent(scope, b1, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[3]});
-  auto apply_b2 = ApplyGradientDescent(scope, b2, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[4]});
-  auto apply_b3 = ApplyGradientDescent(scope, b3, Cast(scope, 0.01,  DT_FLOAT), {grad_outputs[5]});
+  auto apply_w1 = ApplyGradientDescent(scope, w1, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[0]});
+  auto apply_w2 = ApplyGradientDescent(scope, w2, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[1]});
+  auto apply_w3 = ApplyGradientDescent(scope, w3, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[2]});
+  auto apply_b1 = ApplyGradientDescent(scope, b1, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[3]});
+  auto apply_b2 = ApplyGradientDescent(scope, b2, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[4]});
+  auto apply_b3 = ApplyGradientDescent(scope, b3, Cast(scope, 0.01, DT_FLOAT),
+                                       {grad_outputs[5]});
 
   ClientSession session(scope);
   std::vector<Tensor> outputs;
-  
+
   // init the weights and biases by running the assigns nodes once
-  TF_CHECK_OK(session.Run({assign_w1, assign_w2, assign_w3, assign_b1, assign_b2, assign_b3}, nullptr));
-  
+  TF_CHECK_OK(session.Run(
+      {assign_w1, assign_w2, assign_w3, assign_b1, assign_b2, assign_b3},
+      nullptr));
+
   // training steps
   for (int i = 0; i < 5000; ++i) {
     if (i % 100 == 0) {
       TF_CHECK_OK(session.Run({{x, x_data}, {y, y_data}}, {loss}, &outputs));
-      std::cout << "Loss after " << i << " steps " << outputs[0].scalar<float>() << std::endl;
+      std::cout << "Loss after " << i << " steps " << outputs[0].scalar<float>()
+                << std::endl;
     }
     // nullptr because the output from the run is useless
-    TF_CHECK_OK(session.Run({{x, x_data}, {y, y_data}}, {apply_w1, apply_w2, apply_w3, apply_b1, apply_b2, apply_b3}, nullptr));
+    TF_CHECK_OK(session.Run(
+        {{x, x_data}, {y, y_data}},
+        {apply_w1, apply_w2, apply_w3, apply_b1, apply_b2, apply_b3}, nullptr));
   }
 
   // prediction using the trained neural net
-  TF_CHECK_OK(session.Run({{x, {data_set.input(110000.f, Fuel::DIESEL, 7.f)}}}, {layer_3}, &outputs));
+  TF_CHECK_OK(session.Run({{x, {data_set.input(110000.f, Fuel::DIESEL, 7.f)}}},
+                          {layer_3}, &outputs));
   cout << "DNN output: " << *outputs[0].scalar<float>().data() << endl;
-  std::cout << "Price predicted " << data_set.output(*outputs[0].scalar<float>().data()) << " euros" << std::endl;
+  std::cout << "Price predicted "
+            << data_set.output(*outputs[0].scalar<float>().data()) << " euros"
+            << std::endl;
 
   // saving the model
-  //GraphDef graph_def;
-  //TF_ASSERT_OK(scope.ToGraphDef(&graph_def));
+  // GraphDef graph_def;
+  // TF_ASSERT_OK(scope.ToGraphDef(&graph_def));
 
   return 0;
 }

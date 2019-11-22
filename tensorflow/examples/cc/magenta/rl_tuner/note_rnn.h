@@ -16,20 +16,20 @@ limitations under the License.
 #ifndef TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_NOTE_RNN_H_
 #define TENSORFLOW_EXAMPLES_CC_MAGENTA_RL_TUNER_NOTE_RNN_H_
 
-#include <string>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "tensorflow/cc/client/client_session.h"
-#include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/cc/framework/gradients.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
 #include "tensorflow/cc/ops/rnn_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/cc/training/queue_runner.h"
 #include "tensorflow/core/protobuf/queue_runner.pb.h"
-#include "tensorflow/cc/framework/gradients.h"
 
-using tensorflow::ops::internal::BlockLSTM;
 using tensorflow::ops::RNNSoftmaxLoss;
+using tensorflow::ops::internal::BlockLSTM;
 
 namespace tensorflow {
 

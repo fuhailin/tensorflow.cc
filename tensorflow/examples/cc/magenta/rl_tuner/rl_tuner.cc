@@ -21,6 +21,7 @@ limitations under the License.
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <experimental/algorithm>
 
 #include "tensorflow/examples/cc/magenta/rl_tuner/const.h"
 
@@ -337,14 +338,20 @@ void RLTuner::TrainingStep() {
 
       // radom samples
 
-#define ENABLE_CPP17 1  // need to add "copts = ["-std=c++17"]," in BUILD
-#ifdef ENABLE_CPP17
     std::vector<std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor,
                            Tensor, Tensor, Tensor, Tensor>>
         samples;
+
+// for C++17, enable "copts = ["-std=c++17"]," in BUILD
+#if __cplusplus >= 201703L
     std::sample(this->experience.begin(), this->experience.end(),
                 std::back_inserter(samples), BATCH_SIZE,
                 std::mt19937{std::random_device{}()});
+#else
+    std::experimental::sample(this->experience.begin(), this->experience.end(),
+                std::back_inserter(samples), BATCH_SIZE,
+                std::mt19937{std::random_device{}()});
+#endif
 
     // observation are in the shape of {TIME_LEN(1), BATCH_SIZE, INPUT_SIZE}
     // *state_* are in the shape of {BATCH_SIZE, NUM_UNIT}
@@ -397,11 +404,6 @@ void RLTuner::TrainingStep() {
       action_mask.SubSlice(index).unaligned_flat<float>() =
           reward.unaligned_flat<float>();
     }
-
-#else
-      // Not implemented yet...
-      // use rand function instead of C++17 std::sample
-#endif
 
     // Backprop
     vector<Tensor> outputs;

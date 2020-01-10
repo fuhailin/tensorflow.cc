@@ -234,7 +234,7 @@ static tensorflow::Status ParseExample(const tensorflow::Scope& scope,
 
   for (int i = 0; i < num_keys; ++i) {
     tensorflow::Tensor key(tensorflow::DT_STRING, tensorflow::TensorShape());
-    key.scalar<std::string>()() = tensorflow::strings::Printf("feature_%d", i);
+    key.scalar<tensorflow::tstring>()() = tensorflow::strings::Printf("feature_%d", i);
     switch (benchmark_type) {
       case kDense:
         dense_keys.emplace_back(Constant(scope.graph(), key));
@@ -348,19 +348,19 @@ int main() {
   LOG(INFO) << "Print: " << outputs[0].DebugString() << ", "
             << outputs[1].DebugString() << ", " << outputs[2].DebugString();
 
-  auto result = outputs[2].template scalar<std::string>()();
+  auto result = outputs[2].template scalar<tensorflow::tstring>()();
   LOG(INFO) << "Print: result: " << result;
 
   // Input for ParseExample
   int record_index = 0;
   tensorflow::Tensor record_string(tensorflow::DT_STRING,
                                    tensorflow::TensorShape({3}));
-  record_string.template vec<std::string>()(record_index++) = result;
+  record_string.template vec<tensorflow::tstring>()(record_index++) = result;
 
   // Iterator get_next
   while (session.Run({iterator_get_next_output}, &outputs).ok()) {
-    result = outputs[0].template scalar<std::string>()();
-    record_string.template vec<std::string>()(record_index++) = result;
+    result = outputs[0].template scalar<tensorflow::tstring>()();
+    record_string.template vec<tensorflow::tstring>()(record_index++) = result;
 
     LOG(INFO) << "Print: result: " << result;
   }

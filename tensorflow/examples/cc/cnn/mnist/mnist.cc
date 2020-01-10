@@ -110,13 +110,13 @@ int main() {
 
   // Read file and decompress data
   auto inputs_contents = ReadFile(
-      scope, Const<string>(scope, "/tmp/data/train-images-idx3-ubyte.gz",
+      scope, Const<tensorflow::tstring>(scope, "/tmp/data/train-images-idx3-ubyte.gz",
                            TensorShape({})));
   auto inputs_decode_compressed = DecodeCompressed(
       scope, inputs_contents, DecodeCompressed::CompressionType("GZIP"));
 
   auto labels_contents = ReadFile(
-      scope, Const<string>(scope, "/tmp/data/train-labels-idx1-ubyte.gz",
+      scope, Const<tensorflow::tstring>(scope, "/tmp/data/train-labels-idx1-ubyte.gz",
                            TensorShape({})));
   auto labels_decode_compressed = DecodeCompressed(
       scope, labels_contents, DecodeCompressed::CompressionType("GZIP"));
@@ -133,7 +133,7 @@ int main() {
       {}, {inputs_decode_compressed, labels_decode_compressed}, {}, &outputs);
   if (status.ok()) {
     // inputs
-    std::string inputs_str = outputs[0].scalar<string>()();
+    std::string inputs_str = outputs[0].scalar<tensorflow::tstring>()();
     const char* inputs_str_data = inputs_str.c_str();
 
     float* inputs_data = inputs.tensor<float, 4>().data();
@@ -147,7 +147,7 @@ int main() {
     }
 
     // labels
-    std::string labels_str = outputs[1].scalar<string>()();
+    std::string labels_str = outputs[1].scalar<tensorflow::tstring>()();
     const char* labels_str_data = labels_str.c_str();
 
     // for(int i = 0; i < NUM_IMAGES; i++) {

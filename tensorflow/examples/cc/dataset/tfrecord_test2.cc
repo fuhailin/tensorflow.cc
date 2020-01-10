@@ -62,22 +62,22 @@ int main() {
   // LOG(INFO) << "Print: " << outputs[0].DebugString() << ", " <<
   // outputs[1].DebugString() << ", " << outputs[2].DebugString();
 
-  auto result = outputs[2].template scalar<string>()();
+  auto result = outputs[2].template scalar<tstring>()();
   LOG(INFO) << "Print: result: " << result;
 
   // Input for ParseExample
   int record_index = 0;
   tensorflow::Tensor record_string(tensorflow::DT_STRING,
                                    tensorflow::TensorShape({3}));
-  record_string.template vec<string>()(record_index++) = result;
+  record_string.template vec<tstring>()(record_index++) = result;
 
   // Iterator get_next
   while (session
              .Run({}, {iterator_get_next[0]}, {iterator_get_next.operation},
                   &outputs)
              .ok()) {
-    result = outputs[0].template scalar<string>()();
-    record_string.template vec<string>()(record_index++) = result;
+    result = outputs[0].template scalar<tstring>()();
+    record_string.template vec<tstring>()(record_index++) = result;
 
     LOG(INFO) << "Print: result: " << result;
   }
@@ -94,8 +94,8 @@ int main() {
   vector<DataType> sparse_types;
   vector<PartialTensorShape> dense_shapes;
 
-  sparse_keys.push_back(Const<string>(root, "feature_0", TensorShape({})));
-  sparse_keys.push_back(Const<string>(root, "feature_1", TensorShape({})));
+  sparse_keys.push_back(Const<tstring>(root, "feature_0", TensorShape({})));
+  sparse_keys.push_back(Const<tstring>(root, "feature_1", TensorShape({})));
 
   sparse_types.push_back(DT_INT64);
   sparse_types.push_back(DT_STRING);

@@ -466,6 +466,8 @@ int main() {
   // SAVE checkpoint
   //
 
+  LOG(INFO) << "Save checkpoint";
+
   // Version 1
   auto save = Save(
       root,

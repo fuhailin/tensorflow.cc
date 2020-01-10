@@ -156,6 +156,7 @@ struct MklConvFwdParams {
     string name;
     mkldnn::algorithm alg;
     std::vector<float> param;
+    std::string partial_key;
   };
   std::vector<PostOpParam> post_op_params;
 
@@ -488,16 +489,21 @@ class MklConvFwdPrimitiveFactory : public MklPrimitiveFactory<float> {
 
     // Generate keys for post-ops
     for (auto const& post_op_param : convFwdDims.post_op_params) {
+      key_creator.AddAsKey(post_op_param.name);
       if (post_op_param.name == "activation") {
         DCHECK_EQ(post_op_param.param.size(), 3);
+        for (auto& param : post_op_param.param) {
+          key_creator.AddAsKey(param);
+        }
       } else if (post_op_param.name == "sum") {
         DCHECK_EQ(post_op_param.param.size(), 1);
-      } else if (post_op_param.name != "output_scale") {
+        for (auto& param : post_op_param.param) {
+          key_creator.AddAsKey(param);
+        }
+      } else if (post_op_param.name == "output_scale") {
+        key_creator.AddAsKey(post_op_param.partial_key);
+      } else {
         return string("not_a_key");
-      }
-      key_creator.AddAsKey(post_op_param.name);
-      for (auto& param : post_op_param.param) {
-        key_creator.AddAsKey(param);
       }
     }
 
@@ -946,11 +952,11 @@ class MklConvOp : public OpKernel {
     // NOTE: Fusion of BiasAdd is handled directly inside MklConvOp by
     // checking `fuse_biasadd_` flag.
     if (fuse_add_) {
-      params.post_op_params.push_back({"sum", ALGORITHM_UNDEF, {1.0}});
+      params.post_op_params.push_back({"sum", ALGORITHM_UNDEF, {1.0}, ""});
     }
     if (fuse_activation_) {
       params.post_op_params.push_back(
-          {"activation", activation_alg_, {1.0, relu_up_bound_, 0.0}});
+          {"activation", activation_alg_, {1.0, relu_up_bound_, 0.0}, ""});
     }
   }
 
@@ -1002,9 +1008,6 @@ class MklConvOp : public OpKernel {
       output_tf_shape = output_mkl_shape->GetTfShape();
     }
 
-    AllocateOutputSetMklShape(context, kOutputIndex_Dst, output_tensor,
-                              output_tf_shape, *output_mkl_shape, eager_mode);
-
     if (fuse_add_) {
       const Tensor& add_tensor = MklGetInput(context, kInputIndex_Add);
       MklDnnShape add_mkl_shape;
@@ -1012,11 +1015,13 @@ class MklConvOp : public OpKernel {
 
       // Check if reorder is needed
       if (add_mkl_shape == *output_mkl_shape) {
-        OP_REQUIRES(
-            context, (*output_tensor)->CopyFrom(add_tensor, output_tf_shape),
-            errors::Internal("MklConvOp: AddN fusion: Failed to forward "
-                             "input tensor to output"));
+        ForwardMklTensorInToOutWithMklShape(context, kInputIndex_Add,
+                                            kOutputIndex_Dst, add_mkl_shape);
+        *output_tensor = context->mutable_output(kOutputIndex_Dst);
       } else {
+        AllocateOutputSetMklShape(context, kOutputIndex_Dst, output_tensor,
+                                  output_tf_shape, *output_mkl_shape,
+                                  eager_mode);
 #ifdef ENABLE_MKLDNN_V1
         auto output_format_tag = MklTensorFormatToMklDnnDataFormat(
             output_mkl_shape->GetTfDataFormat());
@@ -1038,18 +1043,26 @@ class MklConvOp : public OpKernel {
             const_cast<Toutput*>(add_tensor.flat<Toutput>().data()));
         void* dst_buf =
             static_cast<void*>((*output_tensor)->flat<Ttemp_output>().data());
-        auto add = new MEMORY_CONSTRUCTOR(ADD_MD, this->cpu_engine_, add_buf);
-        auto dst = new MEMORY_CONSTRUCTOR(DST_MD, this->cpu_engine_, dst_buf);
+        fuse_add_src_.reset(
+            new MEMORY_CONSTRUCTOR(ADD_MD, this->cpu_engine_, add_buf));
+        fuse_add_dst_.reset(
+            new MEMORY_CONSTRUCTOR(DST_MD, this->cpu_engine_, dst_buf));
         auto reorder_desc =
             REORDER_PD_CONSTRUCTOR(ADD_MD, DST_MD, this->cpu_engine_);
-        CreateAndExecuteReorder(reorder_desc, *add, *dst, this->cpu_engine_);
+        CreateAndExecuteReorder(reorder_desc, *fuse_add_src_, *fuse_add_dst_,
+                                this->cpu_engine_);
       }
+    } else {
+      AllocateOutputSetMklShape(context, kOutputIndex_Dst, output_tensor,
+                                output_tf_shape, *output_mkl_shape, eager_mode);
     }
   }
 
   engine cpu_engine_ = engine(ENGINE_CPU, 0);
 
  private:
+  std::shared_ptr<mkldnn::memory> fuse_add_src_;
+  std::shared_ptr<mkldnn::memory> fuse_add_dst_;
   std::vector<int32> strides_;
   std::vector<int32> dilations_;
   std::vector<Tpadding> padding_list_;
@@ -1300,7 +1313,7 @@ class MklConvOp : public OpKernel {
         *cached_filter_md_ptensor_.AccessTensor(context);
 
 // Check if the memory descriptor of the cached weights is same as
-// filter_md. If so, we can used the cached weights; otherwise
+// filter_md. If so, we can use the cached weights; otherwise
 // return NULL.
 #ifdef ENABLE_MKLDNN_V1
     if (cached_filter_md.scalar<int64>().size() &&
@@ -1348,7 +1361,7 @@ class MklFusedConvOp
     } else if (fused_ops == std::vector<string>{"Relu6"}) {
       this->set_fuse_activation(true, ALGORITHM::eltwise_bounded_relu, 6.0);
     } else if (fused_ops == std::vector<string>{"Elu"}) {
-      this->set_fuse_activation(true, ALGORITHM::eltwise_elu);
+      this->set_fuse_activation(true, ALGORITHM::eltwise_elu, 1.0);
     } else if (fused_ops == std::vector<string>{"BiasAdd", "Relu"}) {
       this->set_fuse_biasadd(true);
       this->set_fuse_activation(true, ALGORITHM::eltwise_relu);
@@ -1363,7 +1376,7 @@ class MklFusedConvOp
                       "Fused Conv2D must have one extra argument: bias."));
     } else if (fused_ops == std::vector<string>{"BiasAdd", "Elu"}) {
       this->set_fuse_biasadd(true);
-      this->set_fuse_activation(true, ALGORITHM::eltwise_elu);
+      this->set_fuse_activation(true, ALGORITHM::eltwise_elu, 1.0);
       OP_REQUIRES(context, num_args == 1,
                   errors::InvalidArgument(
                       "Fused Conv2D must have one extra argument: bias."));
@@ -1393,7 +1406,7 @@ class MklFusedConvOp
     } else if (fused_ops == std::vector<string>{"BiasAdd", "Add", "Elu"}) {
       this->set_fuse_biasadd(true);
       this->set_fuse_add(true);
-      this->set_fuse_activation(true, ALGORITHM::eltwise_elu);
+      this->set_fuse_activation(true, ALGORITHM::eltwise_elu, 1.0);
       OP_REQUIRES(
           context, num_args == 2,
           errors::InvalidArgument(
@@ -1557,14 +1570,32 @@ class MklQuantizedConv2DOp
         scales[i] = int_output_limit * float_input_range * float_filter_range /
                     (int_const_scale_limit * float_output_range);
       }
+      // we are creating a partial key here to use with primitive key caching to
+      // improve key creation performance. Instead of using actual values we are
+      // using the pointers for min/max_filter_vector, and this works since the
+      // filter vector here is a constant.
+      FactoryKeyCreator param_key;
+      param_key.AddAsKey<float>(min_input);
+      param_key.AddAsKey<float>(max_input);
+      param_key.AddAsKey<float>(min_freezed_output);
+      param_key.AddAsKey<float>(max_freezed_output);
+      param_key.AddAsKey<const Tensor*>(&min_filter_vector);
+      param_key.AddAsKey<const Tensor*>(&max_filter_vector);
       params.post_op_params.push_back(
-          {"output_scale", ALGORITHM_UNDEF, scales});
+          {"output_scale", ALGORITHM_UNDEF, scales, param_key.GetKey()});
     }
   }
 
   Tbias* GetBiasHandle(OpKernelContext* context,
                        std::shared_ptr<ConvFwdPd>& conv_fwd_pd,
                        const Tensor& bias_tensor) override {
+    if (!bias_enabled) {
+      return nullptr;
+    }
+    if (std::is_same<Tbias, qint32>::value) {
+      return static_cast<Tbias*>(
+          const_cast<Tbias*>(bias_tensor.flat<Tbias>().data()));
+    }
     int bias_index_offset;
     bias_index_offset = bias_enabled ? 1 : 0;
 
@@ -1577,65 +1608,69 @@ class MklQuantizedConv2DOp
     const float* min_filter = min_filter_vector.flat<float>().data();
     const float* max_filter = max_filter_vector.flat<float>().data();
 
-    std::vector<mkldnn::primitive> net;
-    if (bias_enabled) {
-      if (std::is_same<Tbias, qint32>::value) {
-        return static_cast<Tbias*>(
-            const_cast<Tbias*>(bias_tensor.flat<Tbias>().data()));
+    const float int_const_scale_limit =
+        (std::is_same<Tinput, quint8>::value) ? 255.0 * 127.0 : 127.0 * 127.0;
+    // Re-scale bias if either of following 2 conditions are met:
+    // 1. Bias is not const;
+    // 2. Bias is const, but bias cache is empty (first iteration).
+
+    size_t depth = min_filter_vector.NumElements();
+    bool scales_are_valid = (depth == scales_.size());
+    scales_.resize(depth);
+    for (size_t i = 0; i < depth; ++i) {
+      float tmp_scale =
+          int_const_scale_limit /
+          (std::max(std::abs(max_input), std::abs(min_input)) *
+           std::max(std::abs(max_filter[i]), std::abs(min_filter[i])));
+      if (scales_are_valid && std::abs(tmp_scale - scales_[i]) > 1e-6) {
+        scales_are_valid = false;
+      }
+      scales_[i] = tmp_scale;
+    }
+    if (!is_bias_const_ || IsBiasCacheEmpty(context) || !scales_are_valid) {
+      mkldnn::primitive_attr bias_attr;
+      if (depth == 1) {
+        bias_attr.set_output_scales(0, scales_);
+      } else {
+        bias_attr.set_output_scales(1, scales_);
       }
 
-      const float int_const_scale_limit =
-          (std::is_same<Tinput, quint8>::value) ? 255.0 * 127.0 : 127.0 * 127.0;
-      // Re-scale bias if either of following 2 conditions are met:
-      // 1. Bias is not const;
-      // 2. Bias is const, but bias cache is empty (first iteration).
-
-      // TODO(intel-tf): Re-enable bias caching. Currently, the graph obtained
-      // after quantize_graph.py does not run with correct accuracy with this
-      // feature enabled.
-      is_bias_const_ = false;
-      if (!is_bias_const_ || IsBiasCacheEmpty(context)) {
-        size_t depth = min_filter_vector.NumElements();
-        std::vector<float> scales(depth);
-        for (size_t i = 0; i < depth; ++i) {
-          scales[i] =
-              int_const_scale_limit /
-              (std::max(std::abs(max_input), std::abs(min_input)) *
-               std::max(std::abs(max_filter[i]), std::abs(min_filter[i])));
-        }
-        mkldnn::primitive_attr bias_attr;
-        if (depth == 1) {
-          bias_attr.set_output_scales(0, scales);
-        } else {
-          bias_attr.set_output_scales(1, scales);
-        }
-
-        auto bias_md =
-            MEMORY_PD_CONSTRUCTOR(static_cast<int>(bias_tensor.NumElements()),
-                                  Tbias, x, this->cpu_engine_);
-        void* bias_buf = static_cast<void*>(
-            const_cast<Tbias*>(bias_tensor.flat<Tbias>().data()));
+      auto bias_md =
+          MEMORY_PD_CONSTRUCTOR(static_cast<int>(bias_tensor.NumElements()),
+                                Tbias, x, this->cpu_engine_);
+      void* bias_buf = static_cast<void*>(
+          const_cast<Tbias*>(bias_tensor.flat<Tbias>().data()));
+      if (!input_bias_) {
         input_bias_ =
             new MEMORY_CONSTRUCTOR(bias_md, this->cpu_engine_, bias_buf);
-        scaled_bias_ = new MEMORY_CONSTRUCTOR_WITHOUT_DATA(
-            conv_fwd_pd->PRIMITIVE_DESC_BIAS, this->cpu_engine_);
-        auto reorder_desc = REORDER_PD_CONSTRUCTOR_WITH_ATTR(
-            input_bias_->GET_DESC, scaled_bias_->GET_DESC, this->cpu_engine_,
-            bias_attr);
-        CreateAndExecuteReorder(reorder_desc, *input_bias_, *scaled_bias_,
-                                this->cpu_engine_);
-
-        Tbias* bias_data =
-            reinterpret_cast<Tbias*>(scaled_bias_->get_data_handle());
-        if (is_bias_const_)
-          CacheBias(context, conv_fwd_pd, bias_data, scaled_bias_);
-
-        return bias_data;
+      } else {
+        input_bias_->set_data_handle(bias_buf);
       }
-      return GetCachedBias(context);
-    } else {
-      return nullptr;
+
+      if (!scaled_bias_buf_)
+        AllocTmpBuffer<Tbias>(context, &scaled_bias_tensor_,
+                              conv_fwd_pd->bias_primitive_desc(),
+                              &scaled_bias_buf_);
+      if (!scaled_bias_) {
+        scaled_bias_ = new MEMORY_CONSTRUCTOR(bias_md, this->cpu_engine_,
+                                              scaled_bias_buf_);
+      } else {
+        scaled_bias_->set_data_handle(scaled_bias_buf_);
+      }
+      auto reorder_desc = REORDER_PD_CONSTRUCTOR_WITH_ATTR(
+          input_bias_->GET_DESC, scaled_bias_->GET_DESC, this->cpu_engine_,
+          bias_attr);
+      CreateAndExecuteReorder(reorder_desc, *input_bias_, *scaled_bias_,
+                              this->cpu_engine_);
+
+      Tbias* bias_data =
+          reinterpret_cast<Tbias*>(scaled_bias_->get_data_handle());
+      if (is_bias_const_)
+        CacheBias(context, conv_fwd_pd, bias_data, scaled_bias_);
+
+      return bias_data;
     }
+    return GetCachedBias(context);
   }
 
   bool is_bias_const_;
@@ -1644,7 +1679,11 @@ class MklQuantizedConv2DOp
   memory* input_bias_ = nullptr;
   memory* scaled_bias_ = nullptr;
 
+  Tensor scaled_bias_tensor_;
+  void* scaled_bias_buf_ = nullptr;
+
  private:
+  std::vector<float> scales_;
   mutex bias_cache_mu_;
   // Allocate persistent tensors for cached bias data and
   // cached bias memory descriptor (data format)
@@ -1721,7 +1760,7 @@ class MklQuantizedConv2DReluOp
                          bias_enabled,
                          is_depthwise>::ExtendConvFwdParams(context, params);
     params.post_op_params.push_back(
-        {"activation", ALGORITHM::eltwise_relu, {1.0, 0.0, 0.0}});
+        {"activation", ALGORITHM::eltwise_relu, {1.0, 0.0, 0.0}, ""});
   }
 };
 
@@ -1731,17 +1770,7 @@ class MklQuantizedConv2DSumReluOp
     : public MklQuantizedConv2DOp<Device, Tinput, Tbias, Toutput, Ttemp_output,
                                   bias_enabled, is_depthwise> {
  public:
-  virtual ~MklQuantizedConv2DSumReluOp() {
-    if (this->summand_ != nullptr) {
-      delete this->summand_;
-      summand_ = nullptr;
-    }
-
-    if (this->dst_ != nullptr) {
-      delete this->dst_;
-      dst_ = nullptr;
-    }
-  }
+  virtual ~MklQuantizedConv2DSumReluOp() {}
 
   explicit MklQuantizedConv2DSumReluOp(OpKernelConstruction* context)
       : MklQuantizedConv2DOp<Device, Tinput, Tbias, Toutput, Ttemp_output,
@@ -1779,17 +1808,18 @@ class MklQuantizedConv2DSumReluOp
       // If it is not then  it is DT_INT8 and is scaled appropriately.
       if (summand_type == DT_QUINT8)
         params.post_op_params.push_back(
-            {"sum", ALGORITHM_UNDEF, {scale_summand / scale_output}});
+            {"sum", ALGORITHM_UNDEF, {scale_summand / scale_output}, ""});
       else
         params.post_op_params.push_back(
             {"sum",
              ALGORITHM_UNDEF,
-             {255.0f * scale_summand / (scale_output * 127.0f)}});
+             {255.0f * scale_summand / (scale_output * 127.0f)},
+             ""});
     } else {
-      params.post_op_params.push_back({"sum", ALGORITHM_UNDEF, {1.0}});
+      params.post_op_params.push_back({"sum", ALGORITHM_UNDEF, {1.0}, ""});
     }
     params.post_op_params.push_back(
-        {"activation", ALGORITHM::eltwise_relu, {1.0, 0.0, 0.0}});
+        {"activation", ALGORITHM::eltwise_relu, {1.0, 0.0, 0.0}, ""});
   }
 
   void AllocateOutputTensor(OpKernelContext* context,
@@ -1879,18 +1909,18 @@ class MklQuantizedConv2DSumReluOp
         static_cast<void*>(const_cast<Tbias*>(summand.flat<Tbias>().data()));
     void* dst_buf =
         static_cast<void*>((*output_tensor)->flat<Ttemp_output>().data());
-    summand_ =
-        new MEMORY_CONSTRUCTOR(SUMMAND_MD, this->cpu_engine_, summand_buf);
-    dst_ = new MEMORY_CONSTRUCTOR(conv_prim_desc.PRIMITIVE_DESC_DST,
-                                  this->cpu_engine_, dst_buf);
+    summand_.reset(
+        new MEMORY_CONSTRUCTOR(SUMMAND_MD, this->cpu_engine_, summand_buf));
+    dst_.reset(new MEMORY_CONSTRUCTOR(conv_prim_desc.PRIMITIVE_DESC_DST,
+                                      this->cpu_engine_, dst_buf));
     auto reorder_desc = REORDER_PD_CONSTRUCTOR_WITH_ATTR(
         SUMMAND_MD, conv_prim_desc.PRIMITIVE_DESC_DST, this->cpu_engine_,
         reorder_attr);
     CreateAndExecuteReorder(reorder_desc, *summand_, *dst_, this->cpu_engine_);
   }
 
-  memory* summand_ = nullptr;
-  memory* dst_ = nullptr;
+  std::shared_ptr<mkldnn::memory> summand_;
+  std::shared_ptr<mkldnn::memory> dst_;
 };
 
 // INT8 kernel registration

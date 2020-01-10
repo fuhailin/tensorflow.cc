@@ -137,12 +137,23 @@ TensorStorageType SelectBestStorageType(const CLContext& context,
       return GetBestTypeAfterTextureArray();
     }
   };
+  auto GetBestTypeAfterTexture3D = [&]() {
+    if (CanCreateTensorWithShape(
+            context, device, shape,
+            TensorDescriptor{data_type, TensorStorageType::TEXTURE_2D})) {
+      return TensorStorageType::TEXTURE_2D;
+    } else {
+      return GetBestTypeAfterTexture2D();
+    }
+  };
   switch (desired) {
     case TensorStorageType::TEXTURE_2D:
     case TensorStorageType::SINGLE_TEXTURE_2D:
       return GetBestTypeAfterTexture2D();
     case TensorStorageType::TEXTURE_ARRAY:
       return GetBestTypeAfterTextureArray();
+    case TensorStorageType::TEXTURE_3D:
+      return GetBestTypeAfterTexture3D();
     case TensorStorageType::IMAGE_BUFFER:
     case TensorStorageType::BUFFER:
       return TensorStorageType::BUFFER;
@@ -305,31 +316,53 @@ Status InferenceContext::ConvertOperations(
 
     OperationDef op_def;
     op_def.precision = precision_;
-    op_def.batch_support = outputs[0]->tensor.shape.b != 1;
     for (int j = 0; j < inputs.size(); ++j) {
+      op_def.batch_support =
+          op_def.batch_support || inputs[j]->tensor.shape.b != 1;
       op_def.src_tensors.push_back(
           tensor_reserver_.Get(inputs[j]->id).descriptor);
     }
     for (int j = 0; j < outputs.size(); ++j) {
+      op_def.batch_support =
+          op_def.batch_support || outputs[j]->tensor.shape.b != 1;
       op_def.dst_tensors.push_back(
           tensor_reserver_.Get(outputs[j]->id).descriptor);
     }
-    std::unique_ptr<GPUOperation> gpu_op;
+    GPUOperationsSubgraph gpu_subgraph;
     RETURN_IF_ERROR(GPUOperationFromNode(creation_context, op_def, hints,
-                                         inputs, outputs, node, &gpu_op));
-    CLNode cl_node;
-    cl_node.operations.push_back(std::move(gpu_op));
-    cl_node.ranges.push_back(int2(0, static_cast<int>(inputs.size())));
-    cl_node.inputs.resize(inputs.size());
-    for (int j = 0; j < inputs.size(); ++j) {
-      cl_node.inputs[j] = inputs[j]->id;
+                                         inputs, outputs, node, &gpu_subgraph));
+    std::unordered_map<int, ValueId> mapping_to_global_ids;
+    for (int j = 0; j < gpu_subgraph.new_tensors.size(); ++j) {
+      const auto& t = gpu_subgraph.new_tensors[j];
+      auto global_id = tensor_reserver_.Add({t.first, t.second});
+      mapping_to_global_ids[j] = global_id;
     }
-    cl_node.outputs.resize(outputs.size());
-    for (int j = 0; j < outputs.size(); ++j) {
-      cl_node.outputs[j] = outputs[j]->id;
+    for (auto& gpu_op : gpu_subgraph.operations) {
+      CLNode cl_node;
+      cl_node.operations.push_back(std::move(gpu_op.operation));
+      cl_node.ranges.push_back(
+          int2(0, static_cast<int>(gpu_op.input_ids.size())));
+      cl_node.inputs.resize(gpu_op.input_ids.size());
+      for (int j = 0; j < gpu_op.input_ids.size(); ++j) {
+        int id = gpu_op.input_ids[j];
+        if (id >= 0) {
+          cl_node.inputs[j] = inputs[id]->id;
+        } else {
+          cl_node.inputs[j] = mapping_to_global_ids[-(id + 1)];
+        }
+      }
+      cl_node.outputs.resize(gpu_op.output_ids.size());
+      for (int j = 0; j < gpu_op.output_ids.size(); ++j) {
+        int id = gpu_op.output_ids[j];
+        if (id >= 0) {
+          cl_node.outputs[j] = outputs[id]->id;
+        } else {
+          cl_node.outputs[j] = mapping_to_global_ids[-(id + 1)];
+        }
+      }
+      cl_node.name = node.operation.type + " " + std::to_string(node.id);
+      nodes_.push_back(std::move(cl_node));
     }
-    cl_node.name = node.operation.type + " " + std::to_string(node.id);
-    nodes_.push_back(std::move(cl_node));
   }
 
   return OkStatus();
@@ -366,6 +399,13 @@ void InferenceContext::Merge() {
         dynamic_cast<ElementwiseOperation*>(linkable_node.operations[0].get());
     if (!elementwise || linkable_node.outputs.size() != 1 ||
         !IsReady(ready_tensors, linkable_node)) {
+      continue;
+    }
+    const auto& original_dst_def =
+        node.operations[0]->GetDefinition().dst_tensors[0];
+    const auto& link_dst_def =
+        linkable_node.operations[0]->GetDefinition().dst_tensors[0];
+    if (original_dst_def != link_dst_def) {
       continue;
     }
     MergeCLNodes(&linkable_node, &node);

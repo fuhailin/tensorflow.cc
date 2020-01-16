@@ -42,8 +42,64 @@ std::string DetailedDebugString(const Tensor& tensor) {
                          " values: ", tensor.SummarizeValue(-1, true), ">");
 }
 
+#ifdef TESTING
+void test(const Scope& scope) {
+  // Test SigmoidCrossEntropyWithLogits
+  {
+    // cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    // logits = tf.constant([[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
+    // labels = tf.ones_like(logits)
+    // ce = cross_entropy(labels, logits)
+    // print('ce: ', ce)
+
+    auto logits = Const(scope, {{-1.0, 1.0, 1.0}, {1.0, 1.0, 1.0}});
+    auto ones_like = OnesLike(scope, logits);
+    auto scel = SigmoidCrossEntropyWithLogits(scope, ones_like, logits);
+    auto result = ReduceMean(scope, scel, {0, 1});
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status = session.Run({}, {result}, {}, &outputs);
+
+    LOG(INFO) << "Print: SigmoidCrossEntropyWithLogits result: "
+              << outputs[0].DebugString();
+  }
+}
+#endif
+
+static Output DiscriminatorLoss(const Scope& scope, const Input& real_output,
+                                const Input& fake_output) {
+  auto real_loss =
+      ReduceMean(scope,
+                 SigmoidCrossEntropyWithLogits(
+                     scope, OnesLike(scope, real_output), real_output),
+                 {0, 1});
+  auto fake_loss =
+      ReduceMean(scope,
+                 SigmoidCrossEntropyWithLogits(
+                     scope, OnesLike(scope, fake_output), fake_output),
+                 {0, 1});
+
+  return Add(scope, real_loss, fake_loss);
+}
+
+static Output GeneratorLoss(const Scope& scope, const Input& fake_output) {
+  auto fake_loss =
+      ReduceMean(scope,
+                 SigmoidCrossEntropyWithLogits(
+                     scope, OnesLike(scope, fake_output), fake_output),
+                 {0, 1});
+
+  return fake_loss;
+}
+
 int main() {
   Scope scope = Scope::NewRootScope();
+
+#ifdef TESTING
+  test(scope);
+#endif
 
   //
   // Parse images files into tensors
@@ -128,14 +184,13 @@ int main() {
       IteratorGetNext(scope, iterator_output, vector<DataType>({DT_FLOAT}),
                       vector<PartialTensorShape>({{}}));
 
+#ifdef VERBOSE
   // Session
   // Note that ClientSession can extend graph before running, Session cannot.
   vector<Tensor> dataset_outputs;
 
   // Run make_iterator_output first
   TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
-
-#ifdef VERBOSE
   while (session.Run({}, iterator_get_next.components, &dataset_outputs).ok()) {
     LOG(INFO) << "Print dataset_outputs: " << dataset_outputs[0].DebugString();
   }
@@ -145,34 +200,212 @@ int main() {
   // generator and discriminator
   //
 
+  //
   // Test models
-  auto generator = Generator(scope, 1);
-  auto discriminator = Discriminator(scope, 1);
+  auto test_generator = Generator(scope, 1);
+  auto test_discriminator = Discriminator(scope, test_generator, 1);
 
   // Initialize variables
-  TF_CHECK_OK(session.Run({generator.assign_w1, generator.assign_filter,
-                           generator.assign_filter2, generator.assign_filter3},
-                          nullptr));
   TF_CHECK_OK(session.Run(
-      {discriminator.assign_conv1_weights, discriminator.assign_conv1_biases,
-       discriminator.assign_conv2_weights, discriminator.assign_conv2_biases,
-       discriminator.assign_fc1_weights, discriminator.assign_fc1_biases},
+      {test_generator.assign_w1, test_generator.assign_filter,
+       test_generator.assign_filter2, test_generator.assign_filter3},
       nullptr));
-  TF_CHECK_OK(session.Run({discriminator.assign_accum_conv1_weights,
-                           discriminator.assign_accum_conv1_biases,
-                           discriminator.assign_accum_conv2_weights,
-                           discriminator.assign_accum_conv2_biases,
-                           discriminator.assign_accum_fc1_weights,
-                           discriminator.assign_accum_fc1_biases},
+  TF_CHECK_OK(session.Run({test_discriminator.assign_conv1_weights,
+                           test_discriminator.assign_conv1_biases,
+                           test_discriminator.assign_conv2_weights,
+                           test_discriminator.assign_conv2_biases,
+                           test_discriminator.assign_fc1_weights,
+                           test_discriminator.assign_fc1_biases},
+                          nullptr));
+  TF_CHECK_OK(session.Run({test_discriminator.assign_accum_conv1_weights,
+                           test_discriminator.assign_accum_conv1_biases,
+                           test_discriminator.assign_accum_conv2_weights,
+                           test_discriminator.assign_accum_conv2_biases,
+                           test_discriminator.assign_accum_fc1_weights,
+                           test_discriminator.assign_accum_fc1_biases},
                           nullptr));
 
-  // Run
-  TF_CHECK_OK(session.Run({{}}, {generator}, &outputs));
-  LOG(INFO) << "Print generator output 0: " << outputs[0].DebugString();
+  // Run Test
+  // TF_CHECK_OK(session.Run({{}}, {test_generator}, &outputs));
+  // LOG(INFO) << "Print generator output 0: " << outputs[0].DebugString();
 
-  TF_CHECK_OK(session.Run({{discriminator.ph_inputs, outputs[0]}},
-                          {discriminator}, &outputs));
+  TF_CHECK_OK(session.Run({}, {test_generator, test_discriminator}, &outputs));
   LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
+  LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
+
+  //
+  // Train models
+  auto generated_images = Generator(scope, BATCH_SIZE);
+  auto real_output =
+      Discriminator(scope, iterator_get_next.components[0], BATCH_SIZE);
+  auto fake_output = Discriminator(scope, generated_images, BATCH_SIZE);
+  //
+  auto gen_loss = GeneratorLoss(scope, fake_output);
+  auto disc_loss = DiscriminatorLoss(scope, real_output, fake_output);
+
+  // Gradient
+  std::vector<Output> grad_outputs_gen;
+  TF_CHECK_OK(AddSymbolicGradients(
+      scope, {gen_loss},
+      {fake_output.conv1_weights, fake_output.conv2_weights,
+       fake_output.fc1_weights, fake_output.conv1_biases,
+       fake_output.conv2_biases, fake_output.fc1_biases},
+      &grad_outputs_gen));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  std::vector<Output> grad_outputs_disc;
+  TF_CHECK_OK(AddSymbolicGradients(
+      scope, {disc_loss},
+      {real_output.conv1_weights, real_output.conv2_weights,
+       real_output.fc1_weights, real_output.conv1_biases,
+       real_output.conv2_biases, real_output.fc1_biases},
+      &grad_outputs_disc));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  // update the weights and bias using gradient descent
+  // generator
+  auto ph_lr = Placeholder(scope, DT_FLOAT, Placeholder::Shape({}));
+
+  // TODO(Rock): use ApplyAdam
+  auto apply_conv1_weights_gen = ApplyMomentum(
+      scope, fake_output.conv1_weights, fake_output.accum_conv1_weights, ph_lr,
+      grad_outputs_gen[0], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_conv2_weights_gen = ApplyMomentum(
+      scope, fake_output.conv2_weights, fake_output.accum_conv2_weights, ph_lr,
+      grad_outputs_gen[1], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_fc1_weights_gen = ApplyMomentum(
+      scope, fake_output.fc1_weights, fake_output.accum_fc1_weights, ph_lr,
+      grad_outputs_gen[2], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto apply_conv1_biases_gen = ApplyMomentum(
+      scope, fake_output.conv1_biases, fake_output.accum_conv1_biases, ph_lr,
+      grad_outputs_gen[3], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_conv2_biases_gen = ApplyMomentum(
+      scope, fake_output.conv2_biases, fake_output.accum_conv2_biases, ph_lr,
+      grad_outputs_gen[4], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto apply_fc1_biases_gen = ApplyMomentum(
+      scope, fake_output.fc1_biases, fake_output.accum_fc1_biases, ph_lr,
+      grad_outputs_gen[5], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  // discriminator
+  auto apply_conv1_weights_disc = ApplyMomentum(
+      scope, real_output.conv1_weights, real_output.accum_conv1_weights, ph_lr,
+      grad_outputs_disc[0], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_conv2_weights_disc = ApplyMomentum(
+      scope, real_output.conv2_weights, real_output.accum_conv2_weights, ph_lr,
+      grad_outputs_disc[1], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_fc1_weights_disc = ApplyMomentum(
+      scope, real_output.fc1_weights, real_output.accum_fc1_weights, ph_lr,
+      grad_outputs_disc[2], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto apply_conv1_biases_disc = ApplyMomentum(
+      scope, real_output.conv1_biases, real_output.accum_conv1_biases, ph_lr,
+      grad_outputs_disc[3], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+  auto apply_conv2_biases_disc = ApplyMomentum(
+      scope, real_output.conv2_biases, real_output.accum_conv2_biases, ph_lr,
+      grad_outputs_disc[4], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto apply_fc1_biases_disc = ApplyMomentum(
+      scope, real_output.fc1_biases, real_output.accum_fc1_biases, ph_lr,
+      grad_outputs_disc[5], Cast(scope, MOMENTUM, DT_FLOAT));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  // Initialize variables
+  TF_CHECK_OK(session.Run(
+      {generated_images.assign_w1, generated_images.assign_filter,
+       generated_images.assign_filter2, generated_images.assign_filter3},
+      nullptr));
+  TF_CHECK_OK(session.Run(
+      {real_output.assign_conv1_weights, real_output.assign_conv1_biases,
+       real_output.assign_conv2_weights, real_output.assign_conv2_biases,
+       real_output.assign_fc1_weights, real_output.assign_fc1_biases,
+       real_output.assign_accum_conv1_weights,
+       real_output.assign_accum_conv1_biases,
+       real_output.assign_accum_conv2_weights,
+       real_output.assign_accum_conv2_biases,
+       real_output.assign_accum_fc1_weights,
+       real_output.assign_accum_fc1_biases},
+      nullptr));
+  TF_CHECK_OK(session.Run(
+      {fake_output.assign_conv1_weights, fake_output.assign_conv1_biases,
+       fake_output.assign_conv2_weights, fake_output.assign_conv2_biases,
+       fake_output.assign_fc1_weights, fake_output.assign_fc1_biases,
+       fake_output.assign_accum_conv1_weights,
+       fake_output.assign_accum_conv1_biases,
+       fake_output.assign_accum_conv2_weights,
+       fake_output.assign_accum_conv2_biases,
+       fake_output.assign_accum_fc1_weights,
+       fake_output.assign_accum_fc1_biases},
+      nullptr));
+
+  // Train
+  int global_step = 0;
+  for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
+    // update when each epoch
+    float decayed_learning_rate =
+        BASE_LEARNING_RATE * std::pow(DECAY_RATE, epoch);
+    Tensor lr_tensor(decayed_learning_rate);
+
+    TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
+
+    // batches training
+    while (true) {
+      vector<Tensor> outputs;
+      Status status = session.Run({{ph_lr, lr_tensor}},
+                                  {
+                                      gen_loss,
+                                      disc_loss,
+                                      apply_conv1_weights_gen,
+                                      apply_conv2_weights_gen,
+                                      apply_fc1_weights_gen,
+                                      apply_conv1_biases_gen,
+                                      apply_conv2_biases_gen,
+                                      apply_fc1_biases_gen,
+                                      apply_conv1_weights_disc,
+                                      apply_conv2_weights_disc,
+                                      apply_fc1_weights_disc,
+                                      apply_conv1_biases_disc,
+                                      apply_conv2_biases_disc,
+                                      apply_fc1_biases_disc,
+                                  },
+                                  {}, &outputs);
+      if (status.ok()) {
+#ifdef VERBOSE
+        LOG(INFO) << "Print epoch: " << epoch
+                  << ", gen_loss: " << outputs[0].DebugString();
+        LOG(INFO) << "Print epoch: " << epoch
+                  << ", disc_loss: " << outputs[1].DebugString();
+#endif
+      } else {
+        if (status.code() != tensorflow::error::OUT_OF_RANGE)
+          LOG(INFO) << "Print epoch: " << epoch << ", status: " << status;
+
+        break;
+      }
+
+      if (global_step % EVAL_FREQUENCY == 0) {
+        LOG(INFO) << "Print step: " << global_step
+                  << ", epoch: " << epoch
+                  << ", decayed_learning_rate: " << decayed_learning_rate
+                  << ", gen_loss: " << outputs[0].DebugString()
+                  << ", disc_loss: " << outputs[1].DebugString();
+      }
+
+      global_step++;
+    }
+  }
 
   return 0;
 }

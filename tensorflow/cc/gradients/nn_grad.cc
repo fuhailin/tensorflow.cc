@@ -116,9 +116,9 @@ Status SoftmaxCrossEntropyWithLogitsGrad(const Scope& scope,
 REGISTER_GRADIENT_OP("SoftmaxCrossEntropyWithLogits",
                      SoftmaxCrossEntropyWithLogitsGrad);
 
-Status SparseSoftmaxCrossEntropyWithLogitsGrad(const Scope& scope, const Operation& op,
-                   const std::vector<Output>& grad_inputs,
-                   std::vector<Output>* grad_outputs) {
+Status SparseSoftmaxCrossEntropyWithLogitsGrad(
+    const Scope& scope, const Operation& op,
+    const std::vector<Output>& grad_inputs, std::vector<Output>* grad_outputs) {
   // The outputs of the network are at input index 0.
   // auto logits = op.input(0);
   // The "truth" labels are at index 1.
@@ -128,8 +128,11 @@ Status SparseSoftmaxCrossEntropyWithLogitsGrad(const Scope& scope, const Operati
   auto grad_loss = grad_inputs[0];
   // auto grad_grad = grad_inputs[1];
 
-  auto prevent_gradient = PreventGradient(scope, softmax_grad, 
-                                         PreventGradient::Message("Currently there is no way to take the second derivative of sparse_softmax_cross_entropy_with_logits"));
+  auto prevent_gradient = PreventGradient(
+      scope, softmax_grad,
+      PreventGradient::Message(
+          "Currently there is no way to take the second derivative of "
+          "sparse_softmax_cross_entropy_with_logits"));
 
   auto grad = BroadcastMul(scope, grad_loss, prevent_gradient);
 
@@ -138,11 +141,12 @@ Status SparseSoftmaxCrossEntropyWithLogitsGrad(const Scope& scope, const Operati
 
   return scope.status();
 }
-REGISTER_GRADIENT_OP("SparseSoftmaxCrossEntropyWithLogits", SparseSoftmaxCrossEntropyWithLogitsGrad);
+REGISTER_GRADIENT_OP("SparseSoftmaxCrossEntropyWithLogits",
+                     SparseSoftmaxCrossEntropyWithLogitsGrad);
 
 Status RNNSoftmaxLossGradFn(const Scope& scope, const Operation& op,
-                   const std::vector<Output>& grad_inputs,
-                   std::vector<Output>* grad_outputs) {
+                            const std::vector<Output>& grad_inputs,
+                            std::vector<Output>* grad_outputs) {
   auto h = op.input(0);
   auto y = op.input(1);
   auto w_y = op.input(2);
@@ -163,40 +167,40 @@ Status RNNSoftmaxLossGradFn(const Scope& scope, const Operation& op,
 REGISTER_GRADIENT_OP("RNNSoftmaxLoss", RNNSoftmaxLossGradFn);
 
 Status BlockLSTMGradFn(const Scope& scope, const Operation& op,
-                   const std::vector<Output>& grad_inputs,
-                   std::vector<Output>* grad_outputs) {
-
-  auto block_lstm_grad = BlockLSTMGrad(scope,
-                              op.input(0), // seq_len_max,
-                              op.input(1), 
-                              op.input(2),
-                              op.input(3),
-                              op.input(4),
-                              op.input(5), // wci
-                              op.input(6), // wcf
-                              op.input(7), // wco
-                              op.input(8),
-                              op.output(0),
-                              op.output(1),
-                              op.output(2),
-                              op.output(3),
-                              op.output(4),
-                              op.output(5),
-                              op.output(6),
-                              grad_inputs[1], // cs_grad
-                              grad_inputs[6], // h_grad: i-th output's backpropped gradients of BlockLSTM
-                              false           // use_peephole
-                              );
+                       const std::vector<Output>& grad_inputs,
+                       std::vector<Output>* grad_outputs) {
+  auto block_lstm_grad =
+      BlockLSTMGrad(scope,
+                    op.input(0),  // seq_len_max,
+                    op.input(1), op.input(2), op.input(3), op.input(4),
+                    op.input(5),  // wci
+                    op.input(6),  // wcf
+                    op.input(7),  // wco
+                    op.input(8), op.output(0), op.output(1), op.output(2),
+                    op.output(3), op.output(4), op.output(5), op.output(6),
+                    grad_inputs[1],  // cs_grad
+                    grad_inputs[6],  // h_grad: i-th output's backpropped
+                                     // gradients of BlockLSTM
+                    false            // use_peephole
+      );
 
   grad_outputs->push_back(NoGradient());
-  grad_outputs->push_back(Identity(scope.WithOpName("x_grad"), block_lstm_grad.x_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("cs_prev_grad"), block_lstm_grad.cs_prev_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("h_prev_grad"), block_lstm_grad.h_prev_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("w_grad"), block_lstm_grad.w_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("wci_grad"), block_lstm_grad.wci_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("wcf_grad"), block_lstm_grad.wcf_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("wco_grad"), block_lstm_grad.wco_grad));
-  grad_outputs->push_back(Identity(scope.WithOpName("b_grad"), block_lstm_grad.b_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("x_grad"), block_lstm_grad.x_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("cs_prev_grad"), block_lstm_grad.cs_prev_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("h_prev_grad"), block_lstm_grad.h_prev_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("w_grad"), block_lstm_grad.w_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("wci_grad"), block_lstm_grad.wci_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("wcf_grad"), block_lstm_grad.wcf_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("wco_grad"), block_lstm_grad.wco_grad));
+  grad_outputs->push_back(
+      Identity(scope.WithOpName("b_grad"), block_lstm_grad.b_grad));
 
   return scope.status();
 }
@@ -326,10 +330,9 @@ Status Conv2DGrad(const Scope& scope, const Operation& op,
 }
 REGISTER_GRADIENT_OP("Conv2D", Conv2DGrad);
 
-
 Status RKZConv2DGrad(const Scope& scope, const Operation& op,
-                  const std::vector<Output>& grad_inputs,
-                  std::vector<Output>* grad_outputs) {
+                     const std::vector<Output>& grad_inputs,
+                     std::vector<Output>* grad_outputs) {
 #if 1
   int stride = 1;
   int padding = 2;
@@ -337,16 +340,15 @@ Status RKZConv2DGrad(const Scope& scope, const Operation& op,
   auto attrs = op.output(0).node()->attrs();
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "stride", &stride));
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "padding", &padding));
-  
+
   auto dx_1 = RKZConv2DGradInput(scope, Shape(scope, op.input(0)), op.input(1),
-                                  grad_inputs[0], stride, padding);
+                                 grad_inputs[0], stride, padding);
   grad_outputs->push_back(dx_1);
 
-  auto dx_2 =
-      RKZConv2DGradFilter(scope, op.input(0), Shape(scope, op.input(1)),
-                           grad_inputs[0], stride, padding);
+  auto dx_2 = RKZConv2DGradFilter(scope, op.input(0), Shape(scope, op.input(1)),
+                                  grad_inputs[0], stride, padding);
   grad_outputs->push_back(dx_2);
-#else // For debugging
+#else  // For debugging
   string data_format = "NHWC";
   string paddingstr = "SAME";
   std::vector<int32> strides({1, 1, 1, 1});
@@ -363,7 +365,7 @@ Status RKZConv2DGrad(const Scope& scope, const Operation& op,
                            Conv2DBackpropFilter::DataFormat(data_format)
                                .UseCudnnOnGpu(use_cudnn_on_gpu));
   grad_outputs->push_back(dx_2);
-#endif  
+#endif
   return scope.status();
 }
 REGISTER_GRADIENT_OP("RKZConv2D", RKZConv2DGrad);

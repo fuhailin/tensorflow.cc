@@ -78,6 +78,34 @@ Dropout::Dropout(const ::tensorflow::Scope& scope, const ::tensorflow::Input x,
       scope, Div(scope, x, Const<float>(scope, {keep_prob})), binary_tensor);
 }
 
+// python code:
+//     # The logistic loss formula from above is
+//     #   x - x * z + log(1 + exp(-x))
+//     # For x < 0, a more numerically stable formula is
+//     #   -x * z + log(1 + exp(x))
+//     # Note that these two expressions can be combined into the following:
+//     #   max(x, 0) - x * z + log(1 + exp(-abs(x)))
+//     # To allow computing gradients at zero, we define custom versions of max
+//     and # abs functions. zeros = array_ops.zeros_like(logits,
+//     dtype=logits.dtype) cond = (logits >= zeros) relu_logits =
+//     array_ops.where(cond, logits, zeros) neg_abs_logits =
+//     array_ops.where(cond, -logits, logits) return math_ops.add(
+//         relu_logits - logits * labels,
+//         math_ops.log1p(math_ops.exp(neg_abs_logits)),
+//         name=name)
+SigmoidCrossEntropyWithLogits::SigmoidCrossEntropyWithLogits(
+    const ::tensorflow::Scope& scope, const ::tensorflow::Input labels,
+    const ::tensorflow::Input logits) {
+  auto zeros = ZerosLike(scope, logits);
+  auto cond = GreaterEqual(scope, logits, zeros);
+  auto relu_logits = SelectV2(scope, cond, logits, zeros);
+  auto neg_abs_logits = SelectV2(scope, cond, Negate(scope, logits), logits);
+
+  this->output =
+      Add(scope, Sub(scope, relu_logits, Multiply(scope, logits, labels)),
+          Log1p(scope, Exp(scope, neg_abs_logits)));
+}
+
 // Only DT_FLOAT and 2D/4D shape is supported for now
 GlorotUniform::GlorotUniform(const ::tensorflow::Scope& scope,
                              const std::initializer_list<int64>& shape) {
@@ -87,12 +115,6 @@ GlorotUniform::GlorotUniform(const ::tensorflow::Scope& scope,
       RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
   LOG(INFO) << "Node building status: " << scope.status();
 
-  // Python code:
-  //   receptive_field_size = 1.
-  //   for dim in shape[:-2]:
-  //     receptive_field_size *= dim
-  //   fan_in = shape[-2] * receptive_field_size
-  //   fan_out = shape[-1] * receptive_field_size
   std::vector<int64> shape_vec(shape);
 
   // For 2D
@@ -137,7 +159,7 @@ Conv2DTranspose::Conv2DTranspose(const ::tensorflow::Scope& scope,
 // Generator
 Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   // random noise input
-  auto random_normal1 = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
+  auto noise = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // dense 1
@@ -147,7 +169,7 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   auto rate = Const(scope, {0.01f});
   auto random_value = RandomNormal(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
   this->assign_w1 = Assign(scope, w1, Multiply(scope, random_value, rate));
-  auto dense = MatMul(scope, random_normal1, w1);
+  auto dense = MatMul(scope, noise, w1);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization
@@ -237,69 +259,71 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
 
 // Discriminator
 Discriminator::Discriminator(const ::tensorflow::Scope& scope,
+                             const ::tensorflow::Input& inputs,
                              const int batch_size) {
-  this->ph_inputs = Placeholder(
-      scope, DT_FLOAT, Placeholder::Shape({batch_size, 28, 28, NUM_CHANNELS}));
+  // this->ph_inputs = Placeholder(
+  //     scope, DT_FLOAT, Placeholder::Shape({batch_size, 28, 28,
+  //     NUM_CHANNELS}));
 
   // Trainable variables
   // auto rate = Const(scope, {0.1f});
 
-  auto conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   auto random_value = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   this->assign_conv1_weights = Assign(scope, conv1_weights, random_value);
 
-  auto conv1_biases = Variable(scope, {64}, DT_FLOAT);
+  this->conv1_biases = Variable(scope, {64}, DT_FLOAT);
   Tensor b_zero_tensor(DT_FLOAT, TensorShape({64}));
   b_zero_tensor.vec<float>().setZero();
   this->assign_conv1_biases = Assign(scope, conv1_biases, b_zero_tensor);
 
-  auto conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
   this->assign_conv2_weights = Assign(scope, conv2_weights, random_value2);
 
-  auto conv2_biases = Variable(scope, {128}, DT_FLOAT);
+  this->conv2_biases = Variable(scope, {128}, DT_FLOAT);
   this->assign_conv2_biases = Assign(
       scope, conv2_biases, Const<float>(scope, 0.0f, TensorShape({128})));
 
   int s1 = IMAGE_SIZE;
   s1 = s1 / 4;
   s1 = std::pow(s1, 2) * 128;
-  auto fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
+  this->fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
   auto random_value3 = GlorotUniform(scope, {s1, 1});
   this->assign_fc1_weights = Assign(scope, fc1_weights, random_value3);
 
-  auto fc1_biases = Variable(scope, {1}, DT_FLOAT);
+  this->fc1_biases = Variable(scope, {1}, DT_FLOAT);
   this->assign_fc1_biases =
       Assign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
 
   // Gradient accum parameters start here
-  auto accum_conv1_weights =
+  this->accum_conv1_weights =
       Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   this->assign_accum_conv1_weights =
       Assign(scope, accum_conv1_weights, ZerosLike(scope, conv1_weights));
 
-  auto accum_conv1_biases = Variable(scope, {64}, DT_FLOAT);
+  this->accum_conv1_biases = Variable(scope, {64}, DT_FLOAT);
   this->assign_accum_conv1_biases =
       Assign(scope, accum_conv1_biases, ZerosLike(scope, conv1_biases));
 
-  auto accum_conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->accum_conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   this->assign_accum_conv2_weights =
       Assign(scope, accum_conv2_weights, ZerosLike(scope, conv2_weights));
 
-  auto accum_conv2_biases = Variable(scope, {128}, DT_FLOAT);
+  this->accum_conv2_biases = Variable(scope, {128}, DT_FLOAT);
   this->assign_accum_conv2_biases =
       Assign(scope, accum_conv2_biases, ZerosLike(scope, conv2_biases));
 
-  auto accum_fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
+  this->accum_fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
   this->assign_accum_fc1_weights =
       Assign(scope, accum_fc1_weights, ZerosLike(scope, fc1_weights));
 
-  auto accum_fc1_biases = Variable(scope, {1}, DT_FLOAT);
+  this->accum_fc1_biases = Variable(scope, {1}, DT_FLOAT);
   this->assign_accum_fc1_biases =
       Assign(scope, accum_fc1_biases, ZerosLike(scope, fc1_biases));
 
   // Convnet Model begin
-  auto conv2d_1 = Conv2D(scope, ph_inputs, conv1_weights,
+  auto conv2d_1 = Conv2D(scope, inputs, conv1_weights,
                          gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
 

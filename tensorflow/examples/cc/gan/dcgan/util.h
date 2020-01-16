@@ -16,15 +16,15 @@ limitations under the License.
 #ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_UTIL_H_
 #define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_UTIL_H_
 
-#define VERBOSE 1
-#define TESTING 1
+// #define VERBOSE 1
+// #define TESTING 1
 
 // Adjustable Parameters
 #define VALIDATION_SIZE 5000  // Size of the validation set.
 #define SEED 66478            // Set to None for random seed.
 #define BATCH_SIZE 256
 #define BATCHES_PER_EPOCHS 214  // (55000 / BATCH_SIZE) = 214 max
-#define NUM_EPOCHS 10
+#define NUM_EPOCHS 50
 #define EVAL_BATCH_SIZE 256
 #define EVAL_FREQUENCY 100  // Number of steps between evaluations.
 #define DECAY_RATE 0.95f

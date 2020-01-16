@@ -50,6 +50,40 @@ Output ConjugateHelper(const Scope& scope, const Output& out) {
   }
 }
 
+// Rock: add more gradients
+
+Status SelectV2Grad(const Scope& scope, const Operation& op,
+                    const std::vector<Output>& grad_inputs,
+                    std::vector<Output>* grad_outputs) {
+  auto c = op.input(0);
+  auto x = op.input(1);
+  auto y = op.input(2);
+  auto zeros = Const<float>(scope, {0.0f});
+  auto s1 = SelectV2(scope, c, grad_inputs[0], zeros);
+  auto x_shape = Shape(scope, x);
+  auto output_shape = Shape(scope, op.output(0));
+  auto bga_x = internal::BroadcastGradientArgs(scope, x_shape, output_shape);
+  auto reduce_x = bga_x.r0;
+  auto gx = Reshape(scope,
+                    ReduceSum(scope, s1, reduce_x, ReduceSum::KeepDims(true)),
+                    x_shape);
+
+  auto s2 = SelectV2(scope, c, zeros, grad_inputs[0]);
+  auto y_shape = Shape(scope, y);
+  auto bga_y = internal::BroadcastGradientArgs(scope, y_shape, output_shape);
+  auto reduce_y = bga_y.r0;
+  auto gy = Reshape(scope,
+                    ReduceSum(scope, s2, reduce_y, ReduceSum::KeepDims(true)),
+                    y_shape);
+
+  grad_outputs->push_back(NoGradient());
+  grad_outputs->push_back(gx);
+  grad_outputs->push_back(gy);
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("SelectV2", SelectV2Grad);
+
 // TODO(andydavis) Add control dependencies to gradient functions (as needed).
 
 Status AbsGrad(const Scope& scope, const Operation& op,

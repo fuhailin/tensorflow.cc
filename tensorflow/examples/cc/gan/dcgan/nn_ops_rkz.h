@@ -50,6 +50,17 @@ class Dropout {
   ::tensorflow::Output output;
 };
 
+class SigmoidCrossEntropyWithLogits {
+ public:
+  SigmoidCrossEntropyWithLogits(const ::tensorflow::Scope& scope,
+                                const ::tensorflow::Input labels,
+                                const ::tensorflow::Input logits);
+  operator ::tensorflow::Output() const { return output; }
+  operator ::tensorflow::Input() const { return output; }
+
+  ::tensorflow::Output output;
+};
+
 class GlorotUniform {
  public:
   GlorotUniform(const ::tensorflow::Scope& scope,
@@ -90,11 +101,25 @@ class Generator {
 
 class Discriminator {
  public:
-  Discriminator(const ::tensorflow::Scope& scope, const int batch_size);
+  Discriminator(const ::tensorflow::Scope& scope,
+                const ::tensorflow::Input& inputs, const int batch_size);
   operator ::tensorflow::Output() const { return output; }
   operator ::tensorflow::Input() const { return output; }
 
   ::tensorflow::Output ph_inputs;
+
+  ::tensorflow::Output conv1_weights;
+  ::tensorflow::Output conv1_biases;
+  ::tensorflow::Output conv2_weights;
+  ::tensorflow::Output conv2_biases;
+  ::tensorflow::Output fc1_weights;
+  ::tensorflow::Output fc1_biases;
+  ::tensorflow::Output accum_conv1_weights;
+  ::tensorflow::Output accum_conv1_biases;
+  ::tensorflow::Output accum_conv2_weights;
+  ::tensorflow::Output accum_conv2_biases;
+  ::tensorflow::Output accum_fc1_weights;
+  ::tensorflow::Output accum_fc1_biases;
 
   ::tensorflow::Output assign_conv1_weights;
   ::tensorflow::Output assign_conv1_biases;

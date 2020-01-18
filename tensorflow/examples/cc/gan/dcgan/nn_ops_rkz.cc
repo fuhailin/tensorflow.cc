@@ -26,6 +26,7 @@ limitations under the License.
 namespace tensorflow {
 namespace ops {
 
+// tf.nn.batch_normalization
 // def batch_normalization(x,
 //                         mean,
 //                         variance,
@@ -297,30 +298,43 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope,
       Assign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
 
   // Gradient accum parameters start here
-  this->accum_conv1_weights =
-      Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
-  this->assign_accum_conv1_weights =
-      Assign(scope, accum_conv1_weights, ZerosLike(scope, conv1_weights));
+  this->conv1_wm = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->assign_conv1_wm =
+      Assign(scope, conv1_wm, ZerosLike(scope, conv1_weights));
+  this->conv1_wv = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->assign_conv1_wv =
+      Assign(scope, conv1_wv, ZerosLike(scope, conv1_weights));
 
-  this->accum_conv1_biases = Variable(scope, {64}, DT_FLOAT);
-  this->assign_accum_conv1_biases =
-      Assign(scope, accum_conv1_biases, ZerosLike(scope, conv1_biases));
+  this->conv1_bm = Variable(scope, {64}, DT_FLOAT);
+  this->assign_conv1_bm =
+      Assign(scope, conv1_bm, ZerosLike(scope, conv1_biases));
+  this->conv1_bv = Variable(scope, {64}, DT_FLOAT);
+  this->assign_conv1_bv =
+      Assign(scope, conv1_bv, ZerosLike(scope, conv1_biases));
 
-  this->accum_conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
-  this->assign_accum_conv2_weights =
-      Assign(scope, accum_conv2_weights, ZerosLike(scope, conv2_weights));
+  this->conv2_wm = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->assign_conv2_wm =
+      Assign(scope, conv2_wm, ZerosLike(scope, conv2_weights));
+  this->conv2_wv = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->assign_conv2_wv =
+      Assign(scope, conv2_wv, ZerosLike(scope, conv2_weights));
 
-  this->accum_conv2_biases = Variable(scope, {128}, DT_FLOAT);
-  this->assign_accum_conv2_biases =
-      Assign(scope, accum_conv2_biases, ZerosLike(scope, conv2_biases));
+  this->conv2_bm = Variable(scope, {128}, DT_FLOAT);
+  this->assign_conv2_bm =
+      Assign(scope, conv2_bm, ZerosLike(scope, conv2_biases));
+  this->conv2_bv = Variable(scope, {128}, DT_FLOAT);
+  this->assign_conv2_bv =
+      Assign(scope, conv2_bv, ZerosLike(scope, conv2_biases));
 
-  this->accum_fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
-  this->assign_accum_fc1_weights =
-      Assign(scope, accum_fc1_weights, ZerosLike(scope, fc1_weights));
+  this->fc1_wm = Variable(scope, {s1, 1}, DT_FLOAT);
+  this->assign_fc1_wm = Assign(scope, fc1_wm, ZerosLike(scope, fc1_weights));
+  this->fc1_wv = Variable(scope, {s1, 1}, DT_FLOAT);
+  this->assign_fc1_wv = Assign(scope, fc1_wv, ZerosLike(scope, fc1_weights));
 
-  this->accum_fc1_biases = Variable(scope, {1}, DT_FLOAT);
-  this->assign_accum_fc1_biases =
-      Assign(scope, accum_fc1_biases, ZerosLike(scope, fc1_biases));
+  this->fc1_bm = Variable(scope, {1}, DT_FLOAT);
+  this->assign_fc1_bm = Assign(scope, fc1_bm, ZerosLike(scope, fc1_biases));
+  this->fc1_bv = Variable(scope, {1}, DT_FLOAT);
+  this->assign_fc1_bv = Assign(scope, fc1_bv, ZerosLike(scope, fc1_biases));
 
   // Convnet Model begin
   auto conv2d_1 = Conv2D(scope, inputs, conv1_weights,

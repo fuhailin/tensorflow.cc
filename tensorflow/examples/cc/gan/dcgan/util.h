@@ -27,9 +27,10 @@ limitations under the License.
 #define NUM_EPOCHS 50
 #define EVAL_BATCH_SIZE 256
 #define EVAL_FREQUENCY 100  // Number of steps between evaluations.
-#define DECAY_RATE 0.95f
-#define MOMENTUM 0.9f
-#define BASE_LEARNING_RATE 0.01f
+#define LEARNING_RATE 0.0001f
+#define BETA_1 0.9f
+#define BETA_2 0.999f
+#define EPSILON 1e-7
 
 // Not to change
 #define IMAGE_SIZE 28

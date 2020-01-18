@@ -109,17 +109,23 @@ class Discriminator {
   ::tensorflow::Output ph_inputs;
 
   ::tensorflow::Output conv1_weights;
+  ::tensorflow::Output conv1_wm;
+  ::tensorflow::Output conv1_wv;
   ::tensorflow::Output conv1_biases;
+  ::tensorflow::Output conv1_bm;
+  ::tensorflow::Output conv1_bv;
   ::tensorflow::Output conv2_weights;
+  ::tensorflow::Output conv2_wm;
+  ::tensorflow::Output conv2_wv;
   ::tensorflow::Output conv2_biases;
+  ::tensorflow::Output conv2_bm;
+  ::tensorflow::Output conv2_bv;
   ::tensorflow::Output fc1_weights;
+  ::tensorflow::Output fc1_wm;
+  ::tensorflow::Output fc1_wv;
   ::tensorflow::Output fc1_biases;
-  ::tensorflow::Output accum_conv1_weights;
-  ::tensorflow::Output accum_conv1_biases;
-  ::tensorflow::Output accum_conv2_weights;
-  ::tensorflow::Output accum_conv2_biases;
-  ::tensorflow::Output accum_fc1_weights;
-  ::tensorflow::Output accum_fc1_biases;
+  ::tensorflow::Output fc1_bm;
+  ::tensorflow::Output fc1_bv;
 
   ::tensorflow::Output assign_conv1_weights;
   ::tensorflow::Output assign_conv1_biases;
@@ -127,12 +133,18 @@ class Discriminator {
   ::tensorflow::Output assign_conv2_biases;
   ::tensorflow::Output assign_fc1_weights;
   ::tensorflow::Output assign_fc1_biases;
-  ::tensorflow::Output assign_accum_conv1_weights;
-  ::tensorflow::Output assign_accum_conv1_biases;
-  ::tensorflow::Output assign_accum_conv2_weights;
-  ::tensorflow::Output assign_accum_conv2_biases;
-  ::tensorflow::Output assign_accum_fc1_weights;
-  ::tensorflow::Output assign_accum_fc1_biases;
+  ::tensorflow::Output assign_conv1_wm;
+  ::tensorflow::Output assign_conv1_wv;
+  ::tensorflow::Output assign_conv1_bm;
+  ::tensorflow::Output assign_conv1_bv;
+  ::tensorflow::Output assign_conv2_wm;
+  ::tensorflow::Output assign_conv2_wv;
+  ::tensorflow::Output assign_conv2_bm;
+  ::tensorflow::Output assign_conv2_bv;
+  ::tensorflow::Output assign_fc1_wm;
+  ::tensorflow::Output assign_fc1_wv;
+  ::tensorflow::Output assign_fc1_bm;
+  ::tensorflow::Output assign_fc1_bv;
 
   ::tensorflow::Output output;
 };

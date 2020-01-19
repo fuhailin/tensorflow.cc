@@ -37,3 +37,6 @@
 <br/>
 <p>7) Reinforcement Learning Tuner</p>
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_rl_tuner</p>
+<br/>
+<p>8) GAN</p>
+<p>bazel run -c opt //tensorflow/examples/cc/gan/dcgan:dcgan</p>

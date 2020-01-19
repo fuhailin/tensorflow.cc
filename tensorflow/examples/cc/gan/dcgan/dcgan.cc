@@ -426,7 +426,7 @@ int main() {
 
   // discriminator
   auto apply_conv1_weights_disc =
-      ApplyAdam(scope, fake_output.conv1_weights, real_output.conv1_wm,
+      ApplyAdam(scope, real_output.conv1_weights, real_output.conv1_wm,
                 real_output.conv1_wv, beta1_power, beta2_power, lr, beta1,
                 beta2, epsilon, grad_outputs_disc[0]);
   LOG(INFO) << "Node building status: " << scope.status();

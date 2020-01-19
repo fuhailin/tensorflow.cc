@@ -156,25 +156,27 @@ Conv2DTranspose::Conv2DTranspose(const ::tensorflow::Scope& scope,
 }
 
 // Generator
+// TODO(Rock): handle the case of is_training false
 Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   // random noise input
   auto noise = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // dense 1
-  auto w1 = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
+  this->w1 = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto rate = Const(scope, {0.01f});
   auto random_value = RandomNormal(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
-  this->assign_w1 = Assign(scope, w1, Multiply(scope, random_value, rate));
-  auto dense = MatMul(scope, noise, w1);
+  this->assign_w1 =
+      Assign(scope, this->w1, Multiply(scope, random_value, rate));
+  auto dense = MatMul(scope, noise, this->w1);
   LOG(INFO) << "Node building status: " << scope.status();
 
   this->w1_wm = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
-  this->assign_w1_wm = Assign(scope, w1_wm, ZerosLike(scope, w1));
+  this->assign_w1_wm = Assign(scope, this->w1_wm, ZerosLike(scope, this->w1));
   this->w1_wv = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
-  this->assign_w1_wv = Assign(scope, w1_wv, ZerosLike(scope, w1));
+  this->assign_w1_wv = Assign(scope, this->w1_wv, ZerosLike(scope, this->w1));
 
   // BatchNormalization
   auto mean = Const<float>(scope, {0.0f});
@@ -198,14 +200,16 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   // Conv2DTranspose 1
   auto input_sizes = Const<int>(scope, {batch_size, 7, 7, 128});
   // filter, aka kernel
-  auto filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
+  this->filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
   auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
-  this->assign_filter = Assign(scope, filter, random_value1);
+  this->assign_filter = Assign(scope, this->filter, random_value1);
 
   this->filter_wm = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
-  this->assign_filter_wm = Assign(scope, filter_wm, ZerosLike(scope, filter));
+  this->assign_filter_wm =
+      Assign(scope, this->filter_wm, ZerosLike(scope, this->filter));
   this->filter_wv = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
-  this->assign_filter_wv = Assign(scope, filter_wv, ZerosLike(scope, filter));
+  this->assign_filter_wv =
+      Assign(scope, this->filter_wv, ZerosLike(scope, this->filter));
 
   // out_backprop, aka input. here it's reshape1
   auto deconv1 = Conv2DTranspose(scope, input_sizes, filter, reshape1,
@@ -233,16 +237,16 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   // Conv2DTranspose 2
   auto input_sizes2 = Const(scope, {batch_size, 14, 14, 64});
   // filter, aka kernel
-  auto filter2 = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->filter2 = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
   this->assign_filter2 = Assign(scope, filter2, random_value2);
 
   this->filter2_wm = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   this->assign_filter2_wm =
-      Assign(scope, filter2_wm, ZerosLike(scope, filter2));
+      Assign(scope, this->filter2_wm, ZerosLike(scope, this->filter2));
   this->filter2_wv = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   this->assign_filter2_wv =
-      Assign(scope, filter2_wv, ZerosLike(scope, filter2));
+      Assign(scope, this->filter2_wv, ZerosLike(scope, this->filter2));
 
   auto deconv2 = Conv2DTranspose(scope, input_sizes2, filter2, leakyrelu1,
                                  {1, 2, 2, 1}, "SAME");
@@ -267,16 +271,16 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   // Conv2DTranspose 3
   auto input_sizes3 = Const(scope, {batch_size, 28, 28, NUM_CHANNELS});
   // filter, aka kernel
-  auto filter3 = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->filter3 = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   auto random_value3 = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
-  this->assign_filter3 = Assign(scope, filter3, random_value3);
+  this->assign_filter3 = Assign(scope, this->filter3, random_value3);
 
   this->filter3_wm = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   this->assign_filter3_wm =
-      Assign(scope, filter3_wm, ZerosLike(scope, filter3));
+      Assign(scope, this->filter3_wm, ZerosLike(scope, this->filter3));
   this->filter3_wv = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   this->assign_filter3_wv =
-      Assign(scope, filter3_wv, ZerosLike(scope, filter3));
+      Assign(scope, this->filter3_wv, ZerosLike(scope, this->filter3));
 
   this->output = Conv2DTranspose(scope, input_sizes3, filter3, leakyrelu2,
                                  {1, 2, 2, 1}, "SAME");
@@ -289,53 +293,54 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope,
                              const int batch_size) {
   this->conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   auto random_value = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
-  this->assign_conv1_weights = Assign(scope, conv1_weights, random_value);
+  this->assign_conv1_weights = Assign(scope, this->conv1_weights, random_value);
 
   this->conv1_biases = Variable(scope, {64}, DT_FLOAT);
   Tensor b_zero_tensor(DT_FLOAT, TensorShape({64}));
   b_zero_tensor.vec<float>().setZero();
-  this->assign_conv1_biases = Assign(scope, conv1_biases, b_zero_tensor);
+  this->assign_conv1_biases = Assign(scope, this->conv1_biases, b_zero_tensor);
 
   this->conv2_weights = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
-  this->assign_conv2_weights = Assign(scope, conv2_weights, random_value2);
+  this->assign_conv2_weights =
+      Assign(scope, this->conv2_weights, random_value2);
 
   this->conv2_biases = Variable(scope, {128}, DT_FLOAT);
   this->assign_conv2_biases = Assign(
-      scope, conv2_biases, Const<float>(scope, 0.0f, TensorShape({128})));
+      scope, this->conv2_biases, Const<float>(scope, 0.0f, TensorShape({128})));
 
   int s1 = IMAGE_SIZE;
   s1 = s1 / 4;
   s1 = std::pow(s1, 2) * 128;
   this->fc1_weights = Variable(scope, {s1, 1}, DT_FLOAT);
   auto random_value3 = GlorotUniform(scope, {s1, 1});
-  this->assign_fc1_weights = Assign(scope, fc1_weights, random_value3);
+  this->assign_fc1_weights = Assign(scope, this->fc1_weights, random_value3);
 
   this->fc1_biases = Variable(scope, {1}, DT_FLOAT);
-  this->assign_fc1_biases =
-      Assign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
+  this->assign_fc1_biases = Assign(scope, this->fc1_biases,
+                                   Const<float>(scope, 0.0f, TensorShape({1})));
 
   // Gradient accum parameters start here
   this->conv1_wm = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   this->assign_conv1_wm =
-      Assign(scope, conv1_wm, ZerosLike(scope, conv1_weights));
+      Assign(scope, this->conv1_wm, ZerosLike(scope, this->conv1_weights));
   this->conv1_wv = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   this->assign_conv1_wv =
-      Assign(scope, conv1_wv, ZerosLike(scope, conv1_weights));
+      Assign(scope, this->conv1_wv, ZerosLike(scope, this->conv1_weights));
 
   this->conv1_bm = Variable(scope, {64}, DT_FLOAT);
   this->assign_conv1_bm =
-      Assign(scope, conv1_bm, ZerosLike(scope, conv1_biases));
+      Assign(scope, this->conv1_bm, ZerosLike(scope, this->conv1_biases));
   this->conv1_bv = Variable(scope, {64}, DT_FLOAT);
   this->assign_conv1_bv =
-      Assign(scope, conv1_bv, ZerosLike(scope, conv1_biases));
+      Assign(scope, this->conv1_bv, ZerosLike(scope, this->conv1_biases));
 
   this->conv2_wm = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   this->assign_conv2_wm =
-      Assign(scope, conv2_wm, ZerosLike(scope, conv2_weights));
+      Assign(scope, this->conv2_wm, ZerosLike(scope, this->conv2_weights));
   this->conv2_wv = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   this->assign_conv2_wv =
-      Assign(scope, conv2_wv, ZerosLike(scope, conv2_weights));
+      Assign(scope, this->conv2_wv, ZerosLike(scope, this->conv2_weights));
 
   this->conv2_bm = Variable(scope, {128}, DT_FLOAT);
   this->assign_conv2_bm =
@@ -345,34 +350,38 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope,
       Assign(scope, conv2_bv, ZerosLike(scope, conv2_biases));
 
   this->fc1_wm = Variable(scope, {s1, 1}, DT_FLOAT);
-  this->assign_fc1_wm = Assign(scope, fc1_wm, ZerosLike(scope, fc1_weights));
+  this->assign_fc1_wm =
+      Assign(scope, this->fc1_wm, ZerosLike(scope, this->fc1_weights));
   this->fc1_wv = Variable(scope, {s1, 1}, DT_FLOAT);
-  this->assign_fc1_wv = Assign(scope, fc1_wv, ZerosLike(scope, fc1_weights));
+  this->assign_fc1_wv =
+      Assign(scope, this->fc1_wv, ZerosLike(scope, this->fc1_weights));
 
   this->fc1_bm = Variable(scope, {1}, DT_FLOAT);
-  this->assign_fc1_bm = Assign(scope, fc1_bm, ZerosLike(scope, fc1_biases));
+  this->assign_fc1_bm =
+      Assign(scope, this->fc1_bm, ZerosLike(scope, this->fc1_biases));
   this->fc1_bv = Variable(scope, {1}, DT_FLOAT);
-  this->assign_fc1_bv = Assign(scope, fc1_bv, ZerosLike(scope, fc1_biases));
+  this->assign_fc1_bv =
+      Assign(scope, this->fc1_bv, ZerosLike(scope, this->fc1_biases));
 
   // Convnet Model begin
-  auto conv2d_1 = Conv2D(scope, inputs, conv1_weights,
+  auto conv2d_1 = Conv2D(scope, inputs, this->conv1_weights,
                          gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto relu_1 =
-      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_1, conv1_biases),
+      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_1, this->conv1_biases),
                           internal::LeakyRelu::Alpha(0.3f));
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto dropout_1 = Dropout(scope, relu_1, 0.3f);
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto conv2d_2 = Conv2D(scope, dropout_1, conv2_weights,
+  auto conv2d_2 = Conv2D(scope, dropout_1, this->conv2_weights,
                          gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto relu_2 =
-      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_2, conv2_biases),
+      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_2, this->conv2_biases),
                           internal::LeakyRelu::Alpha(0.3f));
   LOG(INFO) << "Node building status: " << scope.status();
 
@@ -384,8 +393,8 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope,
   LOG(INFO) << "Node building status: " << scope.status();
 
   // model output
-  this->output =
-      BiasAdd(scope, MatMul(scope, reshape1, fc1_weights), fc1_biases);
+  this->output = BiasAdd(scope, MatMul(scope, reshape1, this->fc1_weights),
+                         this->fc1_biases);
   // Convnet Model ends
 }
 

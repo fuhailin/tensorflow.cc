@@ -27,6 +27,70 @@ namespace tensorflow {
 namespace ops {
 namespace {
 
+// Rock: Grad for Conv2DBackpropInput
+Status Conv2DBackpropInputGrad(const Scope& scope, const Operation& op,
+                               const std::vector<Output>& grad_inputs,
+                               std::vector<Output>* grad_outputs) {
+  string data_format;
+  string padding;
+  std::vector<int32> strides;
+  bool use_cudnn_on_gpu;
+  auto attrs = op.output(0).node()->attrs();
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "data_format", &data_format));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "padding", &padding));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "strides", &strides));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "use_cudnn_on_gpu", &use_cudnn_on_gpu));
+
+  auto dx_1 =
+      Conv2DBackpropFilter(scope, grad_inputs[0], Shape(scope, op.input(1)),
+                           op.input(2), strides, padding,
+                           Conv2DBackpropFilter::DataFormat(data_format)
+                               .UseCudnnOnGpu(use_cudnn_on_gpu));
+  auto dx_2 =
+      Conv2D(scope, grad_inputs[0], op.input(1), strides, padding,
+             Conv2D::DataFormat(data_format).UseCudnnOnGpu(use_cudnn_on_gpu));
+
+  grad_outputs->push_back(NoGradient());
+  grad_outputs->push_back(dx_1);
+  grad_outputs->push_back(dx_2);
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("Conv2DBackpropInput", Conv2DBackpropInputGrad);
+
+// Rock: Grad for FusedBatchNorm
+// TODO(Rock): handle the case of is_training false
+Status FusedBatchNormGradFunc(const Scope& scope, const Operation& op,
+                              const std::vector<Output>& grad_inputs,
+                              std::vector<Output>* grad_outputs) {
+  auto x = op.input(0);
+  auto grad_y = grad_inputs[0];
+  auto scale = op.input(1);
+
+  string data_format;
+  float epsilon;
+  bool is_training;
+  auto attrs = op.output(0).node()->attrs();
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "data_format", &data_format));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "epsilon", &epsilon));
+  TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "is_training", &is_training));
+
+  auto dx =
+      FusedBatchNormGrad(scope, grad_y, x, scale, op.output(3), op.output(4),
+                         FusedBatchNormGrad::Epsilon(epsilon)
+                             .DataFormat(data_format)
+                             .IsTraining(is_training));
+
+  grad_outputs->push_back(dx.x_backprop);
+  grad_outputs->push_back(dx.scale_backprop);
+  grad_outputs->push_back(dx.offset_backprop);
+  grad_outputs->push_back(dx.reserve_space_3);
+  grad_outputs->push_back(dx.reserve_space_4);
+
+  return scope.status();
+}
+REGISTER_GRADIENT_OP("FusedBatchNorm", FusedBatchNormGradFunc);
+
 Status SoftmaxGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {

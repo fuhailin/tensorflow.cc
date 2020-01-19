@@ -65,6 +65,100 @@ void test(const Scope& scope) {
     LOG(INFO) << "Print: SigmoidCrossEntropyWithLogits result: "
               << outputs[0].DebugString();
   }
+
+  // Test BatchNormalization
+  {
+    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
+    auto mean = Const<float>(scope, {0.0f});
+    auto variance = Const<float>(scope, {1.0f});
+    auto offset = Const<float>(scope, {0.0f});
+    auto scale = Const<float>(scope, {1.0f});
+    auto variance_epsilon = Const<float>(scope, {0.001f});
+    auto batchnorm = BatchNormalization(scope, x, mean, variance, offset, scale,
+                                        variance_epsilon);
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status = session.Run({}, {batchnorm}, {}, &outputs);
+
+    LOG(INFO) << "Print: BatchNormalization result: "
+              << DetailedDebugString(outputs[0]);
+  }
+
+  // Test Dropout
+  {
+    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
+    auto dropout = Dropout(scope, x, {0.3f});
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status = session.Run({}, {dropout}, {}, &outputs);
+
+    LOG(INFO) << "Print: Dropout result: " << DetailedDebugString(outputs[0]);
+  }
+
+  // Test GlorotUniform
+  {
+    auto glorot_uniform = GlorotUniform(scope, {3, 4});
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status = session.Run({}, {glorot_uniform}, {}, &outputs);
+
+    LOG(INFO) << "Print: GlorotUniform result: "
+              << DetailedDebugString(outputs[0]);
+  }
+
+  // Test Conv2DTranspose
+  {
+    int batch_size = 1;
+
+    // Const
+    auto const1 = Const<float>(scope, 1.0f, {batch_size, 7, 7, 256});
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    // Conv2DTranspose 1
+    auto input_sizes = Const<int>(scope, {batch_size, 7, 7, 128});
+    // filter, aka kernel
+    auto filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
+    auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
+    auto assign_filter = Assign(scope, filter, random_value1);
+
+    // out_backprop, aka input. here it's reshape1
+    auto deconv1 = Conv2DTranspose(scope, input_sizes, filter, const1,
+                                   {1, 1, 1, 1}, "SAME");
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    TF_CHECK_OK(session.Run({assign_filter}, nullptr));
+    TF_CHECK_OK(session.Run({}, {deconv1}, {}, &outputs));
+
+    LOG(INFO) << "Print: Conv2DTranspose result: "
+              << DetailedDebugString(outputs[0]);
+  }
+
+  // Test Generator
+  {
+    auto test_generator = Generator(scope, 1);
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    // Initialize variables
+    TF_CHECK_OK(session.Run(
+        {test_generator.assign_w1, test_generator.assign_filter,
+         test_generator.assign_filter2, test_generator.assign_filter3},
+        nullptr));
+
+    Status status = session.Run({}, {test_generator}, {}, &outputs);
+
+    LOG(INFO) << "Print: Generator result: " << DetailedDebugString(outputs[0]);
+  }
 }
 #endif
 
@@ -78,7 +172,7 @@ static Output DiscriminatorLoss(const Scope& scope, const Input& real_output,
   auto fake_loss =
       ReduceMean(scope,
                  SigmoidCrossEntropyWithLogits(
-                     scope, OnesLike(scope, fake_output), fake_output),
+                     scope, ZerosLike(scope, fake_output), fake_output),
                  {0, 1});
 
   return Add(scope, real_loss, fake_loss);
@@ -99,6 +193,8 @@ int main() {
 
 #ifdef TESTING
   test(scope);
+
+  return 0;
 #endif
 
   //

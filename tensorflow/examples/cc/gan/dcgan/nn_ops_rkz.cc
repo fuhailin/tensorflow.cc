@@ -63,9 +63,7 @@ BatchNormalization::BatchNormalization(
 Dropout::Dropout(const ::tensorflow::Scope& scope, const ::tensorflow::Input x,
                  const int rate) {
   float keep_prob = 1 - rate;
-  auto random_value5 = RandomUniform(
-      scope, Shape(scope, x), DT_FLOAT,
-      RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value5 = RandomUniform(scope, Shape(scope, x), DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto random_tensor =
@@ -111,9 +109,8 @@ SigmoidCrossEntropyWithLogits::SigmoidCrossEntropyWithLogits(
 GlorotUniform::GlorotUniform(const ::tensorflow::Scope& scope,
                              const std::initializer_list<int64>& shape) {
   // RandomUniform
-  auto random_value = RandomUniform(
-      scope, Const(scope, Input::Initializer(shape)), DT_FLOAT,
-      RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value =
+      RandomUniform(scope, Const(scope, Input::Initializer(shape)), DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
 
   std::vector<int64> shape_vec(shape);
@@ -124,7 +121,7 @@ GlorotUniform::GlorotUniform(const ::tensorflow::Scope& scope,
 
   // For 4D
   if (shape_vec.size() == 4) {
-    float receptive_field_size = 1.0 * shape_vec[0] * shape_vec[1];
+    float receptive_field_size = 1.0f * shape_vec[0] * shape_vec[1];
     fan_in = receptive_field_size * shape_vec[2];
     fan_out = receptive_field_size * shape_vec[3];
   }
@@ -133,13 +130,14 @@ GlorotUniform::GlorotUniform(const ::tensorflow::Scope& scope,
   //   scale /= max(1., (fan_in + fan_out) / 2.)
   //   limit = math.sqrt(3.0 * scale) => minval is -limit, maxval is limit
   //   result = math_ops.add(rnd * (maxval - minval), minval, name=name)
-  float scale = 1.0 / std::max(1.0f, (fan_in + fan_out) / 2.0f);
-  float limit = std::sqrt(3.0 * scale);
+  float scale = 1.0f / std::max(1.0f, (fan_in + fan_out) / 2.0f);
+  float limit = std::sqrt(3.0f * scale);
   float maxval = limit;
   float minval = -limit;
   auto result =
-      Add(scope, Multiply(scope, random_value, Const(scope, (maxval - minval))),
-          Const(scope, minval));
+      Add(scope,
+          Multiply(scope, random_value, Const<float>(scope, (maxval - minval))),
+          Const<float>(scope, minval));
   LOG(INFO) << "Node building status: " << scope.status();
 
   this->output = result;
@@ -174,11 +172,11 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization
-  auto mean = Const(scope, {0.0f});
-  auto variance = Const(scope, {1.0f});
-  auto offset = Const(scope, {0.0f});
-  auto scale = Const(scope, {1.0f});
-  auto variance_epsilon = Const(scope, {0.001f});
+  auto mean = Const<float>(scope, {0.0f});
+  auto variance = Const<float>(scope, {1.0f});
+  auto offset = Const<float>(scope, {0.0f});
+  auto scale = Const<float>(scope, {1.0f});
+  auto variance_epsilon = Const<float>(scope, {0.001f});
   auto batchnorm = BatchNormalization(scope, dense, mean, variance, offset,
                                       scale, variance_epsilon);
   LOG(INFO) << "Node building status: " << scope.status();
@@ -193,7 +191,7 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   LOG(INFO) << "Node building status: " << scope.status();
 
   // Conv2DTranspose 1
-  auto input_sizes = Const(scope, {batch_size, 7, 7, 128});
+  auto input_sizes = Const<int>(scope, {batch_size, 7, 7, 128});
   // filter, aka kernel
   auto filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
   auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
@@ -205,8 +203,8 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
 
   // BatchNormalization 1, use FusedBatchNorm
   // For inference, need to compute the running mean and variance
-  auto mean1 = Const(scope, {});
-  auto variance1 = Const(scope, {});
+  auto mean1 = Const<float>(scope, {});
+  auto variance1 = Const<float>(scope, {});
   auto offset1 = BroadcastTo(scope, 0.0f, {128});
   auto scale1 = BroadcastTo(scope, 1.0f, {128});
   auto batchnorm1 = FusedBatchNorm(scope, deconv1, scale1, offset1, mean1,

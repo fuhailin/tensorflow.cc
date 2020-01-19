@@ -43,13 +43,4 @@ limitations under the License.
 #define NOISE_DIM 100
 #define UNITS (7 * 7 * 256)
 
-//
-// Python code: seed1, seed2 = random_seed.get_seed(seed)
-//
-static const int DEFAULT_GRAPH_SEED = 87654321;
-static const int MAXINT32 = std::pow(2, 31) - 1;
-
-int get_seed1(int seed) { return DEFAULT_GRAPH_SEED; }
-int get_seed2(int seed) { return seed % MAXINT32; }
-
 #endif  // TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_UTIL_H_

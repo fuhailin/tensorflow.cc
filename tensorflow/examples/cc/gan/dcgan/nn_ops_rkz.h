@@ -91,10 +91,31 @@ class Generator {
   operator ::tensorflow::Output() const { return output; }
   operator ::tensorflow::Input() const { return output; }
 
+  ::tensorflow::Output w1;
+  ::tensorflow::Output w1_wm;
+  ::tensorflow::Output w1_wv;
+  ::tensorflow::Output filter;
+  ::tensorflow::Output filter_wm;
+  ::tensorflow::Output filter_wv;
+  ::tensorflow::Output filter2;
+  ::tensorflow::Output filter2_wm;
+  ::tensorflow::Output filter2_wv;
+  ::tensorflow::Output filter3;
+  ::tensorflow::Output filter3_wm;
+  ::tensorflow::Output filter3_wv;
+
   ::tensorflow::Output assign_w1;
   ::tensorflow::Output assign_filter;
   ::tensorflow::Output assign_filter2;
   ::tensorflow::Output assign_filter3;
+  ::tensorflow::Output assign_w1_wm;
+  ::tensorflow::Output assign_w1_wv;
+  ::tensorflow::Output assign_filter_wm;
+  ::tensorflow::Output assign_filter_wv;
+  ::tensorflow::Output assign_filter2_wm;
+  ::tensorflow::Output assign_filter2_wv;
+  ::tensorflow::Output assign_filter3_wm;
+  ::tensorflow::Output assign_filter3_wv;
 
   ::tensorflow::Output output;
 };
@@ -103,10 +124,10 @@ class Discriminator {
  public:
   Discriminator(const ::tensorflow::Scope& scope,
                 const ::tensorflow::Input& inputs, const int batch_size);
+  Discriminator(const ::tensorflow::Scope& scope, const Discriminator& disc,
+                const ::tensorflow::Input& inputs, const int batch_size);
   operator ::tensorflow::Output() const { return output; }
   operator ::tensorflow::Input() const { return output; }
-
-  ::tensorflow::Output ph_inputs;
 
   ::tensorflow::Output conv1_weights;
   ::tensorflow::Output conv1_wm;

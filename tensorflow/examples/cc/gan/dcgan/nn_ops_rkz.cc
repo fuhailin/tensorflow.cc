@@ -171,6 +171,11 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   auto dense = MatMul(scope, noise, w1);
   LOG(INFO) << "Node building status: " << scope.status();
 
+  this->w1_wm = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
+  this->assign_w1_wm = Assign(scope, w1_wm, ZerosLike(scope, w1));
+  this->w1_wv = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
+  this->assign_w1_wv = Assign(scope, w1_wv, ZerosLike(scope, w1));
+
   // BatchNormalization
   auto mean = Const<float>(scope, {0.0f});
   auto variance = Const<float>(scope, {1.0f});
@@ -196,6 +201,12 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   auto filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
   auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
   this->assign_filter = Assign(scope, filter, random_value1);
+
+  this->filter_wm = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
+  this->assign_filter_wm = Assign(scope, filter_wm, ZerosLike(scope, filter));
+  this->filter_wv = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
+  this->assign_filter_wv = Assign(scope, filter_wv, ZerosLike(scope, filter));
+
   // out_backprop, aka input. here it's reshape1
   auto deconv1 = Conv2DTranspose(scope, input_sizes, filter, reshape1,
                                  {1, 1, 1, 1}, "SAME");
@@ -225,6 +236,14 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   auto filter2 = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
   this->assign_filter2 = Assign(scope, filter2, random_value2);
+
+  this->filter2_wm = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->assign_filter2_wm =
+      Assign(scope, filter2_wm, ZerosLike(scope, filter2));
+  this->filter2_wv = Variable(scope, {5, 5, 64, 128}, DT_FLOAT);
+  this->assign_filter2_wv =
+      Assign(scope, filter2_wv, ZerosLike(scope, filter2));
+
   auto deconv2 = Conv2DTranspose(scope, input_sizes2, filter2, leakyrelu1,
                                  {1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
@@ -251,6 +270,14 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
   auto filter3 = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   auto random_value3 = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   this->assign_filter3 = Assign(scope, filter3, random_value3);
+
+  this->filter3_wm = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->assign_filter3_wm =
+      Assign(scope, filter3_wm, ZerosLike(scope, filter3));
+  this->filter3_wv = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
+  this->assign_filter3_wv =
+      Assign(scope, filter3_wv, ZerosLike(scope, filter3));
+
   this->output = Conv2DTranspose(scope, input_sizes3, filter3, leakyrelu2,
                                  {1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
@@ -260,13 +287,6 @@ Generator::Generator(const ::tensorflow::Scope& scope, const int batch_size) {
 Discriminator::Discriminator(const ::tensorflow::Scope& scope,
                              const ::tensorflow::Input& inputs,
                              const int batch_size) {
-  // this->ph_inputs = Placeholder(
-  //     scope, DT_FLOAT, Placeholder::Shape({batch_size, 28, 28,
-  //     NUM_CHANNELS}));
-
-  // Trainable variables
-  // auto rate = Const(scope, {0.1f});
-
   this->conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT);
   auto random_value = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   this->assign_conv1_weights = Assign(scope, conv1_weights, random_value);
@@ -366,6 +386,49 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope,
   // model output
   this->output =
       BiasAdd(scope, MatMul(scope, reshape1, fc1_weights), fc1_biases);
+  // Convnet Model ends
+}
+
+Discriminator::Discriminator(const ::tensorflow::Scope& scope,
+                             const Discriminator& disc,
+                             const ::tensorflow::Input& inputs,
+                             const int batch_size) {
+  // Convnet Model begin
+  auto conv2d_1 = Conv2D(scope, inputs, disc.conv1_weights,
+                         gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto relu_1 =
+      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_1, disc.conv1_biases),
+                          internal::LeakyRelu::Alpha(0.3f));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto dropout_1 = Dropout(scope, relu_1, 0.3f);
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto conv2d_2 = Conv2D(scope, dropout_1, disc.conv2_weights,
+                         gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto relu_2 =
+      internal::LeakyRelu(scope, BiasAdd(scope, conv2d_2, disc.conv2_biases),
+                          internal::LeakyRelu::Alpha(0.3f));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto dropout_2 = Dropout(scope, relu_2, 0.3f);
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  int s1 = IMAGE_SIZE;
+  s1 = s1 / 4;
+  s1 = std::pow(s1, 2) * 128;
+
+  // reshape
+  auto reshape1 = Reshape(scope, dropout_2, {batch_size, s1});
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  // model output
+  this->output = BiasAdd(scope, MatMul(scope, reshape1, disc.fc1_weights),
+                         disc.fc1_biases);
   // Convnet Model ends
 }
 

@@ -144,7 +144,8 @@ void test(const Scope& scope) {
 
   // Test Generator
   {
-    auto test_generator = Generator(scope, 1);
+    auto test_generator = Generator(scope, 2);
+    auto test_discriminator = Discriminator(scope, test_generator, 2);
 
     vector<Tensor> outputs;
     ClientSession session(scope);
@@ -154,10 +155,30 @@ void test(const Scope& scope) {
         {test_generator.assign_w1, test_generator.assign_filter,
          test_generator.assign_filter2, test_generator.assign_filter3},
         nullptr));
+    TF_CHECK_OK(session.Run({test_discriminator.assign_conv1_weights,
+                             test_discriminator.assign_conv1_biases,
+                             test_discriminator.assign_conv2_weights,
+                             test_discriminator.assign_conv2_biases,
+                             test_discriminator.assign_fc1_weights,
+                             test_discriminator.assign_fc1_biases},
+                            nullptr));
+    TF_CHECK_OK(session.Run(
+        {test_discriminator.assign_conv1_wm, test_discriminator.assign_conv1_wv,
+         test_discriminator.assign_conv1_bm, test_discriminator.assign_conv1_bv,
+         test_discriminator.assign_conv2_wm, test_discriminator.assign_conv2_wv,
+         test_discriminator.assign_conv2_bm, test_discriminator.assign_conv2_bv,
+         test_discriminator.assign_fc1_wm, test_discriminator.assign_fc1_wv,
+         test_discriminator.assign_fc1_bm, test_discriminator.assign_fc1_bv},
+        nullptr));
 
-    Status status = session.Run({}, {test_generator}, {}, &outputs);
+    // Run Test
+    // TF_CHECK_OK(session.Run({{}}, {test_generator}, &outputs));
+    // LOG(INFO) << "Print generator output 0: " << outputs[0].DebugString();
 
-    LOG(INFO) << "Print: Generator result: " << DetailedDebugString(outputs[0]);
+    TF_CHECK_OK(
+        session.Run({}, {test_generator, test_discriminator}, &outputs));
+    LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
+    LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
   }
 }
 #endif
@@ -304,7 +325,11 @@ int main() {
   // Initialize variables
   TF_CHECK_OK(session.Run(
       {test_generator.assign_w1, test_generator.assign_filter,
-       test_generator.assign_filter2, test_generator.assign_filter3},
+       test_generator.assign_filter2, test_generator.assign_filter3,
+       test_generator.assign_w1_wm, test_generator.assign_w1_wv,
+       test_generator.assign_filter_wm, test_generator.assign_filter_wv,
+       test_generator.assign_filter2_wm, test_generator.assign_filter2_wv,
+       test_generator.assign_filter3_wm, test_generator.assign_filter3_wv},
       nullptr));
   TF_CHECK_OK(session.Run({test_discriminator.assign_conv1_weights,
                            test_discriminator.assign_conv1_biases,
@@ -335,19 +360,20 @@ int main() {
   auto generated_images = Generator(scope, BATCH_SIZE);
   auto real_output =
       Discriminator(scope, iterator_get_next.components[0], BATCH_SIZE);
-  auto fake_output = Discriminator(scope, generated_images, BATCH_SIZE);
-  //
+  auto fake_output =
+      Discriminator(scope, real_output, generated_images, BATCH_SIZE);
+
+  // Loss
   auto gen_loss = GeneratorLoss(scope, fake_output);
   auto disc_loss = DiscriminatorLoss(scope, real_output, fake_output);
 
   // Gradient
   std::vector<Output> grad_outputs_gen;
-  TF_CHECK_OK(AddSymbolicGradients(
-      scope, {gen_loss},
-      {fake_output.conv1_weights, fake_output.conv2_weights,
-       fake_output.fc1_weights, fake_output.conv1_biases,
-       fake_output.conv2_biases, fake_output.fc1_biases},
-      &grad_outputs_gen));
+  TF_CHECK_OK(
+      AddSymbolicGradients(scope, {gen_loss},
+                           {generated_images.w1, generated_images.filter,
+                            generated_images.filter2, generated_images.filter3},
+                           &grad_outputs_gen));
   LOG(INFO) << "Node building status: " << scope.status();
 
   std::vector<Output> grad_outputs_disc;
@@ -374,38 +400,28 @@ int main() {
   auto beta2_power = Pow(scope, beta2, global_step);
 
   // Generator
-  auto apply_conv1_weights_gen =
-      ApplyAdam(scope, fake_output.conv1_weights, fake_output.conv1_wm,
-                fake_output.conv1_wv, beta1_power, beta2_power, lr, beta1,
+  auto apply_w1_gen =
+      ApplyAdam(scope, generated_images.w1, generated_images.w1_wm,
+                generated_images.w1_wv, beta1_power, beta2_power, lr, beta1,
                 beta2, epsilon, grad_outputs_gen[0]);
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto apply_conv2_weights_gen =
-      ApplyAdam(scope, fake_output.conv2_weights, fake_output.conv2_wm,
-                fake_output.conv2_wv, beta1_power, beta2_power, lr, beta1,
+  auto apply_filter_gen =
+      ApplyAdam(scope, generated_images.filter, generated_images.filter_wm,
+                generated_images.filter_wv, beta1_power, beta2_power, lr, beta1,
                 beta2, epsilon, grad_outputs_gen[1]);
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto apply_fc1_weights_gen = ApplyAdam(
-      scope, fake_output.fc1_weights, fake_output.fc1_wm, fake_output.fc1_wv,
-      beta1_power, beta2_power, lr, beta1, beta2, epsilon, grad_outputs_gen[2]);
+  auto apply_filter2_gen =
+      ApplyAdam(scope, generated_images.filter2, generated_images.filter2_wm,
+                generated_images.filter2_wv, beta1_power, beta2_power, lr,
+                beta1, beta2, epsilon, grad_outputs_gen[2]);
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto apply_conv1_biases_gen =
-      ApplyAdam(scope, fake_output.conv1_biases, fake_output.conv1_bm,
-                fake_output.conv1_bv, beta1_power, beta2_power, lr, beta1,
-                beta2, epsilon, grad_outputs_gen[3]);
-  LOG(INFO) << "Node building status: " << scope.status();
-
-  auto apply_conv2_biases_gen =
-      ApplyAdam(scope, fake_output.conv2_biases, fake_output.conv2_bm,
-                fake_output.conv2_bv, beta1_power, beta2_power, lr, beta1,
-                beta2, epsilon, grad_outputs_gen[4]);
-  LOG(INFO) << "Node building status: " << scope.status();
-
-  auto apply_fc1_biases_gen = ApplyAdam(
-      scope, fake_output.fc1_biases, fake_output.fc1_bm, fake_output.fc1_bv,
-      beta1_power, beta2_power, lr, beta1, beta2, epsilon, grad_outputs_gen[5]);
+  auto apply_filter3_gen =
+      ApplyAdam(scope, generated_images.filter3, generated_images.filter3_wm,
+                generated_images.filter3_wv, beta1_power, beta2_power, lr,
+                beta1, beta2, epsilon, grad_outputs_gen[3]);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // discriminator
@@ -449,7 +465,11 @@ int main() {
   TF_CHECK_OK(session.Run({assign_global_step}, nullptr));
   TF_CHECK_OK(session.Run(
       {generated_images.assign_w1, generated_images.assign_filter,
-       generated_images.assign_filter2, generated_images.assign_filter3},
+       generated_images.assign_filter2, generated_images.assign_filter3,
+       generated_images.assign_w1_wm, generated_images.assign_w1_wv,
+       generated_images.assign_filter_wm, generated_images.assign_filter_wv,
+       generated_images.assign_filter2_wm, generated_images.assign_filter2_wv,
+       generated_images.assign_filter3_wm, generated_images.assign_filter3_wv},
       nullptr));
   TF_CHECK_OK(session.Run(
       {real_output.assign_conv1_weights, real_output.assign_conv1_biases,
@@ -462,17 +482,6 @@ int main() {
        real_output.assign_fc1_wm, real_output.assign_fc1_wv,
        real_output.assign_fc1_bm, real_output.assign_fc1_bv},
       nullptr));
-  TF_CHECK_OK(session.Run(
-      {fake_output.assign_conv1_weights, fake_output.assign_conv1_biases,
-       fake_output.assign_conv2_weights, fake_output.assign_conv2_biases,
-       fake_output.assign_fc1_weights, fake_output.assign_fc1_biases,
-       fake_output.assign_conv1_wm, fake_output.assign_conv1_wv,
-       fake_output.assign_conv1_bm, fake_output.assign_conv1_bv,
-       fake_output.assign_conv2_wm, fake_output.assign_conv2_wv,
-       fake_output.assign_conv2_bm, fake_output.assign_conv2_bv,
-       fake_output.assign_fc1_wm, fake_output.assign_fc1_wv,
-       fake_output.assign_fc1_bm, fake_output.assign_fc1_bv},
-      nullptr));
 
   // Train
   for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
@@ -481,14 +490,13 @@ int main() {
     // batches training
     while (true) {
       vector<Tensor> outputs;
-      Status status = session.Run(
-          {gen_loss, disc_loss, apply_conv1_weights_gen,
-           apply_conv2_weights_gen, apply_fc1_weights_gen,
-           apply_conv1_biases_gen, apply_conv2_biases_gen, apply_fc1_biases_gen,
-           apply_conv1_weights_disc, apply_conv2_weights_disc,
-           apply_fc1_weights_disc, apply_conv1_biases_disc,
-           apply_conv2_biases_disc, apply_fc1_biases_disc},
-          &outputs);
+      Status status =
+          session.Run({gen_loss, disc_loss, apply_w1_gen, apply_filter_gen,
+                       apply_filter2_gen, apply_filter3_gen,
+                       apply_conv1_weights_disc, apply_conv2_weights_disc,
+                       apply_fc1_weights_disc, apply_conv1_biases_disc,
+                       apply_conv2_biases_disc, apply_fc1_biases_disc},
+                      &outputs);
       if (status.ok()) {
 #ifdef VERBOSE
         LOG(INFO) << "Print epoch: " << epoch

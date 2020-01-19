@@ -38,7 +38,6 @@ using namespace std;
 
 // Adjustable Parameters
 #define VALIDATION_SIZE 5000  // Size of the validation set.
-#define SEED 66478            // Set to None for random seed.
 #define BATCH_SIZE 64
 #define BATCHES_PER_EPOCHS 859  // (55000 / BATCH_SIZE) = 859 max
 #define NUM_EPOCHS 10
@@ -63,16 +62,6 @@ static string DetailedDebugString(const Tensor& tensor) {
                          " values: ", tensor.SummarizeValue(-1, true), ">");
 }
 
-//
-// Python code: seed1, seed2 = random_seed.get_seed(seed)
-//
-const int DEFAULT_GRAPH_SEED = 87654321;
-const int MAXINT32 = std::pow(2, 31) - 1;
-
-static int get_seed1(int seed) { return DEFAULT_GRAPH_SEED; }
-
-static int get_seed2(int seed) { return seed % MAXINT32; }
-
 // dropout
 // Python Code {
 // keep_prob = 1 - rate
@@ -87,9 +76,7 @@ static int get_seed2(int seed) { return seed % MAXINT32; }
 static Status Dropout(const Scope& scope, const Input x, const int rate,
                       Output& dropout) {
   float keep_prob = 1 - rate;
-  auto random_value5 = RandomUniform(
-      scope, Shape(scope, x), DT_FLOAT,
-      RandomUniform::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value5 = RandomUniform(scope, Shape(scope, x), DT_FLOAT);
   auto random_tensor =
       Add(scope, random_value5, Const<float>(scope, {keep_prob}));
   auto binary_tensor = Floor(scope, random_tensor);
@@ -110,14 +97,16 @@ int main() {
 
   // Read file and decompress data
   auto inputs_contents = ReadFile(
-      scope, Const<tensorflow::tstring>(scope, "/tmp/data/train-images-idx3-ubyte.gz",
-                           TensorShape({})));
+      scope,
+      Const<tensorflow::tstring>(scope, "/tmp/data/train-images-idx3-ubyte.gz",
+                                 TensorShape({})));
   auto inputs_decode_compressed = DecodeCompressed(
       scope, inputs_contents, DecodeCompressed::CompressionType("GZIP"));
 
   auto labels_contents = ReadFile(
-      scope, Const<tensorflow::tstring>(scope, "/tmp/data/train-labels-idx1-ubyte.gz",
-                           TensorShape({})));
+      scope,
+      Const<tensorflow::tstring>(scope, "/tmp/data/train-labels-idx1-ubyte.gz",
+                                 TensorShape({})));
   auto labels_decode_compressed = DecodeCompressed(
       scope, labels_contents, DecodeCompressed::CompressionType("GZIP"));
 
@@ -184,9 +173,8 @@ int main() {
   auto rate = Const(scope, {0.1f});
 
   auto conv1_weights = Variable(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT);
-  auto random_value = TruncatedNormal(
-      scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT,
-      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value =
+      TruncatedNormal(scope, {5, 5, NUM_CHANNELS, 32}, DT_FLOAT);
   auto assign_conv1_weights =
       Assign(scope, conv1_weights, Multiply(scope, random_value, rate));
 
@@ -196,9 +184,7 @@ int main() {
   auto assign_conv1_biases = Assign(scope, conv1_biases, b_zero_tensor);
 
   auto conv2_weights = Variable(scope, {5, 5, 32, 64}, DT_FLOAT);
-  auto random_value2 = TruncatedNormal(
-      scope, {5, 5, 32, 64}, DT_FLOAT,
-      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value2 = TruncatedNormal(scope, {5, 5, 32, 64}, DT_FLOAT);
   auto assign_conv2_weights =
       Assign(scope, conv2_weights, Multiply(scope, random_value2, rate));
 
@@ -210,9 +196,7 @@ int main() {
   s1 = s1 / 4;
   s1 = std::pow(s1, 2) * 64;
   auto fc1_weights = Variable(scope, {s1, 512}, DT_FLOAT);
-  auto random_value3 = TruncatedNormal(
-      scope, {s1, 512}, DT_FLOAT,
-      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value3 = TruncatedNormal(scope, {s1, 512}, DT_FLOAT);
   auto assign_fc1_weights =
       Assign(scope, fc1_weights, Multiply(scope, random_value3, rate));
 
@@ -221,9 +205,7 @@ int main() {
       Assign(scope, fc1_biases, Const<float>(scope, 0.1f, TensorShape({512})));
 
   auto fc2_weights = Variable(scope, {512, NUM_LABELS}, DT_FLOAT);
-  auto random_value4 = TruncatedNormal(
-      scope, {512, NUM_LABELS}, DT_FLOAT,
-      TruncatedNormal::Seed(get_seed1(SEED)).Seed2(get_seed2(SEED)));
+  auto random_value4 = TruncatedNormal(scope, {512, NUM_LABELS}, DT_FLOAT);
   auto assign_fc2_weights =
       Assign(scope, fc2_weights, Multiply(scope, random_value4, rate));
 

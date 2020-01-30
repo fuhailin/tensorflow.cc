@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <queue>
 #include <vector>
 
 #include "tensorflow/cc/framework/scope_internal.h"
@@ -46,6 +47,11 @@ Scope::Impl::Impl(Graph* graph, Status* status, NameMap* name_map,
     : graph_(graph),
       status_(status),
       name_map_(name_map),
+      trainable_variables_(
+          std::shared_ptr<StringOutputMap>(new StringOutputMap)),
+      trainable_variables_shapes_(
+          std::shared_ptr<StringShapeMap>(new StringShapeMap)),
+      assigns_(std::shared_ptr<OutputMap>(new OutputMap)),
       refiner_(refiner),
       scope_used_(nullptr),
       colocation_constraints_(),
@@ -58,6 +64,11 @@ Scope::Impl::Impl(const std::shared_ptr<Graph>& graph,
     : graph_(graph),
       status_(status),
       name_map_(name_map),
+      trainable_variables_(
+          std::shared_ptr<StringOutputMap>(new StringOutputMap)),
+      trainable_variables_shapes_(
+          std::shared_ptr<StringShapeMap>(new StringShapeMap)),
+      assigns_(std::shared_ptr<OutputMap>(new OutputMap)),
       refiner_(refiner),
       scope_used_(nullptr),
       colocation_constraints_(),
@@ -85,6 +96,9 @@ Scope::Impl::Impl(const Scope& other, Tags::ScopeName, const string& name,
       status_(other.impl()->status_),
       name_map_(copy_names ? other.impl()->name_map_
                            : std::shared_ptr<NameMap>(new NameMap)),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(nullptr),
       control_deps_(other.impl()->control_deps_),
@@ -103,6 +117,9 @@ Scope::Impl::Impl(const Scope& other, Tags::OpName, const string& name,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -121,6 +138,9 @@ Scope::Impl::Impl(const Scope& other, Tags::ControlDeps,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(
@@ -144,6 +164,9 @@ Scope::Impl::Impl(const Scope& other, Tags::Device, const string& device)
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -162,6 +185,9 @@ Scope::Impl::Impl(const Scope& other, Tags::SingleUseScope,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(new bool(false)),
       control_deps_(other.impl()->control_deps_),
@@ -179,6 +205,9 @@ Scope::Impl::Impl(const Scope& other, Tags::ExitOnError)
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -197,6 +226,9 @@ Scope::Impl::Impl(const Scope& other, Tags::KernelLabel,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -215,6 +247,9 @@ Scope::Impl::Impl(const Scope& other, Tags::Colocate,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -236,6 +271,9 @@ Scope::Impl::Impl(const Scope& other, Tags::AssignedDevice,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -254,6 +292,9 @@ Scope::Impl::Impl(const Scope& other, Tags::XlaCluster,
     : graph_(other.impl()->graph_),
       status_(other.impl()->status_),
       name_map_(other.impl()->name_map_),
+      trainable_variables_(other.impl()->trainable_variables_),
+      trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
+      assigns_(other.impl()->assigns_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -501,6 +542,117 @@ CompositeOpScopes Scope::GetCompositeOpScopes(
 Status Scope::DoShapeInference(Node* node) const {
   if (impl_->disable_shape_inference_) return Status::OK();
   return impl_->refiner_->AddNode(node);
+}
+
+// trainable variables
+void Scope::AddTrainableVariable(const Output& variable,
+                                 const PartialTensorShape& shape) const {
+  std::string node_name = this->GetNodeNameFromTensorName(variable.name());
+
+  impl()->trainable_variables_->insert({node_name, variable});
+  impl()->trainable_variables_shapes_->insert({node_name, shape});
+}
+
+std::shared_ptr<StringOutputMap> Scope::GetTrainableVariables() const {
+  return impl()->trainable_variables_;
+}
+
+::tensorflow::PartialTensorShape Scope::GetTrainableVariableShape(
+    const string& node_name) const {
+  auto search = impl()->trainable_variables_shapes_->find(node_name);
+  if (search != impl()->trainable_variables_shapes_->end()) {
+    return search->second;
+  } else {
+    ::tensorflow::PartialTensorShape ret;
+    return ret;
+  }
+}
+
+// private methods for GetTrainableVariables 2
+
+// Gets a map from string node name to NodeDef.
+void Scope::GetNodeNameToNodeDefMap(
+    GraphDef* graph_def,
+    std::unordered_map<string, NodeDef*>* name_to_node_map) const {
+  for (size_t i = 0; i < graph_def->node_size(); i++) {
+    NodeDef* node = graph_def->mutable_node(i);
+    (*name_to_node_map)[node->name()] = node;
+  }
+}
+
+// Strips off the tensor part of the tensor_name to get the node_name.
+const string Scope::GetNodeNameFromTensorName(string tensor_name) const {
+  if (tensor_name[0] == '^') {
+    tensor_name.erase(0, 1);
+  }
+  std::vector<string> tensor_name_parts = str_util::Split(tensor_name, ':');
+  return tensor_name_parts[0];
+}
+
+bool Scope::IsTrainableVariable(const std::string& var) const {
+  auto search = impl()->trainable_variables_->find(var);
+  if (search != impl()->trainable_variables_->end()) {
+    return true;
+  }
+
+  return false;
+}
+// end of private methods for GetTrainableVariables 2
+
+// GetTrainableVariables
+void Scope::GetTrainableVariables(
+    const std::unordered_set<string>& outputs,
+    const std::unordered_set<string>& skip_outputs,
+    std::vector<Output>* trainable_variables) const {
+  tensorflow::GraphDef graph_def;
+  TF_CHECK_OK(this->ToGraphDef(&graph_def));
+
+  std::unordered_map<string, NodeDef*> name_to_node_map;
+  GetNodeNameToNodeDefMap(&graph_def, &name_to_node_map);
+
+  std::unordered_set<string> reachable_node_names;
+
+  static const std::unordered_set<string>* kVariableTypes =
+      new std::unordered_set<string>({"Variable", "VariableV2", "VarHandleOp"});
+
+  std::queue<string> nodes_to_visit;
+  for (const string& output_tensor_name : outputs) {
+    nodes_to_visit.push(GetNodeNameFromTensorName(output_tensor_name));
+  }
+
+  // We do a traversal backwards from the outputs specified in the MetaGraphDef.
+  while (!nodes_to_visit.empty()) {
+    const string node_name = nodes_to_visit.front();
+    nodes_to_visit.pop();
+    if (reachable_node_names.find(node_name) != reachable_node_names.end()) {
+      continue;
+    }
+    reachable_node_names.insert(node_name);
+    NodeDef* node = name_to_node_map.at(node_name);
+    if (kVariableTypes->find(node->op()) != kVariableTypes->end()) {
+      auto search = impl()->trainable_variables_->find(node_name);
+      if (search != impl()->trainable_variables_->end()) {
+        trainable_variables->emplace_back(search->second);
+      }
+    }
+
+    for (const string& input_tensor_name : node->input()) {
+      if (skip_outputs.find(input_tensor_name) != skip_outputs.end()) {
+        continue;
+      }
+
+      nodes_to_visit.push(GetNodeNameFromTensorName(input_tensor_name));
+    }
+  }
+}
+
+// assigns
+void Scope::AddAssign(const Output& assign) const {
+  impl()->assigns_->insert({assign, false});
+}
+
+std::shared_ptr<OutputMap> Scope::GetAssigns() const {
+  return impl()->assigns_;
 }
 
 class InternalScope {

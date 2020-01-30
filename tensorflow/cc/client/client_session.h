@@ -20,6 +20,8 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <utility>
+#include <unordered_set>
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -31,7 +33,6 @@ namespace tensorflow {
 namespace thread {
 
 struct ThreadPoolOptions;
-
 }
 
 /// @addtogroup core
@@ -96,19 +97,19 @@ class ClientSession {
 
   // Directly pass parameters to Session.Run
   Status Run(const RunOptions& run_options,
-                          const std::vector<std::pair<string, Tensor>> feeds,
-                          const std::vector<string>& output_tensor_names,
-                          const std::vector<string>& target_node_names,
-                          std::vector<Tensor>* outputs) const;
+             const std::vector<std::pair<string, Tensor>> feeds,
+             const std::vector<string>& output_tensor_names,
+             const std::vector<string>& target_node_names,
+             std::vector<Tensor>* outputs) const;
 
   // Freeze model into frozen_graph_def
-  Status FreezeModel(tensorflow::GraphDef &graph_def, 
-                     tensorflow::GraphDef *frozen_graph_def, 
+  Status FreezeModel(const tensorflow::GraphDef& graph_def,
+                     tensorflow::GraphDef* frozen_graph_def,
                      const std::unordered_set<string>& freezing_outputs);
 
   // Reads a model graph definition from disk
   Status RestoreModel(const string& graph_file_name) const;
-  
+
   /// Same as above. Additionally allows user to provide custom threadpool
   /// implementation via ThreadPoolOptions.
   Status Run(const RunOptions& run_options, const FeedType& inputs,
@@ -158,6 +159,8 @@ class ClientSession {
   /// session.
   /// NOTE: This API is still experimental and may change.
   Status ReleaseCallable(CallableHandle handle);
+
+  void InitializeVariables(const Scope& scope) const;
 
  private:
   class Impl;

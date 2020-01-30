@@ -28,12 +28,30 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
 
+// hash for Output
+namespace std {
+template <>
+struct hash<::tensorflow::Output> {
+  std::size_t operator()(::tensorflow::Output const& output) const noexcept {
+    std::size_t h1 = std::hash<std::string>{}(output.name());
+
+    return h1;
+  }
+};
+}  // namespace std
+
 namespace tensorflow {
 
 class Graph;
 class GraphDef;
 class NodeBuilder;
 struct CompositeOpScopes;
+
+typedef std::unordered_map<::tensorflow::Output, bool> OutputMap;
+typedef std::unordered_map<std::string, ::tensorflow::Output> StringOutputMap;
+typedef std::unordered_map<std::string, ::tensorflow::PartialTensorShape>
+    StringShapeMap;
+typedef std::unordered_set<string> NameSet;
 
 /// @addtogroup core
 /// @{
@@ -237,12 +255,34 @@ class Scope {
   const Impl* impl() const { return impl_.get(); }
   // END_SKIP_DOXYGEN
 
+  // trainable variables
+  void AddTrainableVariable(const Output& variable,
+                            const PartialTensorShape& shape) const;
+  std::shared_ptr<StringOutputMap> GetTrainableVariables() const;
+  void GetTrainableVariables(const std::unordered_set<string>& outputs,
+                             const std::unordered_set<string>& skip_outputs,
+                             std::vector<Output>* trainable_variables) const;
+
+  ::tensorflow::PartialTensorShape GetTrainableVariableShape(
+      const string& node_name) const;
+
+  // Assigns
+  void AddAssign(const Output& assign) const;
+  std::shared_ptr<OutputMap> GetAssigns() const;
+
  private:
   Scope WithOpNameImpl(const string& op_name) const;
 
   friend class InternalScope;
   std::unique_ptr<Impl> impl_;
   explicit Scope(Impl*);
+
+ private:
+  void GetNodeNameToNodeDefMap(
+      GraphDef* graph_def,
+      std::unordered_map<string, NodeDef*>* name_to_node_map) const;
+  const string GetNodeNameFromTensorName(string tensor_name) const;
+  bool IsTrainableVariable(const std::string& var) const;
 };
 
 /// A helper struct to hold the scopes that would be used by a function

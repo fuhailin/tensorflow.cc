@@ -99,6 +99,13 @@ class Scope::Impl {
   std::shared_ptr<NameMap> name_map_ = nullptr;
   std::shared_ptr<ShapeRefiner> refiner_ = nullptr;
 
+  // trainable variables
+  std::shared_ptr<StringOutputMap> trainable_variables_ = nullptr;
+  std::shared_ptr<StringShapeMap> trainable_variables_shapes_ = nullptr;
+
+  // assign ops
+  std::shared_ptr<OutputMap> assigns_ = nullptr;
+
   // If scope_used_ is not nullptr, op_name_ should be empty and
   // GetUniqueNameForOp can only be called once on this scope. More calls to
   // GetUniqueNameForOp will cause an error status to be set on this scope.

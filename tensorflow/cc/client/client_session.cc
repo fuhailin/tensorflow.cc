@@ -16,14 +16,15 @@ limitations under the License.
 #include "tensorflow/cc/client/client_session.h"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "tensorflow/cc/saved_model/loader.h"
+#include "tensorflow/cc/tools/freeze_saved_model.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/protobuf/config.pb.h"
-#include "tensorflow/cc/saved_model/loader.h"
-#include "tensorflow/cc/tools/freeze_saved_model.h"
 
 namespace tensorflow {
 
@@ -133,7 +134,6 @@ Status ClientSession::Run(const RunOptions& run_options,
                           const std::vector<string>& output_tensor_names,
                           const std::vector<string>& target_node_names,
                           std::vector<Tensor>* outputs) const {
-
   TF_RETURN_IF_ERROR(impl()->MaybeExtendGraph());
   return impl()->session_->Run(run_options, feeds, output_tensor_names,
                                target_node_names, outputs, nullptr);
@@ -193,27 +193,20 @@ Status ClientSession::ReleaseCallable(CallableHandle handle) {
   return impl()->session_->ReleaseCallable(handle);
 }
 
-Session* ClientSession::GetSession() {
-  return impl()->session_.get();
-}
+Session* ClientSession::GetSession() { return impl()->session_.get(); }
 
-Status ClientSession::FreezeModel(tensorflow::GraphDef &graph_def, 
-                     tensorflow::GraphDef *frozen_graph_def, 
-                     const std::unordered_set<string>& freezing_outputs) {
+Status ClientSession::FreezeModel(
+    const tensorflow::GraphDef& graph_def,
+    tensorflow::GraphDef* frozen_graph_def,
+    const std::unordered_set<string>& freezing_outputs) {
   tensorflow::SavedModelBundle saved_model_bundle;
   std::unordered_set<std::string> inputs;
   std::unordered_set<std::string> outputs;
 
   TF_RETURN_IF_ERROR(tensorflow::AddGraphDefWithOutputsToSavedModelBundle(
-                              GetSession(), 
-                              graph_def, 
-                              freezing_outputs, 
-                              "", 
-                              &saved_model_bundle));
-  TF_RETURN_IF_ERROR(tensorflow::FreezeSavedModel(saved_model_bundle, 
-                                                  frozen_graph_def, 
-                                                  &inputs, 
-                                                  &outputs));
+      GetSession(), graph_def, freezing_outputs, "", &saved_model_bundle));
+  TF_RETURN_IF_ERROR(tensorflow::FreezeSavedModel(
+      saved_model_bundle, frozen_graph_def, &inputs, &outputs));
 
   // Need to release session ownership
   saved_model_bundle.session.release();
@@ -228,7 +221,7 @@ Status ClientSession::RestoreModel(const string& graph_file_name) const {
       ReadTextProto(Env::Default(), graph_file_name, &graph_def);
   if (!load_graph_status.ok()) {
     return errors::NotFound("Failed to load compute graph at '",
-                                        graph_file_name, "'");
+                            graph_file_name, "'");
   }
 
   Status session_create_status = impl()->session_->Create(graph_def);
@@ -239,5 +232,23 @@ Status ClientSession::RestoreModel(const string& graph_file_name) const {
   return Status::OK();
 }
 
+void ClientSession::InitializeVariables(const Scope& scope) const {
+  OutputList output_list;
+
+  // Iterate assigns from scope
+  auto assigns = scope.GetAssigns();
+  for (auto iter = assigns->begin(); iter != assigns->end(); ++iter) {
+    auto output = iter->first;
+    auto initialized = iter->second;
+
+    if (!initialized) {
+      output_list.emplace_back(output);
+
+      iter->second = true;
+    }
+  }
+
+  if (!output_list.empty()) TF_CHECK_OK(Run(output_list, nullptr));
+}
 
 }  // end namespace tensorflow

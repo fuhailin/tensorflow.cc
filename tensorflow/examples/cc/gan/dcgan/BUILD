@@ -6,6 +6,8 @@ tf_cc_binary(
         "dcgan.cc",
         "nn_ops_rkz.cc",
         "nn_ops_rkz.h",
+        "optimizer.cc",
+        "optimizer.h",
         "util.h",
     ],
     deps = [

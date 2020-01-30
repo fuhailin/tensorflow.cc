@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_UTIL_H_
 #define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_UTIL_H_
 
-// #define VERBOSE 1
-// #define TESTING 1
+#define VERBOSE 1
+#define TESTING 1
 
 // Adjustable Parameters
 #define VALIDATION_SIZE 5000  // Size of the validation set.
@@ -31,6 +31,7 @@ limitations under the License.
 #define BETA_1 0.9f
 #define BETA_2 0.999f
 #define EPSILON 1e-7
+#define MOMENTUM 0.99f
 
 // Not to change
 #define IMAGE_SIZE 28

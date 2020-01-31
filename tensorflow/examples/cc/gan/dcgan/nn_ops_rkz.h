@@ -122,18 +122,15 @@ class Conv2DTranspose {
 };
 
 // Wrap BatchNormalization
-class KBatchNormalization {
+class TFBatchNormalization {
  public:
-  KBatchNormalization() = default;
-  KBatchNormalization(const ::tensorflow::Scope& scope,
-                      const PartialTensorShape& shape);
+  TFBatchNormalization() = default;
+  TFBatchNormalization(const ::tensorflow::Scope& scope,
+                       const PartialTensorShape& shape);
 
   Output Build(const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
                const std::initializer_list<int>& axes,
                const ::tensorflow::Input& variance_epsilon, bool training);
-
-  operator ::tensorflow::Output() const { return output; }
-  operator ::tensorflow::Input() const { return output; }
 
  private:
   ::tensorflow::Output moving_mean;
@@ -141,8 +138,24 @@ class KBatchNormalization {
 
   ::tensorflow::Output gamma;
   ::tensorflow::Output beta;
+};
 
-  ::tensorflow::Output output;
+// Wrap FusedBatchNorm
+class TFFusedBatchNorm {
+ public:
+  TFFusedBatchNorm() = default;
+  TFFusedBatchNorm(const ::tensorflow::Scope& scope,
+                   const PartialTensorShape& shape);
+
+  Output Build(const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
+               const float variance_epsilon, bool training);
+
+ private:
+  ::tensorflow::Output moving_mean;
+  ::tensorflow::Output moving_variance;
+
+  ::tensorflow::Output gamma;
+  ::tensorflow::Output beta;
 };
 
 class Generator {
@@ -158,7 +171,9 @@ class Generator {
   ::tensorflow::Output filter2;
   ::tensorflow::Output filter3;
 
-  KBatchNormalization batchnorm_op;
+  TFBatchNormalization batchnorm_op;
+  TFFusedBatchNorm batchnorm1_op;
+  TFFusedBatchNorm batchnorm2_op;
 };
 
 class Discriminator {

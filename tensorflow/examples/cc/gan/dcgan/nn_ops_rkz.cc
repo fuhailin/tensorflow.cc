@@ -196,8 +196,8 @@ Conv2DTranspose::Conv2DTranspose(const ::tensorflow::Scope& scope,
                                      strides, padding);
 }
 
-KBatchNormalization::KBatchNormalization(const ::tensorflow::Scope& scope,
-                                         const PartialTensorShape& shape) {
+TFBatchNormalization::TFBatchNormalization(const ::tensorflow::Scope& scope,
+                                           const PartialTensorShape& shape) {
   // moving mean and variance
   this->moving_mean = Variable(scope, shape, DT_FLOAT);
   TFAssign(scope, this->moving_mean, ZerosLike(scope, this->moving_mean));
@@ -217,10 +217,11 @@ KBatchNormalization::KBatchNormalization(const ::tensorflow::Scope& scope,
   LOG(INFO) << "Node building status: " << scope.status();
 }
 
-Output KBatchNormalization::Build(
-    const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
-    const std::initializer_list<int>& axes,
-    const ::tensorflow::Input& variance_epsilon, bool training) {
+Output TFBatchNormalization::Build(const ::tensorflow::Scope& scope,
+                                   const ::tensorflow::Input& x,
+                                   const std::initializer_list<int>& axes,
+                                   const ::tensorflow::Input& variance_epsilon,
+                                   bool training) {
   Output mean;
   Output variance;
 
@@ -256,6 +257,75 @@ Output KBatchNormalization::Build(
                             variance_epsilon);
 }
 
+TFFusedBatchNorm::TFFusedBatchNorm(const ::tensorflow::Scope& scope,
+                                   const PartialTensorShape& shape) {
+  // moving mean and variance
+  this->moving_mean = Variable(scope, shape, DT_FLOAT);
+  TFAssign(scope, this->moving_mean, ZerosLike(scope, this->moving_mean));
+
+  this->moving_variance = Variable(scope, shape, DT_FLOAT);
+  TFAssign(scope, this->moving_variance,
+           ZerosLike(scope, this->moving_variance));
+
+  // gamma
+  this->gamma =
+      TFVariable(scope.WithOpName("fused_gamma"), shape, DT_FLOAT, true);
+  TFAssign(scope, this->gamma, OnesLike(scope, this->gamma));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  // beta
+  this->beta =
+      TFVariable(scope.WithOpName("fused_beta"), shape, DT_FLOAT, true);
+  TFAssign(scope, this->beta, ZerosLike(scope, this->beta));
+  LOG(INFO) << "Node building status: " << scope.status();
+}
+
+Output TFFusedBatchNorm::Build(const ::tensorflow::Scope& scope,
+                               const ::tensorflow::Input& x,
+                               const float variance_epsilon, bool training) {
+  if (training) {
+    // mean and variance
+    auto mean = Const<float>(scope, {});
+    auto variance = Const<float>(scope, {});
+
+    auto fused_batch_norm =
+        FusedBatchNorm(scope, x, this->gamma, this->beta, mean, variance,
+                       FusedBatchNorm::Epsilon(variance_epsilon));
+
+    // update ops
+    auto decay = Const<float>(scope, 1.0f - MOMENTUM, {});
+    auto update_delta1 = Multiply(
+        scope, Sub(scope, this->moving_mean, fused_batch_norm.batch_mean),
+        decay);
+    auto update_moving_mean =
+        AssignSub(scope.WithOpName("fused_update_moving_mean"),
+                  this->moving_mean, update_delta1);
+    scope.AddUpdateOp(update_moving_mean);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    auto update_delta2 = Multiply(
+        scope,
+        Sub(scope, this->moving_variance, fused_batch_norm.batch_variance),
+        decay);
+    auto update_moving_variance =
+        AssignSub(scope.WithOpName("fused_update_moving_variance"),
+                  this->moving_variance, update_delta2);
+    scope.AddUpdateOp(update_moving_variance);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    return fused_batch_norm.y;
+  } else {
+    auto mean = this->moving_mean;
+    auto variance = this->moving_variance;
+
+    auto fused_batch_norm = FusedBatchNorm(
+        scope, x, this->gamma, this->beta, mean, variance,
+        FusedBatchNorm::Epsilon(variance_epsilon).IsTraining(false));
+
+    return fused_batch_norm.y;
+  }
+}
+
 // Generator constructor to set variables and assigns
 Generator::Generator(const ::tensorflow::Scope& scope) {
   this->w1 = TFVariable(scope.WithOpName("weight"), {NOISE_DIM, UNITS},
@@ -284,11 +354,12 @@ Generator::Generator(const ::tensorflow::Scope& scope) {
   auto random_value3 = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   TFAssign(scope, filter3, random_value3);
 
-  this->batchnorm_op = KBatchNormalization(scope, {UNITS});
+  this->batchnorm_op = TFBatchNormalization(scope, {UNITS});
+  this->batchnorm1_op = TFFusedBatchNorm(scope, {128});
+  this->batchnorm2_op = TFFusedBatchNorm(scope, {64});
 }
 
 // Build model
-// TODO(Rock): handle the case of is_training false
 Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
                         bool training) {
   // random noise input
@@ -323,21 +394,12 @@ Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization 1, use FusedBatchNorm
-  // For inference, need to compute the running mean and variance
-  auto mean1 = Const<float>(scope, {});
-  auto variance1 = Const<float>(scope, {});
-  auto offset1 = BroadcastTo(scope, 0.0f, {128});
-  auto scale1 = BroadcastTo(scope, 1.0f, {128});
-  auto batchnorm1 = FusedBatchNorm(scope, deconv1, scale1, offset1, mean1,
-                                   variance1, FusedBatchNorm::Epsilon(0.001f));
-  // auto batchnorm1 = BatchNormalization(scope, deconv1, mean, variance,
-  // offset,
-  //                                     scale, variance_epsilon);
+  auto batchnorm1 = this->batchnorm1_op.Build(scope, deconv1, 0.001f, training);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // LeakyReLU 1
-  auto leakyrelu1 = internal::LeakyRelu(scope, batchnorm1.y,
-                                        internal::LeakyRelu::Alpha(0.3f));
+  auto leakyrelu1 =
+      internal::LeakyRelu(scope, batchnorm1, internal::LeakyRelu::Alpha(0.3f));
   LOG(INFO) << "Node building status: " << scope.status();
 
   // Conv2DTranspose 2
@@ -348,19 +410,14 @@ Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization 2, use FusedBatchNorm
-  // For inference, need to compute the running mean and variance
   auto offset2 = BroadcastTo(scope, 0.0f, {64});
   auto scale2 = BroadcastTo(scope, 1.0f, {64});
-  auto batchnorm2 = FusedBatchNorm(scope, deconv2, scale2, offset2, mean1,
-                                   variance1, FusedBatchNorm::Epsilon(0.001f));
-  // auto batchnorm2 = BatchNormalization(scope, deconv2, mean, variance,
-  // offset,
-  //                                     scale, variance_epsilon);
+  auto batchnorm2 = this->batchnorm2_op.Build(scope, deconv2, 0.001f, training);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // LeakyReLU 2
-  auto leakyrelu2 = internal::LeakyRelu(scope, batchnorm2.y,
-                                        internal::LeakyRelu::Alpha(0.3f));
+  auto leakyrelu2 =
+      internal::LeakyRelu(scope, batchnorm2, internal::LeakyRelu::Alpha(0.3f));
   LOG(INFO) << "Node building status: " << scope.status();
 
   // Conv2DTranspose 3

@@ -251,8 +251,7 @@ KBatchNormalization::KBatchNormalization(
                                     this->gamma, variance_epsilon);
 }
 
-// Generator
-// TODO(Rock): handle the case of is_training false
+// Generator constructor to set variables and assigns
 Generator::Generator(const ::tensorflow::Scope& scope) {
   this->w1 = TFVariable(scope, {NOISE_DIM, UNITS}, DT_FLOAT, true);
   LOG(INFO) << "Node building status: " << scope.status();
@@ -277,6 +276,8 @@ Generator::Generator(const ::tensorflow::Scope& scope) {
   TFAssign(scope, filter3, random_value3);
 }
 
+// Build model
+// TODO(Rock): handle the case of is_training false
 Output Generator::Build(const ::tensorflow::Scope& scope,
                         const int batch_size) {
   // random noise input
@@ -368,7 +369,7 @@ Output Generator::Build(const ::tensorflow::Scope& scope,
   return output;
 }
 
-// Discriminator
+// Discriminator constructor to set variables and assigns
 Discriminator::Discriminator(const ::tensorflow::Scope& scope) {
   this->conv1_weights =
       TFVariable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
@@ -399,6 +400,7 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope) {
   TFAssign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
 }
 
+// Build model
 Output Discriminator::Build(const ::tensorflow::Scope& scope,
                             const ::tensorflow::Input& inputs,
                             const int batch_size) {

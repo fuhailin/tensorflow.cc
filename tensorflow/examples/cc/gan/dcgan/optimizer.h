@@ -40,17 +40,26 @@ class AdamOptimizer {
              std::vector<Tensor>* outputs);
 
  private:
+  // Store all ApplyAdam outputs
   std::vector<Output> apply_adams;
-  std::vector<Output> all_outputs;
 
+  // Store grad outputs from AddSymbolicGradients
+  std::vector<Output> grad_outputs;
+
+  // learning rate
   Output lr;
+
+  // beta*
   Output beta1;
   Output beta2;
-  Output epsilon;
-  Output global_step;
   Output beta1_power;
   Output beta2_power;
-  Output assign_add_global_step;
+
+  Output epsilon;
+
+  // steps
+  Output local_step;
+  Output assign_add_local_step;
 };
 
 }  // namespace ops

@@ -25,7 +25,7 @@ limitations under the License.
 namespace tensorflow {
 namespace ops {
 
-// Wrap Variable
+// Wrap Variable, listed if trainable
 class TFVariable {
  public:
   TFVariable(const ::tensorflow::Scope& scope, PartialTensorShape shape,
@@ -39,6 +39,7 @@ class TFVariable {
   ::tensorflow::Output output;
 };
 
+// Wrap Assign, listed so it will be managed to be initialized
 class TFAssign {
  public:
   TFAssign(const ::tensorflow::Scope& scope, ::tensorflow::Input ref,

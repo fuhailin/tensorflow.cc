@@ -15,8 +15,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <queue>
+#include <utility>
 #include <vector>
 
+#include "tensorflow/cc/framework/scope.h"
 #include "tensorflow/cc/framework/scope_internal.h"
 #include "tensorflow/core/common_runtime/shape_refiner.h"
 #include "tensorflow/core/framework/node_def_util.h"
@@ -568,7 +570,7 @@ std::shared_ptr<StringOutputMap> Scope::GetTrainableVariables() const {
   }
 }
 
-// private methods for GetTrainableVariables 2
+// private methods for GetTrainableVariables #2
 
 // Gets a map from string node name to NodeDef.
 void Scope::GetNodeNameToNodeDefMap(

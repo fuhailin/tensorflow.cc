@@ -280,10 +280,11 @@ int main() {
   //
 
   //
-  // Test models
+  // Models
   auto generator = Generator(scope);
   auto discriminator = Discriminator(scope);
 
+  // For inference
   auto generator_inference = generator.Build(scope, 1);
   auto discriminator_inference =
       discriminator.Build(scope, generator_inference, 1);
@@ -296,41 +297,6 @@ int main() {
   LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
   LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
 
-#ifdef TESTING
-  // get trainable_variables
-  {
-    LOG(INFO) << "inference node name : " << generator_inference.node()->name()
-              << " - " << discriminator_inference.node()->name();
-
-    std::vector<Output> trainable_variables;
-    scope.GetTrainableVariables({generator_inference.node()->name()}, {},
-                                &trainable_variables);
-
-    for (auto iter = trainable_variables.begin();
-         iter != trainable_variables.end(); ++iter) {
-      LOG(INFO) << "trainable_variables iter " << iter->name();
-    }
-  }
-
-  LOG(INFO) << "-----------------------------------------------";
-
-  {
-    std::vector<Output> trainable_variables;
-    scope.GetTrainableVariables({discriminator_inference.node()->name()},
-                                {generator_inference.node()->name()},
-                                &trainable_variables);
-
-    for (auto iter = trainable_variables.begin();
-         iter != trainable_variables.end(); ++iter) {
-      LOG(INFO) << "trainable_variables iter " << iter->name();
-    }
-  }
-
-  LOG(INFO) << "-----------------------------------------------";
-
-#endif
-
-  //
   // Train models
   auto generated_images = generator.Build(scope, BATCH_SIZE);
   auto real_output =
@@ -341,48 +307,33 @@ int main() {
   auto gen_loss = GeneratorLoss(scope, fake_output);
   auto disc_loss = DiscriminatorLoss(scope, real_output, fake_output);
 
-#ifdef TESTING
-  // get trainable_variables
-  {
-    LOG(INFO) << "training node name : " << generated_images.node()->name()
-              << " - " << real_output.node()->name();
-
-    std::vector<Output> trainable_variables;
-    scope.GetTrainableVariables({generated_images.node()->name()}, {},
-                                &trainable_variables);
-
-    for (auto iter = trainable_variables.begin();
-         iter != trainable_variables.end(); ++iter) {
-      LOG(INFO) << "trainable_variables iter " << iter->name();
-    }
-  }
-
-  LOG(INFO) << "-----------------------------------------------";
-
-  {
-    std::vector<Output> trainable_variables;
-    scope.GetTrainableVariables({real_output.node()->name()},
-                                {generated_images.node()->name()},
-                                &trainable_variables);
-
-    for (auto iter = trainable_variables.begin();
-         iter != trainable_variables.end(); ++iter) {
-      LOG(INFO) << "trainable_variables iter " << iter->name();
-    }
-  }
-
-  LOG(INFO) << "-----------------------------------------------";
-
-#endif
-
   std::vector<Output> trainable_variables_gen;
   scope.GetTrainableVariables({generated_images.node()->name()}, {},
                               &trainable_variables_gen);
+
+#ifdef VERBOSE
+  LOG(INFO) << "Training node name : " << generated_images.node()->name();
+
+  for (auto iter = trainable_variables_gen.begin();
+       iter != trainable_variables_gen.end(); ++iter) {
+    LOG(INFO) << "trainable_variables_gen iter " << iter->name();
+  }
+#endif
 
   std::vector<Output> trainable_variables_disc;
   scope.GetTrainableVariables({real_output.node()->name()},
                               {generated_images.node()->name()},
                               &trainable_variables_disc);
+
+#ifdef VERBOSE
+  LOG(INFO) << "Training node name : " << real_output.node()->name() << " - "
+            << generated_images.node()->name();
+
+  for (auto iter = trainable_variables_disc.begin();
+       iter != trainable_variables_disc.end(); ++iter) {
+    LOG(INFO) << "trainable_variables_disc iter " << iter->name();
+  }
+#endif
 
   auto adam_optimizer = AdamOptimizer(scope);
   adam_optimizer.Build(scope, {gen_loss}, trainable_variables_gen);
@@ -399,6 +350,7 @@ int main() {
     while (true) {
       vector<Tensor> outputs;
 
+      // Run adam optimizer
       Status status = adam_optimizer.Run(scope, session, &outputs);
       if (status.ok()) {
 #ifdef VERBOSE
@@ -408,6 +360,7 @@ int main() {
                   << ", disc_loss: " << outputs[1].DebugString();
 #endif
       } else {
+        // OUT_OF_RANGE means reaching the end of the dataset
         if (status.code() != tensorflow::error::OUT_OF_RANGE)
           LOG(INFO) << "Print epoch: " << epoch << ", status: " << status;
 

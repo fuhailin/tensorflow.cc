@@ -160,6 +160,7 @@ class ClientSession {
   /// NOTE: This API is still experimental and may change.
   Status ReleaseCallable(CallableHandle handle);
 
+  // Initialize variables by running Assigns
   void InitializeVariables(const Scope& scope) const;
 
  private:

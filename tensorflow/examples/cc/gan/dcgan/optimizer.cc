@@ -34,26 +34,28 @@ AdamOptimizer::AdamOptimizer(const ::tensorflow::Scope& scope) {
   this->beta2 = Const<float>(scope, BETA_2);
   this->epsilon = Const<float>(scope, EPSILON);
 
-  this->global_step = Variable(scope, {}, DT_FLOAT);
-  TFAssign(scope, global_step, 1.0f);
+  this->local_step = Variable(scope, {}, DT_FLOAT);
+  TFAssign(scope, local_step, 1.0f);
 
-  this->assign_add_global_step = AssignAdd(scope, global_step, 1.0f);
+  this->assign_add_local_step = AssignAdd(scope, local_step, 1.0f);
 
-  this->beta1_power = Pow(scope, beta1, global_step);
-  this->beta2_power = Pow(scope, beta2, global_step);
+  this->beta1_power = Pow(scope, beta1, local_step);
+  this->beta2_power = Pow(scope, beta2, local_step);
 }
 
 void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
                           std::vector<Output> outputs,
                           std::vector<Output> trainable_variables) {
-  std::vector<Output> grad_outputs;
-  TF_CHECK_OK(
-      AddSymbolicGradients(scope, outputs, trainable_variables, &grad_outputs));
+  // AddSymbolicGradients
+  std::vector<Output> symb_grad_outputs;
+  TF_CHECK_OK(AddSymbolicGradients(scope, outputs, trainable_variables,
+                                   &symb_grad_outputs));
   LOG(INFO) << "Node building status: " << scope.status();
 
-  int grad_index = 0;
-
+  // ApplyAdam trainable_variables
+  int symb_grad_index = 0;
   for (auto var : trainable_variables) {
+    // Variables m and v for ApplyAdam
     auto wm =
         Variable(scope, scope.GetTrainableVariableShape(var.node()->name()),
                  (DataType)(static_cast<int>(var.type()) - 100));
@@ -67,38 +69,44 @@ void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
 
     auto apply_adam =
         ApplyAdam(scope, var, wm, wv, beta1_power, beta2_power, lr, beta1,
-                  beta2, epsilon, grad_outputs[grad_index++]);
+                  beta2, epsilon, symb_grad_outputs[symb_grad_index++]);
     LOG(INFO) << "Node building status: " << scope.status();
 
-    apply_adams.emplace_back(apply_adam);
+    // Append it
+    this->apply_adams.emplace_back(apply_adam);
   }
 
-  for (auto var : outputs) {
-    all_outputs.emplace_back(var);
-  }
+  // Append outputs to grad_outputs
+  this->grad_outputs.reserve(this->grad_outputs.size() + outputs.size());
+  this->grad_outputs.insert(this->grad_outputs.end(), outputs.begin(),
+                            outputs.end());
 }
 
 Status AdamOptimizer::Run(const ::tensorflow::Scope& scope,
                           const ::tensorflow::ClientSession& session,
                           std::vector<::tensorflow::Tensor>* outputs) {
+  // Concat grad_outputs and apply_adam, and grad_outputs first
   std::vector<Output> fetch_outputs;
-  fetch_outputs.reserve(this->all_outputs.size() + this->apply_adams.size());
-  fetch_outputs.insert(fetch_outputs.end(), this->all_outputs.begin(),
-                       this->all_outputs.end());
+  fetch_outputs.reserve(this->grad_outputs.size() + this->apply_adams.size());
+  fetch_outputs.insert(fetch_outputs.end(), this->grad_outputs.begin(),
+                       this->grad_outputs.end());
   fetch_outputs.insert(fetch_outputs.end(), this->apply_adams.begin(),
                        this->apply_adams.end());
 
+  // Run
   Status status = session.Run(fetch_outputs, outputs);
   if (status.ok()) {
+    // Increase local_step
     std::vector<Tensor> assign_add_outputs;
     TF_CHECK_OK(
-        session.Run({this->assign_add_global_step}, &assign_add_outputs));
+        session.Run({this->assign_add_local_step}, &assign_add_outputs));
 
+    // Print message
     int step = static_cast<int>(assign_add_outputs[0].scalar<float>()());
     if (step % EVAL_FREQUENCY == 0) {
       LOG(INFO) << "Print step: " << step;
-      for (int i = 0; i < this->all_outputs.size(); i++) {
-        LOG(INFO) << "Print all_outputs " << i << ": "
+      for (int i = 0; i < this->grad_outputs.size(); i++) {
+        LOG(INFO) << "Print grad_outputs " << i << ": "
                   << outputs->at(i).DebugString();
       }
     }

@@ -262,7 +262,6 @@ class Scope {
   void GetTrainableVariables(const std::unordered_set<string>& outputs,
                              const std::unordered_set<string>& skip_outputs,
                              std::vector<Output>* trainable_variables) const;
-
   ::tensorflow::PartialTensorShape GetTrainableVariableShape(
       const string& node_name) const;
 
@@ -278,6 +277,7 @@ class Scope {
   explicit Scope(Impl*);
 
  private:
+  // private methods for GetTrainableVariables #2
   void GetNodeNameToNodeDefMap(
       GraphDef* graph_def,
       std::unordered_map<string, NodeDef*>* name_to_node_map) const;

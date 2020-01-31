@@ -232,6 +232,7 @@ Status ClientSession::RestoreModel(const string& graph_file_name) const {
   return Status::OK();
 }
 
+// Initialize variables by running Assigns
 void ClientSession::InitializeVariables(const Scope& scope) const {
   OutputList output_list;
 
@@ -241,13 +242,16 @@ void ClientSession::InitializeVariables(const Scope& scope) const {
     auto output = iter->first;
     auto initialized = iter->second;
 
+    // Only accept outputs that's not beean initialized
     if (!initialized) {
       output_list.emplace_back(output);
 
+      // Set it initialized
       iter->second = true;
     }
   }
 
+  // Run if it's not empty
   if (!output_list.empty()) TF_CHECK_OK(Run(output_list, nullptr));
 }
 

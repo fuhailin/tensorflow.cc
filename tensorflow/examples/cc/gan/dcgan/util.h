@@ -19,6 +19,9 @@ limitations under the License.
 #define VERBOSE 1
 #define TESTING 1
 
+// If disabled, remove linkopts in BUILD file
+#define ENABLE_OPENCV 1
+
 // Adjustable Parameters
 #define VALIDATION_SIZE 5000  // Size of the validation set.
 #define SEED 66478            // Set to None for random seed.

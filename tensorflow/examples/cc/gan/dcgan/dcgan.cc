@@ -32,6 +32,11 @@ limitations under the License.
 #include "tensorflow/examples/cc/gan/dcgan/optimizer.h"
 #include "tensorflow/examples/cc/gan/dcgan/util.h"
 
+#ifdef ENABLE_OPENCV
+#include <opencv2/core.hpp>
+#include <opencv2/opencv.hpp>
+#endif
+
 using namespace tensorflow;                 // NOLINT(build/namespaces)
 using namespace tensorflow::ops;            // NOLINT(build/namespaces)
 using namespace tensorflow::ops::internal;  // NOLINT(build/namespaces)
@@ -285,9 +290,11 @@ int main() {
   auto discriminator = Discriminator(scope);
 
   // For inference
-  auto generator_inference = generator.Build(scope, 1, false);
+  const int num_examples_to_generate = 16;
+  auto generator_inference =
+      generator.Build(scope, num_examples_to_generate, false);
   auto discriminator_inference =
-      discriminator.Build(scope, generator_inference, 1);
+      discriminator.Build(scope, generator_inference, num_examples_to_generate);
 
   session.InitializeVariables(scope);
 
@@ -307,9 +314,15 @@ int main() {
   auto gen_loss = GeneratorLoss(scope, fake_output);
   auto disc_loss = DiscriminatorLoss(scope, real_output, fake_output);
 
+  // trainable variables
   std::vector<Output> trainable_variables_gen;
   scope.GetTrainableVariables({generated_images.node()->name()}, {},
                               &trainable_variables_gen);
+
+  std::vector<Output> trainable_variables_disc;
+  scope.GetTrainableVariables({real_output.node()->name()},
+                              {generated_images.node()->name()},
+                              &trainable_variables_disc);
 
 #ifdef VERBOSE
   LOG(INFO) << "Training node name : " << generated_images.node()->name();
@@ -318,14 +331,7 @@ int main() {
        iter != trainable_variables_gen.end(); ++iter) {
     LOG(INFO) << "trainable_variables_gen iter " << iter->name();
   }
-#endif
 
-  std::vector<Output> trainable_variables_disc;
-  scope.GetTrainableVariables({real_output.node()->name()},
-                              {generated_images.node()->name()},
-                              &trainable_variables_disc);
-
-#ifdef VERBOSE
   LOG(INFO) << "Training node name : " << real_output.node()->name() << " - "
             << generated_images.node()->name();
 
@@ -335,7 +341,8 @@ int main() {
   }
 #endif
 
-  auto adam_optimizer = AdamOptimizer(scope);
+  // Optimization
+  AdamOptimizer adam_optimizer(scope);
   adam_optimizer.Build(scope, {gen_loss}, trainable_variables_gen);
   adam_optimizer.Build(scope, {disc_loss}, trainable_variables_disc);
 
@@ -344,6 +351,7 @@ int main() {
 
   // Train
   for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
+    // Reset dataset
     TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
 
     // batches training
@@ -374,6 +382,27 @@ int main() {
       }
 #endif
     }
+
+#ifdef ENABLE_OPENCV
+    // Run Inference
+    TF_CHECK_OK(session.Run({}, {generator_inference}, &outputs));
+    LOG(INFO) << "Inference generate output 0: " << outputs[0].DebugString();
+
+    Tensor predict = outputs[0];
+    for (int index = 0; index < num_examples_to_generate; index++) {
+      Tensor image_data = predict.SubSlice(index);
+
+      cv::Mat mat(IMAGE_SIZE, IMAGE_SIZE, CV_32F,
+                  image_data.flat<float>().data());
+      const float HALF_PIXEL_DEPTH = PIXEL_DEPTH / 2.0f;
+      mat = mat * HALF_PIXEL_DEPTH + HALF_PIXEL_DEPTH;
+
+      // Save images in folder "/tmp/data/"
+      std::string filename = "/tmp/data/predict_" + std::to_string(epoch) +
+                             "_" + std::to_string(index) + ".png";
+      cv::imwrite(filename, mat);
+    }
+#endif
   }
 
   return 0;

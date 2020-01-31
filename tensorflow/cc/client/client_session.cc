@@ -237,8 +237,8 @@ void ClientSession::InitializeVariables(const Scope& scope) const {
   OutputList output_list;
 
   // Iterate assigns from scope
-  auto assigns = scope.GetAssigns();
-  for (auto iter = assigns->begin(); iter != assigns->end(); ++iter) {
+  auto assign_ops = scope.GetAssignOps();
+  for (auto iter = assign_ops->begin(); iter != assign_ops->end(); ++iter) {
     auto output = iter->first;
     auto initialized = iter->second;
 
@@ -253,6 +253,12 @@ void ClientSession::InitializeVariables(const Scope& scope) const {
 
   // Run if it's not empty
   if (!output_list.empty()) TF_CHECK_OK(Run(output_list, nullptr));
+}
+
+Status ClientSession::RunUpdateOps(const Scope& scope) const {
+  // Run
+  auto update_ops = scope.GetUpdateOps();
+  return Run(*update_ops, nullptr);
 }
 
 }  // end namespace tensorflow

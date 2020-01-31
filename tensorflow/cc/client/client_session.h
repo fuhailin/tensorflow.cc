@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <vector>
-#include <utility>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -162,6 +162,7 @@ class ClientSession {
 
   // Initialize variables by running Assigns
   void InitializeVariables(const Scope& scope) const;
+  Status RunUpdateOps(const Scope& scope) const;
 
  private:
   class Impl;

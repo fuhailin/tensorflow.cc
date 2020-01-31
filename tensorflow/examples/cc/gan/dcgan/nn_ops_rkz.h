@@ -121,37 +121,26 @@ class Conv2DTranspose {
   ::tensorflow::Output output;
 };
 
+// Wrap BatchNormalization
 class KBatchNormalization {
  public:
+  KBatchNormalization() = default;
   KBatchNormalization(const ::tensorflow::Scope& scope,
-                      const ::tensorflow::Input& x,
-                      const std::initializer_list<int>& axes,
-                      PartialTensorShape shape,
-                      const ::tensorflow::Input& variance_epsilon);
+                      const PartialTensorShape& shape);
+
+  Output Build(const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
+               const std::initializer_list<int>& axes,
+               const ::tensorflow::Input& variance_epsilon, bool training);
+
   operator ::tensorflow::Output() const { return output; }
   operator ::tensorflow::Input() const { return output; }
 
+ private:
   ::tensorflow::Output moving_mean;
   ::tensorflow::Output moving_variance;
 
-  ::tensorflow::Output assign_moving_mean;
-  ::tensorflow::Output assign_moving_variance;
-  ::tensorflow::Output update_moving_mean;
-  ::tensorflow::Output update_moving_variance;
-
   ::tensorflow::Output gamma;
-  ::tensorflow::Output gamma_m;
-  ::tensorflow::Output gamma_v;
   ::tensorflow::Output beta;
-  ::tensorflow::Output beta_m;
-  ::tensorflow::Output beta_v;
-
-  ::tensorflow::Output assign_gamma;
-  ::tensorflow::Output assign_gamma_m;
-  ::tensorflow::Output assign_gamma_v;
-  ::tensorflow::Output assign_beta;
-  ::tensorflow::Output assign_beta_m;
-  ::tensorflow::Output assign_beta_v;
 
   ::tensorflow::Output output;
 };
@@ -160,13 +149,16 @@ class Generator {
  public:
   explicit Generator(const ::tensorflow::Scope& scope);
 
-  Output Build(const ::tensorflow::Scope& scope, const int batch_size);
+  Output Build(const ::tensorflow::Scope& scope, const int batch_size,
+               bool training);
 
  private:
   ::tensorflow::Output w1;
   ::tensorflow::Output filter;
   ::tensorflow::Output filter2;
   ::tensorflow::Output filter3;
+
+  KBatchNormalization batchnorm_op;
 };
 
 class Discriminator {

@@ -33,9 +33,7 @@ namespace std {
 template <>
 struct hash<::tensorflow::Output> {
   std::size_t operator()(::tensorflow::Output const& output) const noexcept {
-    std::size_t h1 = std::hash<std::string>{}(output.name());
-
-    return h1;
+    return output.hash();
   }
 };
 }  // namespace std
@@ -266,8 +264,12 @@ class Scope {
       const string& node_name) const;
 
   // Assigns
-  void AddAssign(const Output& assign) const;
-  std::shared_ptr<OutputMap> GetAssigns() const;
+  void AddAssignOp(const Output& assign) const;
+  std::shared_ptr<OutputMap> GetAssignOps() const;
+
+  // Update Ops
+  void AddUpdateOp(const Output& update) const;
+  std::shared_ptr<OutputList> GetUpdateOps() const;
 
  private:
   Scope WithOpNameImpl(const string& op_name) const;

@@ -110,7 +110,10 @@ class Scope::Impl {
   std::shared_ptr<StringShapeMap> trainable_variables_shapes_ = nullptr;
 
   // assign ops
-  std::shared_ptr<OutputMap> assigns_ = nullptr;
+  std::shared_ptr<OutputMap> assign_ops_ = nullptr;
+
+  // update ops
+  std::shared_ptr<OutputList> update_ops_ = nullptr;
 
   // If scope_used_ is not nullptr, op_name_ should be empty and
   // GetUniqueNameForOp can only be called once on this scope. More calls to

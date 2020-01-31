@@ -285,7 +285,7 @@ int main() {
   auto discriminator = Discriminator(scope);
 
   // For inference
-  auto generator_inference = generator.Build(scope, 1);
+  auto generator_inference = generator.Build(scope, 1, false);
   auto discriminator_inference =
       discriminator.Build(scope, generator_inference, 1);
 
@@ -298,7 +298,7 @@ int main() {
   LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
 
   // Train models
-  auto generated_images = generator.Build(scope, BATCH_SIZE);
+  auto generated_images = generator.Build(scope, BATCH_SIZE, true);
   auto real_output =
       discriminator.Build(scope, iterator_get_next.components[0], BATCH_SIZE);
   auto fake_output = discriminator.Build(scope, generated_images, BATCH_SIZE);
@@ -353,12 +353,10 @@ int main() {
       // Run adam optimizer
       Status status = adam_optimizer.Run(scope, session, &outputs);
       if (status.ok()) {
-#ifdef VERBOSE
         LOG(INFO) << "Print epoch: " << epoch
                   << ", gen_loss: " << outputs[0].DebugString();
         LOG(INFO) << "Print epoch: " << epoch
                   << ", disc_loss: " << outputs[1].DebugString();
-#endif
       } else {
         // OUT_OF_RANGE means reaching the end of the dataset
         if (status.code() != tensorflow::error::OUT_OF_RANGE)
@@ -366,6 +364,15 @@ int main() {
 
         break;
       }
+
+      // Run update ops
+      session.RunUpdateOps(scope);
+#ifdef VERBOSE
+      auto update_ops = scope.GetUpdateOps();
+      for (auto& op : *update_ops) {
+        LOG(INFO) << "GetUpdateOps op: " << op.node()->name();
+      }
+#endif
     }
   }
 

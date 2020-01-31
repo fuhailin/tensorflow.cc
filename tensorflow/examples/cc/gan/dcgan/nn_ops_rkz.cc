@@ -42,7 +42,7 @@ TFAssign::TFAssign(const ::tensorflow::Scope& scope, ::tensorflow::Input ref,
                    ::tensorflow::Input value, const Assign::Attrs& attrs) {
   this->output = Assign(scope, ref, value, attrs);
 
-  scope.AddAssign(this->output);
+  scope.AddAssignOp(this->output);
 }
 
 TFAssign::TFAssign(const ::tensorflow::Scope& scope, ::tensorflow::Input ref,
@@ -87,17 +87,18 @@ BatchNormalization::BatchNormalization(
     const ::tensorflow::Input& mean, const ::tensorflow::Input& variance,
     const ::tensorflow::Input& offset, const ::tensorflow::Input& scale,
     const ::tensorflow::Input& variance_epsilon) {
-  auto inv = Rsqrt(scope, Add(scope, variance, variance_epsilon));
+  auto inv = Multiply(
+      scope, Rsqrt(scope, Add(scope, variance, variance_epsilon)), scale);
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto ret1 = Multiply(scope, x, Cast(scope, inv, DT_FLOAT));
+  auto tmp1 = Multiply(scope, x, Cast(scope, inv, DT_FLOAT));
   LOG(INFO) << "Node building status: " << scope.status();
 
-  auto ret2 = Multiply(scope, mean, inv);
+  auto tmp2 = Multiply(scope, mean, inv);
   LOG(INFO) << "Node building status: " << scope.status();
 
   this->output =
-      Add(scope, ret1, Cast(scope, Sub(scope, offset, ret2), DT_FLOAT));
+      Add(scope, tmp1, Cast(scope, Sub(scope, offset, tmp2), DT_FLOAT));
 }
 
 Dropout::Dropout(const ::tensorflow::Scope& scope, const ::tensorflow::Input x,
@@ -195,65 +196,70 @@ Conv2DTranspose::Conv2DTranspose(const ::tensorflow::Scope& scope,
                                      strides, padding);
 }
 
-KBatchNormalization::KBatchNormalization(
-    const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
-    const std::initializer_list<int>& axes, PartialTensorShape shape,
-    const ::tensorflow::Input& variance_epsilon) {
-  // mean and variance
-  auto moments = Moments(scope, x, axes, false);
-  auto mean = moments.mean;
-  auto variance = moments.variance;
-
+KBatchNormalization::KBatchNormalization(const ::tensorflow::Scope& scope,
+                                         const PartialTensorShape& shape) {
   // moving mean and variance
   this->moving_mean = Variable(scope, shape, DT_FLOAT);
-  this->assign_moving_mean =
-      Assign(scope, this->moving_mean, ZerosLike(scope, this->moving_mean));
+  TFAssign(scope, this->moving_mean, ZerosLike(scope, this->moving_mean));
 
   this->moving_variance = Variable(scope, shape, DT_FLOAT);
-  this->assign_moving_variance = Assign(
-      scope, this->moving_variance, ZerosLike(scope, this->moving_variance));
-
-  // update ops
-  auto decay = Const<float>(scope, 1.0f - MOMENTUM, {});
-  auto update_delta1 =
-      Multiply(scope, Sub(scope, this->moving_mean, mean), decay);
-  this->update_moving_mean = AssignSub(scope, this->moving_mean, update_delta1);
-
-  auto update_delta2 =
-      Multiply(scope, Sub(scope, this->moving_variance, variance), decay);
-  this->update_moving_variance =
-      AssignSub(scope, this->moving_variance, update_delta2);
+  TFAssign(scope, this->moving_variance,
+           ZerosLike(scope, this->moving_variance));
 
   // gamma
-  this->gamma = Variable(scope, shape, DT_FLOAT);
-  this->assign_gamma = Assign(scope, this->gamma, OnesLike(scope, this->gamma));
-
-  this->gamma_m = Variable(scope, shape, DT_FLOAT);
-  this->assign_gamma_m =
-      Assign(scope, this->gamma_m, ZerosLike(scope, this->gamma));
-  this->gamma_v = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
-  this->assign_gamma_v =
-      Assign(scope, this->gamma_v, ZerosLike(scope, this->gamma));
+  this->gamma = TFVariable(scope.WithOpName("gamma"), shape, DT_FLOAT, true);
+  TFAssign(scope, this->gamma, OnesLike(scope, this->gamma));
+  LOG(INFO) << "Node building status: " << scope.status();
 
   // beta
-  this->beta = Variable(scope, shape, DT_FLOAT);
-  this->assign_beta = Assign(scope, this->beta, ZerosLike(scope, this->beta));
+  this->beta = TFVariable(scope.WithOpName("beta"), shape, DT_FLOAT, true);
+  TFAssign(scope, this->beta, ZerosLike(scope, this->beta));
+  LOG(INFO) << "Node building status: " << scope.status();
+}
 
-  this->beta_m = Variable(scope, shape, DT_FLOAT);
-  this->assign_beta_m =
-      Assign(scope, this->beta_m, ZerosLike(scope, this->beta));
-  this->beta_v = Variable(scope, {NOISE_DIM, UNITS}, DT_FLOAT);
-  this->assign_beta_v =
-      Assign(scope, this->beta_v, ZerosLike(scope, this->beta));
+Output KBatchNormalization::Build(
+    const ::tensorflow::Scope& scope, const ::tensorflow::Input& x,
+    const std::initializer_list<int>& axes,
+    const ::tensorflow::Input& variance_epsilon, bool training) {
+  Output mean;
+  Output variance;
+
+  if (training) {
+    // mean and variance
+    auto moments = Moments(scope, x, axes, false);
+    mean = moments.mean;
+    variance = moments.variance;
+
+    // update ops
+    auto decay = Const<float>(scope, 1.0f - MOMENTUM, {});
+    auto update_delta1 =
+        Multiply(scope, Sub(scope, this->moving_mean, mean), decay);
+    auto update_moving_mean = AssignSub(scope.WithOpName("update_moving_mean"),
+                                        this->moving_mean, update_delta1);
+    scope.AddUpdateOp(update_moving_mean);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    auto update_delta2 =
+        Multiply(scope, Sub(scope, this->moving_variance, variance), decay);
+    auto update_moving_variance =
+        AssignSub(scope.WithOpName("update_moving_variance"),
+                  this->moving_variance, update_delta2);
+    scope.AddUpdateOp(update_moving_variance);
+    LOG(INFO) << "Node building status: " << scope.status();
+  } else {
+    mean = this->moving_mean;
+    variance = this->moving_variance;
+  }
 
   // output
-  this->output = BatchNormalization(scope, x, mean, variance, this->beta,
-                                    this->gamma, variance_epsilon);
+  return BatchNormalization(scope, x, mean, variance, this->beta, this->gamma,
+                            variance_epsilon);
 }
 
 // Generator constructor to set variables and assigns
 Generator::Generator(const ::tensorflow::Scope& scope) {
-  this->w1 = TFVariable(scope, {NOISE_DIM, UNITS}, DT_FLOAT, true);
+  this->w1 = TFVariable(scope.WithOpName("weight"), {NOISE_DIM, UNITS},
+                        DT_FLOAT, true);
   LOG(INFO) << "Node building status: " << scope.status();
 
   auto rate = Const(scope, {0.01f});
@@ -261,25 +267,30 @@ Generator::Generator(const ::tensorflow::Scope& scope) {
   TFAssign(scope, w1, Multiply(scope, random_value, rate));
 
   // filter, aka kernel
-  this->filter = TFVariable(scope, {5, 5, 128, 256}, DT_FLOAT, true);
+  this->filter =
+      TFVariable(scope.WithOpName("filter"), {5, 5, 128, 256}, DT_FLOAT, true);
   auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
   TFAssign(scope, filter, random_value1);
 
   // filter, aka kernel
-  this->filter2 = TFVariable(scope, {5, 5, 64, 128}, DT_FLOAT, true);
+  this->filter2 =
+      TFVariable(scope.WithOpName("filter2"), {5, 5, 64, 128}, DT_FLOAT, true);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
   TFAssign(scope, filter2, random_value2);
 
   // filter, aka kernel
-  this->filter3 = TFVariable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
+  this->filter3 = TFVariable(scope.WithOpName("filter3"),
+                             {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
   auto random_value3 = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   TFAssign(scope, filter3, random_value3);
+
+  this->batchnorm_op = KBatchNormalization(scope, {UNITS});
 }
 
 // Build model
 // TODO(Rock): handle the case of is_training false
-Output Generator::Build(const ::tensorflow::Scope& scope,
-                        const int batch_size) {
+Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
+                        bool training) {
   // random noise input
   auto noise = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
   LOG(INFO) << "Node building status: " << scope.status();
@@ -289,15 +300,9 @@ Output Generator::Build(const ::tensorflow::Scope& scope,
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization
-  auto mean = Const<float>(scope, {0.0f});
-  auto variance = Const<float>(scope, {1.0f});
-  auto offset = Const<float>(scope, {0.0f});
-  auto scale = Const<float>(scope, {1.0f});
   auto variance_epsilon = Const<float>(scope, {0.001f});
-  auto batchnorm = BatchNormalization(scope, dense, mean, variance, offset,
-                                      scale, variance_epsilon);
-  // auto batchnorm = KBatchNormalization(scope, dense, {1}, {UNITS},
-  // variance_epsilon);
+  auto batchnorm =
+      this->batchnorm_op.Build(scope, dense, {0}, variance_epsilon, training);
   LOG(INFO) << "Node building status: " << scope.status();
 
   // LeakyReLU
@@ -371,32 +376,37 @@ Output Generator::Build(const ::tensorflow::Scope& scope,
 
 // Discriminator constructor to set variables and assigns
 Discriminator::Discriminator(const ::tensorflow::Scope& scope) {
-  this->conv1_weights =
-      TFVariable(scope, {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
+  this->conv1_weights = TFVariable(scope.WithOpName("conv1_weights"),
+                                   {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
   auto random_value = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
   TFAssign(scope, conv1_weights, random_value);
 
-  this->conv1_biases = TFVariable(scope, {64}, DT_FLOAT, true);
+  this->conv1_biases =
+      TFVariable(scope.WithOpName("conv1_biases"), {64}, DT_FLOAT, true);
   Tensor b_zero_tensor(DT_FLOAT, TensorShape({64}));
   b_zero_tensor.vec<float>().setZero();
   TFAssign(scope, conv1_biases, b_zero_tensor);
 
-  this->conv2_weights = TFVariable(scope, {5, 5, 64, 128}, DT_FLOAT, true);
+  this->conv2_weights = TFVariable(scope.WithOpName("conv2_weights"),
+                                   {5, 5, 64, 128}, DT_FLOAT, true);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
   TFAssign(scope, conv2_weights, random_value2);
 
-  this->conv2_biases = TFVariable(scope, {128}, DT_FLOAT, true);
+  this->conv2_biases =
+      TFVariable(scope.WithOpName("conv2_biases"), {128}, DT_FLOAT, true);
   TFAssign(scope, conv2_biases, Const<float>(scope, 0.0f, TensorShape({128})));
 
   int s1 = IMAGE_SIZE;
   s1 = s1 / 4;
   s1 = std::pow(s1, 2) * 128;
 
-  this->fc1_weights = TFVariable(scope, {s1, 1}, DT_FLOAT, true);
+  this->fc1_weights =
+      TFVariable(scope.WithOpName("fc1_weights"), {s1, 1}, DT_FLOAT, true);
   auto random_value3 = GlorotUniform(scope, {s1, 1});
   TFAssign(scope, fc1_weights, random_value3);
 
-  this->fc1_biases = TFVariable(scope, {1}, DT_FLOAT, true);
+  this->fc1_biases =
+      TFVariable(scope.WithOpName("fc1_biases"), {1}, DT_FLOAT, true);
   TFAssign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
 }
 

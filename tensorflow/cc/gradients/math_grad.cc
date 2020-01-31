@@ -52,6 +52,26 @@ Output ConjugateHelper(const Scope& scope, const Output& out) {
 
 // Rock: add more gradients
 
+DataType DataTypeToBaseType(DataType data_type) {
+  // convert ref datatype to base datatype
+  int i_data_type = static_cast<int>(data_type);
+  if (i_data_type > 100) {
+    data_type = static_cast<DataType>(i_data_type - 100);
+  }
+
+  return data_type;
+}
+
+Status CastGrad(const Scope& scope, const Operation& op,
+                const std::vector<Output>& grad_inputs,
+                std::vector<Output>* grad_outputs) {
+  DataType src_type = op.input(0).type();
+
+  grad_outputs->push_back(
+      Cast(scope, grad_inputs[0], DataTypeToBaseType(src_type)));
+}
+REGISTER_GRADIENT_OP("Cast", CastGrad);
+
 Status SelectV2Grad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
@@ -64,17 +84,17 @@ Status SelectV2Grad(const Scope& scope, const Operation& op,
   auto output_shape = Shape(scope, op.output(0));
   auto bga_x = internal::BroadcastGradientArgs(scope, x_shape, output_shape);
   auto reduce_x = bga_x.r0;
-  auto gx = Reshape(scope,
-                    ReduceSum(scope, s1, reduce_x, ReduceSum::KeepDims(true)),
-                    x_shape);
+  auto gx =
+      Reshape(scope, ReduceSum(scope, s1, reduce_x, ReduceSum::KeepDims(true)),
+              x_shape);
 
   auto s2 = SelectV2(scope, c, zeros, grad_inputs[0]);
   auto y_shape = Shape(scope, y);
   auto bga_y = internal::BroadcastGradientArgs(scope, y_shape, output_shape);
   auto reduce_y = bga_y.r0;
-  auto gy = Reshape(scope,
-                    ReduceSum(scope, s2, reduce_y, ReduceSum::KeepDims(true)),
-                    y_shape);
+  auto gy =
+      Reshape(scope, ReduceSum(scope, s2, reduce_y, ReduceSum::KeepDims(true)),
+              y_shape);
 
   grad_outputs->push_back(NoGradient());
   grad_outputs->push_back(gx);
@@ -531,25 +551,20 @@ Status PowGrad(const Scope& scope, const Operation& op,
   auto grad = grad_inputs[0];
   // grad * y * pow(x, y - 1)
   auto one = Cast(scope, Const(scope, 1.0), y.type());
-  auto gx_1 = Mul(scope,
-                  Mul(scope, grad, y),
-                  Pow(scope, x, Sub(scope, y, one)));
+  auto gx_1 =
+      Mul(scope, Mul(scope, grad, y), Pow(scope, x, Sub(scope, y, one)));
   // Avoid false singularity at x = 0
   DataType x_dtype = x.type();
   auto zero = Cast(scope, Const(scope, 0.0), x_dtype);
   if (x_dtype == DT_COMPLEX64 || x_dtype == DT_COMPLEX128) {
     // real(x) < 0 is fine for the complex case
-    auto log_x = Where3(scope,
-                        NotEqual(scope, x, zero),
-                        Log(scope, x),
+    auto log_x = Where3(scope, NotEqual(scope, x, zero), Log(scope, x),
                         ZerosLike(scope, x));
     auto gy_1 = Mul(scope, Mul(scope, grad, z), log_x);
     return BinaryGradCommon(scope, op, grad_outputs, gx_1, gy_1);
   } else {
     // There's no sensible real value to return if x < 0, so return 0
-    auto log_x = Where3(scope,
-                        Greater(scope, x, zero),
-                        Log(scope, x),
+    auto log_x = Where3(scope, Greater(scope, x, zero), Log(scope, x),
                         ZerosLike(scope, x));
     auto gy_1 = Mul(scope, Mul(scope, grad, z), log_x);
     return BinaryGradCommon(scope, op, grad_outputs, gx_1, gy_1);
@@ -787,13 +802,12 @@ Status ErfGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
   auto grad = grad_inputs[0];
-  auto two_over_root_pi = Cast(scope, Const(scope, 2 / std::sqrt(M_PI)),
-                               grad.type());
+  auto two_over_root_pi =
+      Cast(scope, Const(scope, 2 / std::sqrt(M_PI)), grad.type());
   Scope grad_scope = scope.WithControlDependencies(grad);
   auto x = ConjugateHelper(grad_scope, op.input(0));
   // grad * 2/sqrt(pi) * exp(-x**2)
-  auto dx = Mul(grad_scope,
-                Mul(grad_scope, grad, two_over_root_pi),
+  auto dx = Mul(grad_scope, Mul(grad_scope, grad, two_over_root_pi),
                 Exp(grad_scope, Neg(grad_scope, Square(grad_scope, x))));
   grad_outputs->push_back(dx);
   return grad_scope.status();
@@ -976,9 +990,9 @@ Status ProdGrad(const Scope& scope, const Operation& op,
   // [3]
   auto rank = Rank(cpu_scope, op.input(0));
 
-
   // Normalize any negative indices in the reduction_axes to positive values.
-  auto reduction_indices_pos = Mod(cpu_scope, Add(cpu_scope, reduction_indices, rank), rank);
+  auto reduction_indices_pos =
+      Mod(cpu_scope, Add(cpu_scope, reduction_indices, rank), rank);
 
   // [1]
   auto reduced = Cast(cpu_scope, reduction_indices_pos, DataType::DT_INT32);
@@ -1065,7 +1079,7 @@ Status ProdGrad(const Scope& scope, const Operation& op,
   // ]
   auto y = Reshape(scope, Mul(scope, left, right), permuted_shape);
 
-  // out = 
+  // out =
   // [
   //   [
   //     [ 35.,  48.],
@@ -1078,8 +1092,8 @@ Status ProdGrad(const Scope& scope, const Operation& op,
   //     [ 0.,  30.]
   //   ]
   // ]
-  auto out =
-      Mul(scope, grad_tiled, Transpose(scope, y, InvertPermutation(scope, perm)));
+  auto out = Mul(scope, grad_tiled,
+                 Transpose(scope, y, InvertPermutation(scope, perm)));
 
   grad_outputs->push_back(Reshape(scope, out, input_shape));
 

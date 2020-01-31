@@ -53,7 +53,8 @@ Scope::Impl::Impl(Graph* graph, Status* status, NameMap* name_map,
           std::shared_ptr<StringOutputMap>(new StringOutputMap)),
       trainable_variables_shapes_(
           std::shared_ptr<StringShapeMap>(new StringShapeMap)),
-      assigns_(std::shared_ptr<OutputMap>(new OutputMap)),
+      assign_ops_(std::shared_ptr<OutputMap>(new OutputMap)),
+      update_ops_(std::shared_ptr<OutputList>(new OutputList)),
       refiner_(refiner),
       scope_used_(nullptr),
       colocation_constraints_(),
@@ -70,7 +71,8 @@ Scope::Impl::Impl(const std::shared_ptr<Graph>& graph,
           std::shared_ptr<StringOutputMap>(new StringOutputMap)),
       trainable_variables_shapes_(
           std::shared_ptr<StringShapeMap>(new StringShapeMap)),
-      assigns_(std::shared_ptr<OutputMap>(new OutputMap)),
+      assign_ops_(std::shared_ptr<OutputMap>(new OutputMap)),
+      update_ops_(std::shared_ptr<OutputList>(new OutputList)),
       refiner_(refiner),
       scope_used_(nullptr),
       colocation_constraints_(),
@@ -100,7 +102,8 @@ Scope::Impl::Impl(const Scope& other, Tags::ScopeName, const string& name,
                            : std::shared_ptr<NameMap>(new NameMap)),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(nullptr),
       control_deps_(other.impl()->control_deps_),
@@ -121,7 +124,8 @@ Scope::Impl::Impl(const Scope& other, Tags::OpName, const string& name,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -142,7 +146,8 @@ Scope::Impl::Impl(const Scope& other, Tags::ControlDeps,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(
@@ -168,7 +173,8 @@ Scope::Impl::Impl(const Scope& other, Tags::Device, const string& device)
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -189,7 +195,8 @@ Scope::Impl::Impl(const Scope& other, Tags::SingleUseScope,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(new bool(false)),
       control_deps_(other.impl()->control_deps_),
@@ -209,7 +216,8 @@ Scope::Impl::Impl(const Scope& other, Tags::ExitOnError)
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -230,7 +238,8 @@ Scope::Impl::Impl(const Scope& other, Tags::KernelLabel,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -251,7 +260,8 @@ Scope::Impl::Impl(const Scope& other, Tags::Colocate,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -275,7 +285,8 @@ Scope::Impl::Impl(const Scope& other, Tags::AssignedDevice,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -296,7 +307,8 @@ Scope::Impl::Impl(const Scope& other, Tags::XlaCluster,
       name_map_(other.impl()->name_map_),
       trainable_variables_(other.impl()->trainable_variables_),
       trainable_variables_shapes_(other.impl()->trainable_variables_shapes_),
-      assigns_(other.impl()->assigns_),
+      assign_ops_(other.impl()->assign_ops_),
+      update_ops_(other.impl()->update_ops_),
       refiner_(other.impl()->refiner_),
       scope_used_(other.impl()->scope_used_),
       control_deps_(other.impl()->control_deps_),
@@ -549,10 +561,8 @@ Status Scope::DoShapeInference(Node* node) const {
 // trainable variables
 void Scope::AddTrainableVariable(const Output& variable,
                                  const PartialTensorShape& shape) const {
-  std::string node_name = this->GetNodeNameFromTensorName(variable.name());
-
-  impl()->trainable_variables_->insert({node_name, variable});
-  impl()->trainable_variables_shapes_->insert({node_name, shape});
+  impl()->trainable_variables_->insert({variable.node()->name(), variable});
+  impl()->trainable_variables_shapes_->insert({variable.node()->name(), shape});
 }
 
 std::shared_ptr<StringOutputMap> Scope::GetTrainableVariables() const {
@@ -649,12 +659,21 @@ void Scope::GetTrainableVariables(
 }
 
 // assigns
-void Scope::AddAssign(const Output& assign) const {
-  impl()->assigns_->insert({assign, false});
+void Scope::AddAssignOp(const Output& assign) const {
+  impl()->assign_ops_->insert({assign, false});
 }
 
-std::shared_ptr<OutputMap> Scope::GetAssigns() const {
-  return impl()->assigns_;
+std::shared_ptr<OutputMap> Scope::GetAssignOps() const {
+  return impl()->assign_ops_;
+}
+
+// updates
+void Scope::AddUpdateOp(const Output& update) const {
+  impl()->update_ops_->emplace_back(update);
+}
+
+std::shared_ptr<OutputList> Scope::GetUpdateOps() const {
+  return impl()->update_ops_;
 }
 
 class InternalScope {

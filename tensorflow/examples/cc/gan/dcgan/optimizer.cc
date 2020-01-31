@@ -43,6 +43,16 @@ AdamOptimizer::AdamOptimizer(const ::tensorflow::Scope& scope) {
   this->beta2_power = Pow(scope, beta2, local_step);
 }
 
+DataType DataTypeToBaseType(DataType data_type) {
+  // convert ref datatype to base datatype
+  int i_data_type = static_cast<int>(data_type);
+  if (i_data_type > 100) {
+    data_type = static_cast<DataType>(i_data_type - 100);
+  }
+
+  return data_type;
+}
+
 void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
                           std::vector<Output> outputs,
                           std::vector<Output> trainable_variables) {
@@ -58,12 +68,12 @@ void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
     // Variables m and v for ApplyAdam
     auto wm =
         Variable(scope, scope.GetTrainableVariableShape(var.node()->name()),
-                 (DataType)(static_cast<int>(var.type()) - 100));
+                 DataTypeToBaseType(var.type()));
     LOG(INFO) << "Node building status: " << scope.status();
     TFAssign(scope, wm, ZerosLike(scope, var));
     auto wv =
         Variable(scope, scope.GetTrainableVariableShape(var.node()->name()),
-                 (DataType)(static_cast<int>(var.type()) - 100));
+                 DataTypeToBaseType(var.type()));
     LOG(INFO) << "Node building status: " << scope.status();
     TFAssign(scope, wv, ZerosLike(scope, var));
 
@@ -101,7 +111,8 @@ Status AdamOptimizer::Run(const ::tensorflow::Scope& scope,
     TF_CHECK_OK(
         session.Run({this->assign_add_local_step}, &assign_add_outputs));
 
-    // Print message
+#ifdef VERBOSE
+    // Print verbose message
     int step = static_cast<int>(assign_add_outputs[0].scalar<float>()());
     if (step % EVAL_FREQUENCY == 0) {
       LOG(INFO) << "Print step: " << step;
@@ -110,6 +121,7 @@ Status AdamOptimizer::Run(const ::tensorflow::Scope& scope,
                   << outputs->at(i).DebugString();
       }
     }
+#endif
   }
 
   return status;

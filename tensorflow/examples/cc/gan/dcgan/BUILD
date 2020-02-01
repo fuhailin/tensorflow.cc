@@ -8,7 +8,8 @@ tf_cc_binary(
         "nn_ops_rkz.h",
         "optimizer.cc",
         "optimizer.h",
-        "util.h",
+        "const.h",
+        "test.h",
     ],
     deps = [
         "//tensorflow/cc:cc_ops",

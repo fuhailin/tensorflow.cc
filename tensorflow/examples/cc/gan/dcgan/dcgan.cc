@@ -28,129 +28,21 @@ limitations under the License.
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/tensor.h"
 
+#include "tensorflow/examples/cc/gan/dcgan/const.h"
 #include "tensorflow/examples/cc/gan/dcgan/nn_ops_rkz.h"
 #include "tensorflow/examples/cc/gan/dcgan/optimizer.h"
-#include "tensorflow/examples/cc/gan/dcgan/util.h"
 
 #ifdef ENABLE_OPENCV
 #include <opencv2/core.hpp>
 #include <opencv2/opencv.hpp>
 #endif
 
+#include "tensorflow/examples/cc/gan/dcgan/test.h"
+
 using namespace tensorflow;                 // NOLINT(build/namespaces)
 using namespace tensorflow::ops;            // NOLINT(build/namespaces)
 using namespace tensorflow::ops::internal;  // NOLINT(build/namespaces)
 using namespace std;                        // NOLINT(build/namespaces)
-
-std::string DetailedDebugString(const Tensor& tensor) {
-  return strings::StrCat("Tensor<type: ", DataTypeString(tensor.dtype()),
-                         " shape: ", tensor.shape().DebugString(),
-                         " values: ", tensor.SummarizeValue(-1, true), ">");
-}
-
-#ifdef TESTING
-
-void test(const Scope& scope) {
-  // Test SigmoidCrossEntropyWithLogits
-  {
-    // cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    // logits = tf.constant([[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
-    // labels = tf.ones_like(logits)
-    // ce = cross_entropy(labels, logits)
-    // print('ce: ', ce)
-
-    auto logits = Const(scope, {{-1.0, 1.0, 1.0}, {1.0, 1.0, 1.0}});
-    auto ones_like = OnesLike(scope, logits);
-    auto scel = SigmoidCrossEntropyWithLogits(scope, ones_like, logits);
-    auto result = ReduceMean(scope, scel, {0, 1});
-
-    vector<Tensor> outputs;
-    ClientSession session(scope);
-
-    Status status = session.Run({}, {result}, {}, &outputs);
-
-    LOG(INFO) << "Print: SigmoidCrossEntropyWithLogits result: "
-              << outputs[0].DebugString();
-  }
-
-  // Test BatchNormalization
-  {
-    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
-    auto mean = Const<float>(scope, {0.0f});
-    auto variance = Const<float>(scope, {1.0f});
-    auto offset = Const<float>(scope, {0.0f});
-    auto scale = Const<float>(scope, {1.0f});
-    auto variance_epsilon = Const<float>(scope, {0.001f});
-    auto batchnorm = BatchNormalization(scope, x, mean, variance, offset, scale,
-                                        variance_epsilon);
-
-    vector<Tensor> outputs;
-    ClientSession session(scope);
-
-    Status status = session.Run({}, {batchnorm}, {}, &outputs);
-
-    LOG(INFO) << "Print: BatchNormalization result: "
-              << DetailedDebugString(outputs[0]);
-  }
-
-  // Test Dropout
-  {
-    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
-    auto dropout = Dropout(scope, x, {0.3f});
-
-    vector<Tensor> outputs;
-    ClientSession session(scope);
-
-    Status status = session.Run({}, {dropout}, {}, &outputs);
-
-    LOG(INFO) << "Print: Dropout result: " << DetailedDebugString(outputs[0]);
-  }
-
-  // Test GlorotUniform
-  {
-    auto glorot_uniform = GlorotUniform(scope, {3, 4});
-
-    vector<Tensor> outputs;
-    ClientSession session(scope);
-
-    Status status = session.Run({}, {glorot_uniform}, {}, &outputs);
-
-    LOG(INFO) << "Print: GlorotUniform result: "
-              << DetailedDebugString(outputs[0]);
-  }
-
-  // Test Conv2DTranspose
-  {
-    int batch_size = 1;
-
-    // Const
-    auto const1 = Const<float>(scope, 1.0f, {batch_size, 7, 7, 256});
-    LOG(INFO) << "Node building status: " << scope.status();
-
-    // Conv2DTranspose 1
-    auto input_sizes = Const<int>(scope, {batch_size, 7, 7, 128});
-    // filter, aka kernel
-    auto filter = Variable(scope, {5, 5, 128, 256}, DT_FLOAT);
-    auto random_value1 = GlorotUniform(scope, {5, 5, 128, 256});
-    auto assign_filter = Assign(scope, filter, random_value1);
-
-    // out_backprop, aka input. here it's reshape1
-    auto deconv1 = Conv2DTranspose(scope, input_sizes, filter, const1,
-                                   {1, 1, 1, 1}, "SAME");
-    LOG(INFO) << "Node building status: " << scope.status();
-
-    vector<Tensor> outputs;
-    ClientSession session(scope);
-
-    TF_CHECK_OK(session.Run({assign_filter}, nullptr));
-    TF_CHECK_OK(session.Run({}, {deconv1}, {}, &outputs));
-
-    LOG(INFO) << "Print: Conv2DTranspose result: "
-              << DetailedDebugString(outputs[0]);
-  }
-}
-
-#endif
 
 static Output DiscriminatorLoss(const Scope& scope, const Input& real_output,
                                 const Input& fake_output) {
@@ -183,6 +75,8 @@ int main() {
 
 #ifdef TESTING
   test(scope);
+
+  return 0;
 #endif
 
   //
@@ -249,10 +143,11 @@ int main() {
   // Shuffle and batch
   auto shuffle_dataset = ShuffleDataset(
       scope, tensor_slice_dataset,
-      Cast(scope, NUM_IMAGES, DT_INT64),                   // buffer_size
+      Cast(scope, BUFFER_SIZE, DT_INT64),                  // buffer_size
       Cast(scope, 0, DT_INT64), Cast(scope, 0, DT_INT64),  // seedX
       std::initializer_list<DataType>{DT_FLOAT},           // output_types
-      std::initializer_list<PartialTensorShape>{{}});      // output_shapes
+      std::initializer_list<PartialTensorShape>{{}},       // output_shapes
+      ShuffleDataset::ReshuffleEachIteration(true));
   auto batch_dataset = BatchDataset(
       scope, shuffle_dataset, Cast(scope, BATCH_SIZE, DT_INT64),  // batch_size
       std::initializer_list<DataType>{DT_FLOAT},       // output_types

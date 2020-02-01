@@ -20,8 +20,8 @@ limitations under the License.
 #include "tensorflow/cc/ops/nn_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 
+#include "tensorflow/examples/cc/gan/dcgan/const.h"
 #include "tensorflow/examples/cc/gan/dcgan/nn_ops_rkz.h"
-#include "tensorflow/examples/cc/gan/dcgan/util.h"
 
 namespace tensorflow {
 namespace ops {
@@ -204,7 +204,7 @@ TFBatchNormalization::TFBatchNormalization(const ::tensorflow::Scope& scope,
 
   this->moving_variance = Variable(scope, shape, DT_FLOAT);
   TFAssign(scope, this->moving_variance,
-           ZerosLike(scope, this->moving_variance));
+           OnesLike(scope, this->moving_variance));
 
   // gamma
   this->gamma = TFVariable(scope.WithOpName("gamma"), shape, DT_FLOAT, true);
@@ -252,6 +252,13 @@ Output TFBatchNormalization::Build(const ::tensorflow::Scope& scope,
     variance = this->moving_variance;
   }
 
+#ifdef DEBUG
+  mean = Print(scope, mean, {mean},
+               Print::Message("Print------------------mean: "));
+  variance = Print(scope, variance, {variance},
+                   Print::Message("Print------------------variance: "));
+#endif
+
   // output
   return BatchNormalization(scope, x, mean, variance, this->beta, this->gamma,
                             variance_epsilon);
@@ -265,7 +272,7 @@ TFFusedBatchNorm::TFFusedBatchNorm(const ::tensorflow::Scope& scope,
 
   this->moving_variance = Variable(scope, shape, DT_FLOAT);
   TFAssign(scope, this->moving_variance,
-           ZerosLike(scope, this->moving_variance));
+           OnesLike(scope, this->moving_variance));
 
   // gamma
   this->gamma =
@@ -410,8 +417,6 @@ Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
   LOG(INFO) << "Node building status: " << scope.status();
 
   // BatchNormalization 2, use FusedBatchNorm
-  auto offset2 = BroadcastTo(scope, 0.0f, {64});
-  auto scale2 = BroadcastTo(scope, 1.0f, {64});
   auto batchnorm2 = this->batchnorm2_op.Build(scope, deconv2, 0.001f, training);
   LOG(INFO) << "Node building status: " << scope.status();
 
@@ -422,7 +427,6 @@ Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
 
   // Conv2DTranspose 3
   auto input_sizes3 = Const(scope, {batch_size, 28, 28, NUM_CHANNELS});
-
   auto output =
       Conv2DTranspose(scope.WithOpName("generator"), input_sizes3,
                       this->filter3, leakyrelu2, {1, 2, 2, 1}, "SAME");
@@ -436,22 +440,22 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope) {
   this->conv1_weights = TFVariable(scope.WithOpName("conv1_weights"),
                                    {5, 5, NUM_CHANNELS, 64}, DT_FLOAT, true);
   auto random_value = GlorotUniform(scope, {5, 5, NUM_CHANNELS, 64});
-  TFAssign(scope, conv1_weights, random_value);
+  TFAssign(scope, this->conv1_weights, random_value);
 
   this->conv1_biases =
       TFVariable(scope.WithOpName("conv1_biases"), {64}, DT_FLOAT, true);
-  Tensor b_zero_tensor(DT_FLOAT, TensorShape({64}));
-  b_zero_tensor.vec<float>().setZero();
-  TFAssign(scope, conv1_biases, b_zero_tensor);
+  TFAssign(scope, this->conv1_biases,
+           Const<float>(scope, 0.0f, TensorShape({64})));
 
   this->conv2_weights = TFVariable(scope.WithOpName("conv2_weights"),
                                    {5, 5, 64, 128}, DT_FLOAT, true);
   auto random_value2 = GlorotUniform(scope, {5, 5, 64, 128});
-  TFAssign(scope, conv2_weights, random_value2);
+  TFAssign(scope, this->conv2_weights, random_value2);
 
   this->conv2_biases =
       TFVariable(scope.WithOpName("conv2_biases"), {128}, DT_FLOAT, true);
-  TFAssign(scope, conv2_biases, Const<float>(scope, 0.0f, TensorShape({128})));
+  TFAssign(scope, this->conv2_biases,
+           Const<float>(scope, 0.0f, TensorShape({128})));
 
   int s1 = IMAGE_SIZE;
   s1 = s1 / 4;
@@ -460,11 +464,12 @@ Discriminator::Discriminator(const ::tensorflow::Scope& scope) {
   this->fc1_weights =
       TFVariable(scope.WithOpName("fc1_weights"), {s1, 1}, DT_FLOAT, true);
   auto random_value3 = GlorotUniform(scope, {s1, 1});
-  TFAssign(scope, fc1_weights, random_value3);
+  TFAssign(scope, this->fc1_weights, random_value3);
 
   this->fc1_biases =
       TFVariable(scope.WithOpName("fc1_biases"), {1}, DT_FLOAT, true);
-  TFAssign(scope, fc1_biases, Const<float>(scope, 0.0f, TensorShape({1})));
+  TFAssign(scope, this->fc1_biases,
+           Const<float>(scope, 0.0f, TensorShape({1})));
 }
 
 // Build model

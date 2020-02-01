@@ -21,9 +21,9 @@ limitations under the License.
 #include "tensorflow/cc/ops/nn_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 
+#include "tensorflow/examples/cc/gan/dcgan/const.h"
 #include "tensorflow/examples/cc/gan/dcgan/nn_ops_rkz.h"
 #include "tensorflow/examples/cc/gan/dcgan/optimizer.h"
-#include "tensorflow/examples/cc/gan/dcgan/util.h"
 
 namespace tensorflow {
 namespace ops {

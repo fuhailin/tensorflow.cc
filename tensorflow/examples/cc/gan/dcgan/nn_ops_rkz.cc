@@ -427,10 +427,12 @@ Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
 
   // Conv2DTranspose 3
   auto input_sizes3 = Const(scope, {batch_size, 28, 28, NUM_CHANNELS});
-  auto output =
+  auto deconv3 =
       Conv2DTranspose(scope.WithOpName("generator"), input_sizes3,
                       this->filter3, leakyrelu2, {1, 2, 2, 1}, "SAME");
   LOG(INFO) << "Node building status: " << scope.status();
+
+  auto output = Tanh(scope, deconv3);
 
   return output;
 }

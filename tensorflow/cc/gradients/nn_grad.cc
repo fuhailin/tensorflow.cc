@@ -59,7 +59,6 @@ Status Conv2DBackpropInputGrad(const Scope& scope, const Operation& op,
 REGISTER_GRADIENT_OP("Conv2DBackpropInput", Conv2DBackpropInputGrad);
 
 // Rock: Grad for FusedBatchNorm
-// TODO(Rock): handle the case of is_training false
 Status FusedBatchNormGradFunc(const Scope& scope, const Operation& op,
                               const std::vector<Output>& grad_inputs,
                               std::vector<Output>* grad_outputs) {
@@ -75,17 +74,24 @@ Status FusedBatchNormGradFunc(const Scope& scope, const Operation& op,
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "epsilon", &epsilon));
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "is_training", &is_training));
 
-  auto dx =
-      FusedBatchNormGrad(scope, grad_y, x, scale, op.output(3), op.output(4),
-                         FusedBatchNormGrad::Epsilon(epsilon)
-                             .DataFormat(data_format)
-                             .IsTraining(is_training));
+  if (is_training) {
+    auto dx =
+        FusedBatchNormGrad(scope, grad_y, x, scale, op.output(3), op.output(4),
+                           FusedBatchNormGrad::Epsilon(epsilon)
+                               .DataFormat(data_format)
+                               .IsTraining(is_training));
 
-  grad_outputs->push_back(dx.x_backprop);
-  grad_outputs->push_back(dx.scale_backprop);
-  grad_outputs->push_back(dx.offset_backprop);
-  grad_outputs->push_back(dx.reserve_space_3);
-  grad_outputs->push_back(dx.reserve_space_4);
+    grad_outputs->push_back(dx.x_backprop);
+    grad_outputs->push_back(dx.scale_backprop);
+    grad_outputs->push_back(dx.offset_backprop);
+    grad_outputs->push_back(dx.reserve_space_3);
+    grad_outputs->push_back(dx.reserve_space_4);
+  } else {
+    // TODO(Rock): handle the case of is_training false
+    return Status(tensorflow::error::UNIMPLEMENTED,
+                  "Grad for FusedBatchNorm with is_training false is not yet "
+                  "implemented");
+  }
 
   return scope.status();
 }
@@ -245,8 +251,7 @@ Status BlockLSTMGradFn(const Scope& scope, const Operation& op,
                     grad_inputs[1],  // cs_grad
                     grad_inputs[6],  // h_grad: i-th output's backpropped
                                      // gradients of BlockLSTM
-                    false            // use_peephole
-      );
+                    false);          // use_peephole
 
   grad_outputs->push_back(NoGradient());
   grad_outputs->push_back(

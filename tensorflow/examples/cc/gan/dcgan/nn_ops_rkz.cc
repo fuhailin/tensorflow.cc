@@ -368,9 +368,17 @@ Generator::Generator(const ::tensorflow::Scope& scope) {
 
 // Build model
 Output Generator::Build(const ::tensorflow::Scope& scope, const int batch_size,
-                        bool training) {
+                        bool training, bool use_seed) {
   // random noise input
-  auto noise = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
+  Output noise;
+
+  if (use_seed) {
+    this->seed = Placeholder(scope, DT_FLOAT,
+                             Placeholder::Shape({batch_size, NOISE_DIM}));
+    noise = this->seed;
+  } else {
+    noise = RandomNormal(scope, {batch_size, NOISE_DIM}, DT_FLOAT);
+  }
   LOG(INFO) << "Node building status: " << scope.status();
 
   // dense 1

@@ -187,14 +187,20 @@ int main() {
   // For inference
   const int num_examples_to_generate = 16;
   auto generator_inference =
-      generator.Build(scope, num_examples_to_generate, false);
+      generator.Build(scope, num_examples_to_generate, false, true);
   auto discriminator_inference =
       discriminator.Build(scope, generator_inference, num_examples_to_generate);
 
   session.InitializeVariables(scope);
 
   // Run Test
-  TF_CHECK_OK(session.Run({}, {generator_inference, discriminator_inference},
+  auto seed_op =
+      RandomNormal(scope, {num_examples_to_generate, NOISE_DIM}, DT_FLOAT);
+  TF_CHECK_OK(session.Run({}, {seed_op}, &outputs));
+  auto seed = outputs[0];
+
+  TF_CHECK_OK(session.Run({{generator.seed, seed}},
+                          {generator_inference, discriminator_inference},
                           &outputs));
   LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
   LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
@@ -284,7 +290,8 @@ int main() {
 
 #ifdef ENABLE_OPENCV
     // Run Inference
-    TF_CHECK_OK(session.Run({}, {generator_inference}, &outputs));
+    TF_CHECK_OK(
+        session.Run({{generator.seed, seed}}, {generator_inference}, &outputs));
     LOG(INFO) << "Inference generate output 0: " << outputs[0].DebugString();
 
     cv::Mat row_image;

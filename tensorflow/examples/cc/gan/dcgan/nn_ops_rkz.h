@@ -163,7 +163,9 @@ class Generator {
   explicit Generator(const ::tensorflow::Scope& scope);
 
   Output Build(const ::tensorflow::Scope& scope, const int batch_size,
-               bool training);
+               bool training, bool use_seed = false);
+
+  ::tensorflow::Output seed;
 
  private:
   ::tensorflow::Output w1;

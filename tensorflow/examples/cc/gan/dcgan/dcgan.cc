@@ -245,6 +245,10 @@ int main() {
   session.InitializeVariables(scope);
 
   // Train
+#ifdef ENABLE_OPENCV
+  cv::Mat complete_image;
+#endif
+
   for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
     // Reset dataset
     TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
@@ -283,6 +287,7 @@ int main() {
     TF_CHECK_OK(session.Run({}, {generator_inference}, &outputs));
     LOG(INFO) << "Inference generate output 0: " << outputs[0].DebugString();
 
+    cv::Mat row_image;
     Tensor predict = outputs[0];
     for (int index = 0; index < num_examples_to_generate; index++) {
       Tensor image_data = predict.SubSlice(index);
@@ -296,9 +301,23 @@ int main() {
       std::string filename = "/tmp/data/predict_" + std::to_string(epoch) +
                              "_" + std::to_string(index) + ".png";
       cv::imwrite(filename, mat);
+
+      if (index == 0)
+        row_image = mat;
+      else
+        cv::hconcat(row_image, mat, row_image);
     }
+
+    if (epoch == 0)
+      complete_image = row_image;
+    else
+      cv::vconcat(complete_image, row_image, complete_image);
 #endif
   }
+
+#ifdef ENABLE_OPENCV
+  cv::imwrite("/tmp/data/predict_all.png", complete_image);
+#endif
 
   return 0;
 }

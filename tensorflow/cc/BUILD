@@ -277,6 +277,25 @@ cc_library_with_android_deps(
     ],
 )
 
+cc_library_with_android_deps(
+    name = "tf_ops",
+    srcs = ["ops/tf_ops.cc"],
+    hdrs = ["ops/tf_ops.h"],
+    android_deps = [
+        "//tensorflow/core:android_tensorflow_lib",
+    ],
+    common_deps = [
+        ":ops",
+        ":scope",
+    ],
+    deps = [
+        ":cc_ops",
+        ":cc_ops_internal",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+    ],
+)
+
 tf_cc_test(
     name = "ops_const_op_test",
     srcs = ["ops/const_op_test.cc"],
@@ -781,6 +800,23 @@ cc_library(
     srcs = ["training/coordinator.cc"],
     hdrs = ["training/coordinator.h"],
     deps = [
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+    ],
+)
+
+cc_library(
+    name = "optimizer",
+    srcs = ["training/optimizer.cc"],
+    hdrs = ["training/optimizer.h"],
+    deps = [
+        ":gradients",
+        ":cc_ops",
+        ":cc_ops_internal",
+        ":tf_ops",
+        ":ops",
+        ":client_session",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",

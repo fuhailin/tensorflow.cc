@@ -27,6 +27,8 @@ limitations under the License.
 
 #include "tensorflow/examples/cc/gan/dcgan/const.h"
 
+#define MOMENTUM 0.99f
+
 using namespace tensorflow;                 // NOLINT(build/namespaces)
 using namespace tensorflow::ops;            // NOLINT(build/namespaces)
 using namespace tensorflow::ops::internal;  // NOLINT(build/namespaces)
@@ -43,12 +45,6 @@ std::string DetailedDebugString(const Tensor& tensor) {
 void test(const Scope& scope) {
   // Test SigmoidCrossEntropyWithLogits
   {
-    // cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    // logits = tf.constant([[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
-    // labels = tf.ones_like(logits)
-    // ce = cross_entropy(labels, logits)
-    // print('ce: ', ce)
-
     auto logits = Const(scope, {{-1.0, 1.0, 1.0}, {1.0, 1.0, 1.0}});
     auto ones_like = OnesLike(scope, logits);
     auto scel = SigmoidCrossEntropyWithLogits(scope, ones_like, logits);
@@ -139,168 +135,170 @@ void test(const Scope& scope) {
               << DetailedDebugString(outputs[0]);
   }
 
-  // Test Moments
-  {// #1
-   {auto x = Const<float>(scope, {{1, 2, 3}, {4, 5, 6}});
-  auto moments = Moments(scope, x, {0}, false);
-  LOG(INFO) << "Node building status: " << scope.status();
+  // Test Moments #1
+  {
+    auto x = Const<float>(scope, {{1, 2, 3}, {4, 5, 6}});
+    auto moments = Moments(scope, x, {0}, false);
+    LOG(INFO) << "Node building status: " << scope.status();
 
-  vector<Tensor> outputs;
-  ClientSession session(scope);
+    vector<Tensor> outputs;
+    ClientSession session(scope);
 
-  TF_CHECK_OK(session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
+    TF_CHECK_OK(
+        session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
 
-  LOG(INFO) << "Print: Moments #1 result: " << DetailedDebugString(outputs[0])
-            << " - " << DetailedDebugString(outputs[1]);
-}
-// #2
-{
-  auto x = Const<float>(scope, {{1.2, 2.4, 3.5}, {10.8, 15.4, 32.1}});
-  auto moments = Moments(scope, x, {0}, false);
-  LOG(INFO) << "Node building status: " << scope.status();
-
-  vector<Tensor> outputs;
-  ClientSession session(scope);
-
-  TF_CHECK_OK(session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
-
-  LOG(INFO) << "Print: Moments #2 result: " << DetailedDebugString(outputs[0])
-            << " - " << DetailedDebugString(outputs[1]);
-}
-// #3
-{
-  auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
-  auto moments = Moments(scope, x, {0}, false);
-  LOG(INFO) << "Node building status: " << scope.status();
-
-  vector<Tensor> outputs;
-  ClientSession session(scope);
-
-  TF_CHECK_OK(session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
-
-  LOG(INFO) << "Print: Moments #3 result: " << DetailedDebugString(outputs[0])
-            << " - " << DetailedDebugString(outputs[1]);
-}
-}
-
-// Test decay
-{
-  auto moving_mean = Variable(scope, {2, 3}, DT_FLOAT);
-  TFAssign(scope, moving_mean, ZerosLike(scope, moving_mean));
-
-  auto mean = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}});
-
-  auto decay = Const<float>(scope, 1.0f - MOMENTUM, {});
-  auto update_delta1 = Multiply(scope, Sub(scope, moving_mean, mean), decay);
-  auto update_moving_mean = AssignSub(scope, moving_mean, update_delta1);
-
-  vector<Tensor> outputs;
-  ClientSession session(scope);
-  session.InitializeVariables(scope);
-
-  for (int i = 0; i < 3; i++) {
-    TF_CHECK_OK(session.Run({}, {update_moving_mean}, {}, &outputs));
-
-    LOG(INFO) << "Print: decay step #" << i
-              << ", result: " << DetailedDebugString(outputs[0]);
+    LOG(INFO) << "Print: Moments #1 result: " << DetailedDebugString(outputs[0])
+              << " - " << DetailedDebugString(outputs[1]);
   }
-}
+  // Test Moments #2
+  {
+    auto x = Const<float>(scope, {{1.2, 2.4, 3.5}, {10.8, 15.4, 32.1}});
+    auto moments = Moments(scope, x, {0}, false);
+    LOG(INFO) << "Node building status: " << scope.status();
 
-// Test TFBatchNormalization
-{
-  // Const
-  auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}});
-  LOG(INFO) << "Node building status: " << scope.status();
+    vector<Tensor> outputs;
+    ClientSession session(scope);
 
-  auto variance_epsilon = Const<float>(scope, {0.001f});
+    TF_CHECK_OK(
+        session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
 
-  TFBatchNormalization bn_op(scope, {3});
-  auto bn = bn_op.Build(scope, x, {0}, variance_epsilon, true);
-  LOG(INFO) << "Node building status: " << scope.status();
+    LOG(INFO) << "Print: Moments #2 result: " << DetailedDebugString(outputs[0])
+              << " - " << DetailedDebugString(outputs[1]);
+  }
+  // Test Moments #3
+  {
+    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 1.0, 1.0}});
+    auto moments = Moments(scope, x, {0}, false);
+    LOG(INFO) << "Node building status: " << scope.status();
 
-  vector<Tensor> outputs;
-  ClientSession session(scope);
+    vector<Tensor> outputs;
+    ClientSession session(scope);
 
-  session.InitializeVariables(scope);
+    TF_CHECK_OK(
+        session.Run({}, {moments.mean, moments.variance}, {}, &outputs));
 
-  for (int i = 0; i < 1; i++) {
-    TF_CHECK_OK(session.Run({}, {bn}, {}, &outputs));
-
-    LOG(INFO) << "Print: TFBatchNormalization training step #" << i
-              << ", result: " << DetailedDebugString(outputs[0]);
-
-    // Run update ops
-    session.RunUpdateOps(scope);
+    LOG(INFO) << "Print: Moments #3 result: " << DetailedDebugString(outputs[0])
+              << " - " << DetailedDebugString(outputs[1]);
   }
 
-  auto bn2 = bn_op.Build(scope, x, {0}, variance_epsilon, false);
-  LOG(INFO) << "Node building status: " << scope.status();
+  // Test decay
+  {
+    auto moving_mean = Variable(scope, {2, 3}, DT_FLOAT);
+    TFAssign(scope, moving_mean, ZerosLike(scope, moving_mean));
 
-  TF_CHECK_OK(session.Run({}, {bn2}, {}, &outputs));
-  LOG(INFO) << "Print: TFBatchNormalization inference result: "
-            << DetailedDebugString(outputs[0]);
-}
+    auto mean = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}});
 
-// Test TFFusedBatchNorm
-{
-  // Const
-  auto x = Const<float>(scope, {{{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
-                                 {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}},
-                                {{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
-                                 {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}}});
-  LOG(INFO) << "Node building status: " << scope.status();
+    auto decay = Const<float>(scope, 1.0f - MOMENTUM, {});
+    auto update_delta1 = Multiply(scope, Sub(scope, moving_mean, mean), decay);
+    auto update_moving_mean = AssignSub(scope, moving_mean, update_delta1);
 
-  TFFusedBatchNorm bn_op(scope, {3});
-  auto bn = bn_op.Build(scope, x, 0.001f, true);
-  LOG(INFO) << "Node building status: " << scope.status();
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+    session.InitializeVariables(scope);
 
-  vector<Tensor> outputs;
-  ClientSession session(scope);
+    for (int i = 0; i < 3; i++) {
+      TF_CHECK_OK(session.Run({}, {update_moving_mean}, {}, &outputs));
 
-  session.InitializeVariables(scope);
-
-  for (int i = 0; i < 1; i++) {
-    TF_CHECK_OK(session.Run({}, {bn}, {}, &outputs));
-
-    LOG(INFO) << "Print: TFFusedBatchNorm training step #" << i
-              << ", result: " << DetailedDebugString(outputs[0]);
-
-    // Run update ops
-    session.RunUpdateOps(scope);
+      LOG(INFO) << "Print: decay step #" << i
+                << ", result: " << DetailedDebugString(outputs[0]);
+    }
   }
 
-  auto bn2 = bn_op.Build(scope, x, 0.001f, false);
-  LOG(INFO) << "Node building status: " << scope.status();
+  // Test TFBatchNormalization
+  {
+    // Const
+    auto x = Const<float>(scope, {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}});
+    LOG(INFO) << "Node building status: " << scope.status();
 
-  TF_CHECK_OK(session.Run({}, {bn2}, {}, &outputs));
-  LOG(INFO) << "Print: TFFusedBatchNorm inference result: "
-            << DetailedDebugString(outputs[0]);
-}
+    auto variance_epsilon = Const<float>(scope, {0.001f});
 
-// Test Models
-{
-  // Models
-  auto generator = Generator(scope);
-  auto discriminator = Discriminator(scope);
+    TFBatchNormalization bn_op(scope, {3});
+    auto bn = bn_op.Build(scope, x, {0}, variance_epsilon, true);
+    LOG(INFO) << "Node building status: " << scope.status();
 
-  // For inference
-  const int num_examples_to_generate = 1;
-  auto generator_inference =
-      generator.Build(scope, num_examples_to_generate, false);
-  auto discriminator_inference =
-      discriminator.Build(scope, generator_inference, num_examples_to_generate);
+    vector<Tensor> outputs;
+    ClientSession session(scope);
 
-  vector<Tensor> outputs;
-  ClientSession session(scope);
+    session.InitializeVariables(scope);
 
-  session.InitializeVariables(scope);
+    for (int i = 0; i < 1; i++) {
+      TF_CHECK_OK(session.Run({}, {bn}, {}, &outputs));
 
-  // Run Test
-  TF_CHECK_OK(session.Run({}, {generator_inference, discriminator_inference},
-                          &outputs));
-  LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
-  LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
-}
+      LOG(INFO) << "Print: TFBatchNormalization training step #" << i
+                << ", result: " << DetailedDebugString(outputs[0]);
+
+      // Run update ops
+      session.RunUpdateOps(scope);
+    }
+
+    auto bn2 = bn_op.Build(scope, x, {0}, variance_epsilon, false);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    TF_CHECK_OK(session.Run({}, {bn2}, {}, &outputs));
+    LOG(INFO) << "Print: TFBatchNormalization inference result: "
+              << DetailedDebugString(outputs[0]);
+  }
+
+  // Test TFFusedBatchNorm
+  {
+    // Const
+    auto x = Const<float>(scope, {{{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
+                                   {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}},
+                                  {{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
+                                   {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}}});
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    TFFusedBatchNorm bn_op(scope, {3});
+    auto bn = bn_op.Build(scope, x, 0.001f, true);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    session.InitializeVariables(scope);
+
+    for (int i = 0; i < 1; i++) {
+      TF_CHECK_OK(session.Run({}, {bn}, {}, &outputs));
+
+      LOG(INFO) << "Print: TFFusedBatchNorm training step #" << i
+                << ", result: " << DetailedDebugString(outputs[0]);
+
+      // Run update ops
+      session.RunUpdateOps(scope);
+    }
+
+    auto bn2 = bn_op.Build(scope, x, 0.001f, false);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    TF_CHECK_OK(session.Run({}, {bn2}, {}, &outputs));
+    LOG(INFO) << "Print: TFFusedBatchNorm inference result: "
+              << DetailedDebugString(outputs[0]);
+  }
+
+  // Test Models
+  {
+    // Models
+    auto generator = Generator(scope);
+    auto discriminator = Discriminator(scope);
+
+    // For inference
+    const int num_examples_to_generate = 1;
+    auto generator_inference =
+        generator.Build(scope, num_examples_to_generate, false);
+    auto discriminator_inference = discriminator.Build(
+        scope, generator_inference, num_examples_to_generate);
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    session.InitializeVariables(scope);
+
+    // Run Test
+    TF_CHECK_OK(session.Run({}, {generator_inference, discriminator_inference},
+                            &outputs));
+    LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
+    LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
+  }
 }
 
 #endif

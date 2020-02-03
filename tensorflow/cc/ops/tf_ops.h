@@ -12,11 +12,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_NN_OPS_RKZ_H_
-#define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_NN_OPS_RKZ_H_
+#ifndef TENSORFLOW_CC_OPS_TF_OPS_H_
+#define TENSORFLOW_CC_OPS_TF_OPS_H_
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
+#include "tensorflow/cc/ops/const_op.h"
+#include "tensorflow/cc/ops/nn_ops.h"
+#include "tensorflow/cc/ops/nn_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
@@ -158,43 +162,7 @@ class TFFusedBatchNorm {
   ::tensorflow::Output beta;
 };
 
-class Generator {
- public:
-  explicit Generator(const ::tensorflow::Scope& scope);
-
-  Output Build(const ::tensorflow::Scope& scope, const int batch_size,
-               bool training, bool use_seed = false);
-
-  ::tensorflow::Output seed;
-
- private:
-  ::tensorflow::Output w1;
-  ::tensorflow::Output filter;
-  ::tensorflow::Output filter2;
-  ::tensorflow::Output filter3;
-
-  TFBatchNormalization batchnorm_op;
-  TFFusedBatchNorm batchnorm1_op;
-  TFFusedBatchNorm batchnorm2_op;
-};
-
-class Discriminator {
- public:
-  explicit Discriminator(const ::tensorflow::Scope& scope);
-
-  Output Build(const ::tensorflow::Scope& scope,
-               const ::tensorflow::Input& inputs, const int batch_size);
-
- private:
-  ::tensorflow::Output conv1_weights;
-  ::tensorflow::Output conv1_biases;
-  ::tensorflow::Output conv2_weights;
-  ::tensorflow::Output conv2_biases;
-  ::tensorflow::Output fc1_weights;
-  ::tensorflow::Output fc1_biases;
-};
-
 }  // namespace ops
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_NN_OPS_RKZ_H_
+#endif  // TENSORFLOW_CC_OPS_TF_OPS_H_

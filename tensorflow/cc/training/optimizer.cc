@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "tensorflow/cc/framework/gradients.h"
 #include "tensorflow/cc/ops/const_op.h"
-#include "tensorflow/cc/ops/nn_ops.h"
-#include "tensorflow/cc/ops/nn_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/cc/ops/tf_ops.h"
+#include "tensorflow/cc/training/optimizer.h"
 
-#include "tensorflow/examples/cc/gan/dcgan/const.h"
-#include "tensorflow/examples/cc/gan/dcgan/nn_ops_rkz.h"
-#include "tensorflow/examples/cc/gan/dcgan/optimizer.h"
+#define LEARNING_RATE 0.0001f
+#define BETA_1 0.9f
+#define BETA_2 0.999f
+#define EPSILON 1e-7
 
 namespace tensorflow {
 namespace ops {
@@ -111,7 +112,7 @@ Status AdamOptimizer::Run(const ::tensorflow::Scope& scope,
     TF_CHECK_OK(
         session.Run({this->assign_add_local_step}, &assign_add_outputs));
 
-#ifdef VERBOSE
+#ifdef DEBUG
     // Print verbose message
     int step = static_cast<int>(assign_add_outputs[0].scalar<float>()());
     if (step % EVAL_FREQUENCY == 0) {

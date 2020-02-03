@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_OPTIMIZER_H_
-#define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_OPTIMIZER_H_
+#ifndef TENSORFLOW_CC_TRAINING_OPTIMIZER_H_
+#define TENSORFLOW_CC_TRAINING_OPTIMIZER_H_
 
 #include <vector>
 
@@ -65,4 +65,4 @@ class AdamOptimizer {
 }  // namespace ops
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_OPTIMIZER_H_
+#endif  // TENSORFLOW_CC_TRAINING_OPTIMIZER_H_

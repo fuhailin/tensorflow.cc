@@ -26,11 +26,11 @@ limitations under the License.
 #include "tensorflow/cc/framework/gradients.h"
 #include "tensorflow/cc/ops/dataset_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/cc/training/optimizer.h"
 #include "tensorflow/core/framework/tensor.h"
 
 #include "tensorflow/examples/cc/gan/dcgan/const.h"
-#include "tensorflow/examples/cc/gan/dcgan/nn_ops_rkz.h"
-#include "tensorflow/examples/cc/gan/dcgan/optimizer.h"
+#include "tensorflow/examples/cc/gan/dcgan/dcgan_ops.h"
 
 #ifdef ENABLE_OPENCV
 #include <opencv2/core.hpp>

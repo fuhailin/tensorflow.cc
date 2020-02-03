@@ -4,8 +4,8 @@ tf_cc_binary(
     name = "dcgan",
     srcs = [
         "dcgan.cc",
-        "dcgan_ops.cc",
-        "dcgan_ops.h",
+        "model.cc",
+        "model.h",
         "const.h",
         "test.h",
     ],

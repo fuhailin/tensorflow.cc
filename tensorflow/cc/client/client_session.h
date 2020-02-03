@@ -105,7 +105,7 @@ class ClientSession {
   // Freeze model into frozen_graph_def
   Status FreezeModel(const tensorflow::GraphDef& graph_def,
                      tensorflow::GraphDef* frozen_graph_def,
-                     const std::unordered_set<string>& freezing_outputs);
+                     const std::unordered_set<string>& freezing_outputs) const;
 
   // Reads a model graph definition from disk
   Status RestoreModel(const string& graph_file_name) const;
@@ -170,7 +170,7 @@ class ClientSession {
   std::unique_ptr<Impl> impl_;
   Impl* impl() { return impl_.get(); }
   const Impl* impl() const { return impl_.get(); }
-  Session* GetSession();
+  Session* GetSession() const;
 };
 
 /// @}

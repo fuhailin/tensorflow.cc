@@ -21,7 +21,7 @@ limitations under the License.
 #include "tensorflow/cc/ops/standard_ops.h"
 
 #include "tensorflow/examples/cc/gan/dcgan/const.h"
-#include "tensorflow/examples/cc/gan/dcgan/dcgan_ops.h"
+#include "tensorflow/examples/cc/gan/dcgan/model.h"
 
 namespace tensorflow {
 namespace ops {

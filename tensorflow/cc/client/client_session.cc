@@ -193,12 +193,12 @@ Status ClientSession::ReleaseCallable(CallableHandle handle) {
   return impl()->session_->ReleaseCallable(handle);
 }
 
-Session* ClientSession::GetSession() { return impl()->session_.get(); }
+Session* ClientSession::GetSession() const { return impl()->session_.get(); }
 
 Status ClientSession::FreezeModel(
     const tensorflow::GraphDef& graph_def,
     tensorflow::GraphDef* frozen_graph_def,
-    const std::unordered_set<string>& freezing_outputs) {
+    const std::unordered_set<string>& freezing_outputs) const {
   tensorflow::SavedModelBundle saved_model_bundle;
   std::unordered_set<std::string> inputs;
   std::unordered_set<std::string> outputs;

@@ -30,7 +30,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 
 #include "tensorflow/examples/cc/gan/dcgan/const.h"
-#include "tensorflow/examples/cc/gan/dcgan/dcgan_ops.h"
+#include "tensorflow/examples/cc/gan/dcgan/model.h"
 
 #ifdef ENABLE_OPENCV
 #include <opencv2/core.hpp>

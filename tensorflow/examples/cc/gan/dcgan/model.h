@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_DCGAN_OPS_H_
-#define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_DCGAN_OPS_H_
+#ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_MODEL_H_
+#define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_MODEL_H_
 
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
@@ -65,4 +65,4 @@ class Discriminator {
 }  // namespace ops
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_DCGAN_OPS_H_
+#endif  // TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_MODEL_H_

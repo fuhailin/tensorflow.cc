@@ -381,7 +381,6 @@ REGISTER_OP("RandomCrop")
     .Attr("seed: int = 0")
     .Attr("seed2: int = 0")
     .SetIsStateful()
-    .Deprecated(8, "Random crop is now pure Python")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle image;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 3, &image));

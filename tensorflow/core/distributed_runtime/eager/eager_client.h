@@ -38,6 +38,7 @@ class EagerClient : public core::RefCounted {
   CLIENT_METHOD(UpdateContext);
   CLIENT_METHOD(Enqueue);
   CLIENT_METHOD(WaitQueueDone);
+  CLIENT_METHOD(RunComponentFunction);
   CLIENT_METHOD(KeepAlive);
   CLIENT_METHOD(CloseContext);
 
@@ -57,6 +58,8 @@ class EagerClient : public core::RefCounted {
   virtual void StreamingEnqueueAsync(const EnqueueRequest* request,
                                      EnqueueResponse* response,
                                      StatusCallback done) = 0;
+
+  virtual bool allow_multiple_pending_requests() const = 0;
 };
 
 // Simple wrapper class that can be used to retrieve EagerClients.

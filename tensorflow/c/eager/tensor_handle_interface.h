@@ -15,36 +15,52 @@ limitations under the License.
 #ifndef TENSORFLOW_C_EAGER_TENSOR_HANDLE_INTERFACE_H_
 #define TENSORFLOW_C_EAGER_TENSOR_HANDLE_INTERFACE_H_
 
-#include "tensorflow/c/c_api.h"
-#include "tensorflow/c/eager/c_api.h"
-#include "tensorflow/c/tf_datatype.h"
-#include "tensorflow/core/common_runtime/eager/tensor_handle.h"
+#include "tensorflow/c/tensor_interface.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/platform/status.h"
 
 namespace tensorflow {
 
-class TensorHandleInterface {
+// Abstract interface to a TensorHandle.
+//
+// A TensorHandle is management class around a Tensor which may track additional
+// metadata and synchronization.
+//
+// This allows us to hide concrete implementations of TensorHandle from header
+// files. The interface lists the common functionality that must be provided by
+// any concrete implementation. However, in cases where the true concrete class
+// is needed a static_cast can be applied.
+class AbstractTensorHandleInterface {
  public:
-  explicit TensorHandleInterface(TensorHandle* h) : handle_(h) {}
-  ~TensorHandleInterface();
+  // Release any underlying resources, including the interface object.
+  //
+  // WARNING: The destructor of this class is marked as protected to disallow
+  // clients from directly destroying this object since it may manage it's own
+  // lifetime through ref counting. Thus this must be allocated on the heap and
+  // clients MUST call Release() in order to destroy an instance of this class.
+  virtual void Release() = 0;
 
-  bool IsValid(Status* status) const;
-  TF_DataType DataType() const;
-  int NumDims(Status* status) const;
-  int64_t NumElements(Status* status) const;
-  int64_t Dim(int dim_index, Status* status) const;
+  // Returns tensor dtype.
+  virtual tensorflow::DataType DataType() const = 0;
+  // Returns number of dimensions.
+  virtual Status NumDims(int* num_dims) const = 0;
+  // Returns number of elements across all dimensions.
+  virtual Status NumElements(int64* num_elements) const = 0;
+  // Returns size of specified dimension
+  virtual Status Dim(int dim_index, int64* dim) const = 0;
 
-  const char* DeviceName(Status* status) const;
-  const char* BackingDeviceName(Status* status) const;
-  TFE_TensorHandle* Copy();
-  TF_Tensor* Resolve(Status* status);
-  TFE_TensorDebugInfo* TensorDebugInfo(Status* status);
+  // Returns the device which created the handle.
+  virtual const char* DeviceName(Status* status) const = 0;
+  // Returns the device where the tensor was placed.
+  virtual const char* BackingDeviceName(Status* status) const = 0;
+  // Returns a tensor for the handle. If tensor is remote, it will be copied.
+  virtual AbstractTensorInterface* Resolve(Status* status) = 0;
 
-  // TODO(gjn): This is not a very generic interface, but is needed for specific
-  // use cases.
-  TensorHandle* Handle() { return handle_; }
+  // Return a copy of the handle.
+  virtual AbstractTensorHandleInterface* Copy() = 0;
 
- private:
-  TensorHandle* handle_;
+ protected:
+  virtual ~AbstractTensorHandleInterface() {}
 };
 
 }  // namespace tensorflow

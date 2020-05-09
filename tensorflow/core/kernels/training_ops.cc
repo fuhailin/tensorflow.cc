@@ -1466,7 +1466,7 @@ class ApplyAdagradTrickOp : public OpKernel {
         errors::FailedPrecondition(
             "Attempting to use uninitialized variables: ", requested_input(1)));
     const Tensor& lr = ctx->input(2);
-    OP_REQUIRES(ctx, IsLegacyScalar(lr.shape()),
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr.shape()),
                 errors::InvalidArgument("lr is not a scalar: ",
                                         lr.shape().DebugString()));
     const Tensor& grad = ctx->input(3);

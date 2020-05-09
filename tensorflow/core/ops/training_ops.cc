@@ -1182,9 +1182,8 @@ REGISTER_OP("ApplyAdagradTrick")
     .Attr("T: numbertype")
     .Attr("use_locking: bool = false")
     .Attr("update_slots: bool = true")
-    .SetShapeFn([](InferenceContext* c) {
-      return ApplyAdagradShapeFn(c, false /* sparse */);
-    });
+    .SetShapeFn(
+        ApplyAdagradShapeFn</*is_sparse=*/false, /*is_resource=*/false>);
 
 REGISTER_OP("ResourceApplyAdagradTrick")
     .Input("var: resource")
@@ -1194,8 +1193,7 @@ REGISTER_OP("ResourceApplyAdagradTrick")
     .Attr("T: numbertype")
     .Attr("use_locking: bool = false")
     .Attr("update_slots: bool = true")
-    .SetShapeFn([](InferenceContext* c) {
-      return ApplyAdagradShapeFn(c, false /* sparse */);
-    });
+    .SetShapeFn(
+        ApplyAdagradShapeFn</*is_sparse=*/false, /*is_resource=*/false>);
 
 }  // namespace tensorflow

@@ -177,7 +177,11 @@ int main() {
   // Run make_iterator_output first
   TF_CHECK_OK(session.Run({}, {}, {make_iterator_op}, nullptr));
   while (
-      session.Run({}, iterator_get_next[0].components, &dataset_outputs).ok()) {
+      session
+          .Run({}, iterator_get_next[0].components,
+               {iterator_get_next[0].operation, iterator_get_next[1].operation},
+               &dataset_outputs)
+          .ok()) {
     LOG(INFO) << "Print dataset_outputs: " << dataset_outputs[0].DebugString();
   }
 #endif
@@ -291,7 +295,7 @@ int main() {
     Output avg_gen = Div(scope,
                          Add(scope, symb_grad_outputs_gen_array[0][i],
                              symb_grad_outputs_gen_array[1][i]),
-                         2.0f);
+                         {2.0f});
     symb_grad_outputs_gen_avg.emplace_back(avg_gen);
   }
 
@@ -299,7 +303,7 @@ int main() {
     Output avg_disc = Div(scope,
                           Add(scope, symb_grad_outputs_disc_array[0][i],
                               symb_grad_outputs_disc_array[1][i]),
-                          2.0f);
+                          {2.0f});
     symb_grad_outputs_disc_avg.emplace_back(avg_disc);
   }
 
@@ -353,7 +357,7 @@ int main() {
 
       // Run update ops
       session.RunUpdateOps(scope);
-#ifdef VERBOSE
+#ifdef DEBUG
       auto update_ops = scope.GetUpdateOps();
       for (auto& op : *update_ops) {
         LOG(INFO) << "GetUpdateOps op: " << op.node()->name();

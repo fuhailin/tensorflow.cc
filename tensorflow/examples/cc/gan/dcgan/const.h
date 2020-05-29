@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_CONST_H_
 #define TENSORFLOW_EXAMPLES_CC_GAN_DCGAN_CONST_H_
 
-// #define VERBOSE 1
+#define VERBOSE 1
 // #define TESTING 1
 // #define DEBUG 1
 

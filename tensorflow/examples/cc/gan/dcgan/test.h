@@ -299,6 +299,26 @@ void test(const Scope& scope) {
     LOG(INFO) << "Print discriminator output 0: " << outputs[0].DebugString();
     LOG(INFO) << "Print discriminator output 1: " << outputs[1].DebugString();
   }
+
+  // Test TFFusedBatchNorm
+  {
+    // Const
+    auto x = Const<float>(scope, {{{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
+                                   {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}},
+                                  {{{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}},
+                                   {{-1.0, 2.0, 1.0}, {1.0, 2.0, 3.0}}}});
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    auto y = Div(scope, x, {2.0f});
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status = session.Run({}, {y}, {}, &outputs);
+
+    LOG(INFO) << "Print: Div result: "
+              << DetailedDebugString(outputs[0]);
+  }
 }
 
 #endif

@@ -280,7 +280,7 @@ int main() {
 
       // Run update ops
       session.RunUpdateOps(scope);
-#ifdef VERBOSE
+#ifdef DEBUG
       auto update_ops = scope.GetUpdateOps();
       for (auto& op : *update_ops) {
         LOG(INFO) << "GetUpdateOps op: " << op.node()->name();

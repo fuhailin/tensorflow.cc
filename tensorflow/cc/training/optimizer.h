@@ -32,8 +32,13 @@ class AdamOptimizer {
  public:
   explicit AdamOptimizer(const ::tensorflow::Scope& scope);
 
-  void Build(const ::tensorflow::Scope& scope, std::vector<Output> outputs,
-             std::vector<Output> trainable_variables);
+  void Build(const ::tensorflow::Scope& scope,
+             const std::vector<Output>& outputs,
+             const std::vector<Output>& trainable_variables);
+  void Build(const ::tensorflow::Scope& scope,
+             const std::vector<Output>& outputs,
+             const std::vector<Output>& trainable_variables,
+             const std::vector<Output>& symb_grad_outputs);
 
   Status Run(const ::tensorflow::Scope& scope,
              const ::tensorflow::ClientSession& session,

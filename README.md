@@ -39,4 +39,6 @@
 <p>bazel run -c opt //tensorflow/examples/cc/magenta:melody_rl_tuner</p>
 <br/>
 <p>8) GAN</p>
+<p>sh tensorflow/examples/cc/cnn/mnist/data/download_data.sh</p>
 <p>bazel run -c opt //tensorflow/examples/cc/gan/dcgan:dcgan</p>
+<p>bazel run -c opt //tensorflow/examples/cc/gan/dcgan:dcgan_multi_gpus</p>

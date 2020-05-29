@@ -55,14 +55,51 @@ DataType DataTypeToBaseType(DataType data_type) {
 }
 
 void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
-                          std::vector<Output> outputs,
-                          std::vector<Output> trainable_variables) {
+                          const std::vector<Output>& outputs,
+                          const std::vector<Output>& trainable_variables) {
   // AddSymbolicGradients
   std::vector<Output> symb_grad_outputs;
   TF_CHECK_OK(AddSymbolicGradients(scope, outputs, trainable_variables,
                                    &symb_grad_outputs));
   LOG(INFO) << "Node building status: " << scope.status();
 
+  // ApplyAdam trainable_variables
+  int symb_grad_index = 0;
+  for (auto var : trainable_variables) {
+    // Variables m and v for ApplyAdam
+    auto wm =
+        Variable(scope, scope.GetTrainableVariableShape(var.node()->name()),
+                 DataTypeToBaseType(var.type()));
+    LOG(INFO) << "Node building status: " << scope.status();
+    TFAssign(scope, wm, ZerosLike(scope, var));
+    auto wv =
+        Variable(scope, scope.GetTrainableVariableShape(var.node()->name()),
+                 DataTypeToBaseType(var.type()));
+    LOG(INFO) << "Node building status: " << scope.status();
+    TFAssign(scope, wv, ZerosLike(scope, var));
+
+    auto apply_adam =
+        ApplyAdam(scope, var, wm, wv, beta1_power, beta2_power, lr, beta1,
+                  beta2, epsilon, symb_grad_outputs[symb_grad_index++]);
+    LOG(INFO) << "Node building status: " << scope.status();
+
+    // Append it
+    this->apply_adams.emplace_back(apply_adam);
+  }
+
+  // Append outputs to grad_outputs
+  this->grad_outputs.reserve(this->grad_outputs.size() + outputs.size());
+  this->grad_outputs.insert(this->grad_outputs.end(), outputs.begin(),
+                            outputs.end());
+}
+
+// Build up optimizer
+// For multi-gpus case, AddSymbolicGradients should be called outside,
+//   so change symb_grad_outputs as a parameter
+void AdamOptimizer::Build(const ::tensorflow::Scope& scope,
+                          const std::vector<Output>& outputs,
+                          const std::vector<Output>& trainable_variables,
+                          const std::vector<Output>& symb_grad_outputs) {
   // ApplyAdam trainable_variables
   int symb_grad_index = 0;
   for (auto var : trainable_variables) {

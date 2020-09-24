@@ -1,7 +1,7 @@
 # Tests of tf.io.*proto.
 
-load("//tensorflow:tensorflow.bzl", "tf_py_test")
 load("//tensorflow:tensorflow.bzl", "tf_cc_shared_object")
+load("//tensorflow:tensorflow.bzl", "tf_py_test")
 load("//tensorflow/core/platform:build_config_root.bzl", "if_static")
 load("//tensorflow/core/platform:build_config.bzl", "tf_additional_all_protos", "tf_proto_library")
 
@@ -28,6 +28,7 @@ tf_py_test(
         "no_pip",  # TODO(b/78026780)
         "no_windows",  # TODO(b/78028010)
     ],
+    tfrt_enabled = True,
     deps = [
         ":decode_proto_op_test_base",
         ":py_test_deps",
@@ -48,6 +49,7 @@ tf_py_test(
         "no_pip",  # TODO(b/78026780)
         "no_windows",  # TODO(b/78028010)
     ],
+    tfrt_enabled = True,
     deps = [
         ":encode_proto_op_test_base",
         ":py_test_deps",
@@ -126,6 +128,7 @@ tf_py_test(
     tags = [
         "no_pip",
     ],
+    tfrt_enabled = True,
     deps = [
         ":descriptor_source_test_base",
         "//tensorflow/python:client_testlib",

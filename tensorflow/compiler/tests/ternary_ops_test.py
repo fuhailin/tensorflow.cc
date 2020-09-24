@@ -48,7 +48,8 @@ class TernaryOpsTest(xla_test.XLATestCase, parameterized.TestCase):
       {'start': 1, 'end': 2, 'num': 1},
       {'start': 1, 'end': 4, 'num': 3},
       {'start': 0, 'end': 41, 'num': 42})
-  @test_util.disable_mlir_bridge('Requires dynamic shape handling')
+  @test_util.disable_mlir_bridge(
+      'TODO(b/156174708): Dynamic result types not supported')
   def testLinspace(self, start, end, num):
     expected = np.linspace(start, end, num, dtype=np.float32)
     result = self._testTernary(
@@ -76,7 +77,6 @@ class TernaryOpsTest(xla_test.XLATestCase, parameterized.TestCase):
         np.int32(2),
         expected=np.array([1, 3, 5], dtype=np.int32))
 
-  @test_util.disable_mlir_bridge('TODO(b/155949336)')
   def testSelect(self):
     for dtype in self.numeric_types:
       self._testTernary(
@@ -182,7 +182,6 @@ class TernaryOpsTest(xla_test.XLATestCase, parameterized.TestCase):
           np.array([8, 9], dtype=dtype),
           expected=np.array([[7, 9], [8, 7], [8, 9]], dtype=dtype))
 
-  @test_util.disable_mlir_bridge('TODO(b/155097273)')
   def testSlice(self):
     for dtype in self.numeric_types:
       self._testTernary(
@@ -215,7 +214,6 @@ class TernaryOpsTest(xla_test.XLATestCase, parameterized.TestCase):
             upper,
             expected=np.minimum(np.maximum(x, lower), upper))
 
-  @test_util.disable_mlir_bridge('Enable tf.Betainc Compilation')
   def testBetaincSanity(self):
     # This operation is only supported for float32 and float64.
     for dtype in self.numeric_types & {np.float32, np.float64}:
@@ -253,7 +251,6 @@ class TernaryOpsTest(xla_test.XLATestCase, parameterized.TestCase):
           'atol': 2e-4
       },
   )
-  @test_util.disable_mlir_bridge('Enable tf.Betainc Compilation')
   def testBetainc(self, sigma, rtol, atol):
     # This operation is only supported for float32 and float64.
     for dtype in self.numeric_types & {np.float32, np.float64}:

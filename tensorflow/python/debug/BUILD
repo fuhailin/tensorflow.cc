@@ -788,7 +788,6 @@ cuda_py_test(
         "//tensorflow/python:training",
         "//tensorflow/python:variables",
         "//tensorflow/python/data/ops:dataset_ops",
-        "//tensorflow/python/keras",
         "//third_party/py/numpy",
     ],
 )
@@ -798,6 +797,7 @@ cuda_py_test(
     size = "small",
     srcs = ["lib/debug_gradients_test.py"],
     python_version = "PY3",
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
     deps = [
         ":debug_data",
@@ -840,7 +840,6 @@ py_test(
     python_version = "PY3",
     srcs_version = "PY2AND3",
     tags = [
-        "no_oss_py38",  #TODO(b/151449908)
         "no_windows",
     ],
     deps = [
@@ -1043,6 +1042,7 @@ cuda_py_test(
     size = "small",
     srcs = ["lib/debug_grappler_test.py"],
     python_version = "PY3",
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Tests TF:Classic implementation.
     deps = [
         ":debug_data",
@@ -1061,6 +1061,7 @@ cuda_py_test(
     srcs = ["lib/session_debug_file_test.py"],
     python_version = "PY3",
     tags = ["notsan"],
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
     deps = [
         ":debug_data",
@@ -1079,6 +1080,7 @@ cuda_py_test(
     size = "small",
     srcs = ["lib/debug_graph_reconstruction_test.py"],
     python_version = "PY3",
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
     deps = [
         ":debug_data",
@@ -1099,6 +1101,7 @@ cuda_py_test(
     srcs = ["lib/session_debug_multi_gpu_test.py"],
     python_version = "PY3",
     tags = ["no_windows_gpu"],
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
     deps = [
         ":debug_data",
@@ -1221,6 +1224,7 @@ cuda_py_test(
     srcs = ["cli/analyzer_cli_test.py"],
     python_version = "PY3",
     tags = ["no_windows"],  # TODO: needs investigation on Windows
+    tfrt_enabled = True,
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
     deps = [
         ":analyzer_cli",
@@ -1276,6 +1280,7 @@ cuda_py_test(
     tags = [
         "no_oss",  # Test flaky due to port collisions.
         "no_windows",
+        "notap",  # TODO(b/160925973): Test flaky due to port collisions.
         "notsan",
         "oss_serial",
     ],
@@ -1335,6 +1340,7 @@ cuda_py_test(
     tags = [
         "no_oss",  # Incompatible with bazel_pip.
         "no_windows",
+        "notap",  # TODO(b/160822489) flaky timeouts
         "notsan",
     ],
     xla_enable_strict_auto_jit = False,  # Node names are different with autojit
@@ -1401,7 +1407,6 @@ py_test(
         "//tensorflow/python:state_ops",
         "//tensorflow/python:training",
         "//tensorflow/python:variables",
-        "//tensorflow/python/keras",
         "//third_party/py/numpy",
     ],
 )

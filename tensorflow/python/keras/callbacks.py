@@ -33,11 +33,16 @@ import numpy as np
 import six
 
 from tensorflow.python.data.ops import iterator_ops
+from tensorflow.python.distribute import collective_all_reduce_strategy
+from tensorflow.python.distribute import distribute_lib
 from tensorflow.python.distribute import distributed_file_utils
-from tensorflow.python.distribute import multi_worker_util
+from tensorflow.python.distribute import mirrored_strategy
+from tensorflow.python.distribute import tpu_strategy
+from tensorflow.python.eager import context
 from tensorflow.python.framework import ops
 from tensorflow.python.keras import backend as K
-from tensorflow.python.keras.distribute import multi_worker_training_state as training_state
+from tensorflow.python.keras.distribute import worker_training_state
+from tensorflow.python.keras.optimizer_v2 import learning_rate_schedule
 from tensorflow.python.keras.utils import generic_utils
 from tensorflow.python.keras.utils import tf_utils
 from tensorflow.python.keras.utils import version_utils
@@ -49,9 +54,12 @@ from tensorflow.python.lib.io import file_io
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import summary_ops_v2
+from tensorflow.python.platform import gfile
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.profiler import profiler_v2 as profiler
+from tensorflow.python.saved_model import save_options as save_options_lib
 from tensorflow.python.training import checkpoint_management
+from tensorflow.python.training.saving import checkpoint_options as checkpoint_options_lib
 from tensorflow.python.util import nest
 from tensorflow.python.util.compat import collections_abc
 from tensorflow.python.util.tf_export import keras_export
@@ -175,7 +183,7 @@ def set_callback_parameters(callback_list,
 
 def _is_generator_like(data):
   """Checks if data is a generator, Sequence, or Iterator."""
-  return (hasattr(data, 'next') or hasattr(data, '__next__') or isinstance(
+  return (hasattr(data, '__next__') or hasattr(data, 'next') or isinstance(
       data, (Sequence, iterator_ops.Iterator, iterator_ops.OwnedIterator)))
 
 
@@ -235,9 +243,13 @@ class CallbackList(object):
     # pylint: enable=protected-access
 
     # Performance check: Check batch hooks for slowness compared to batch time.
-    self._timing = {}
-    self._check_timing = False
+    # Only run check for custom callbacks (i.e. not present in this file).
+    self._check_timing = any([cbk.__class__.__name__ not in globals()
+                              for cbk in self.callbacks])
+    self._num_batches_for_timing_check = 5
+    self._hook_times = {}
     self._batch_start_time = None
+    self._batch_times = []
 
   def _add_default_callbacks(self, add_history, add_progbar):
     """Adds `Callback`s that are always present."""
@@ -288,7 +300,6 @@ class CallbackList(object):
   def _call_batch_begin_hook(self, mode, batch, logs):
     """Helper function for `on_*_batch_begin` methods."""
     hook_name = 'on_{mode}_batch_begin'.format(mode=mode)
-    self._check_timing = batch == 1 and hook_name not in self._timing
     self._call_batch_hook_helper(hook_name, batch, logs)
 
     if self._check_timing:
@@ -298,25 +309,39 @@ class CallbackList(object):
     """Helper function for `on_*_batch_end` methods."""
     hook_name = 'on_{mode}_batch_end'.format(mode=mode)
 
-    if self._check_timing:
+    if self._check_timing and batch >= 1:
       batch_time = time.time() - self._batch_start_time
+      self._batch_times.append(batch_time)
 
     self._call_batch_hook_helper(hook_name, batch, logs)
 
-    if self._check_timing:
+    if len(self._batch_times) >= self._num_batches_for_timing_check:
       end_hook_name = hook_name
       begin_hook_name = 'on_{mode}_batch_begin'.format(mode=mode)
+      avg_batch_time = sum(self._batch_times) / len(self._batch_times)
+      avg_end_hook_time = sum(self._hook_times[end_hook_name]) / len(
+          self._hook_times[end_hook_name])
+      avg_begin_hook_time = sum(self._hook_times[begin_hook_name]) / len(
+          self._hook_times[begin_hook_name])
 
-      threshold_time = 0.5 * batch_time
-      warning_msg = ('Callbacks method `{hook}` is slow compared to '
-                     'the batch time. Check your callbacks.')
-      if self._timing[begin_hook_name] > threshold_time:
-        logging.warning(warning_msg.format(hook=begin_hook_name))
-      if self._timing[end_hook_name] > threshold_time:
-        logging.warning(warning_msg.format(hook=end_hook_name))
-
+      threshold_time = 1.0 * avg_batch_time
+      warning_msg = ('Callback method `{hook}` is slow compared to '
+                     'the batch time (batch time: {batch_time:.4f}s vs '
+                     '`{hook}` time: {hook_time:.4f}s). Check your callbacks.')
+      if avg_begin_hook_time > threshold_time:
+        logging.warning(warning_msg.format(
+            hook=begin_hook_name,
+            batch_time=avg_batch_time,
+            hook_time=avg_begin_hook_time))
+      if avg_end_hook_time > threshold_time:
+        logging.warning(warning_msg.format(
+            hook=end_hook_name,
+            batch_time=avg_batch_time,
+            hook_time=avg_end_hook_time))
       self._check_timing = False
       self._batch_start_time = None
+      self._batch_times = []
+      self._hook_times = {}
 
   def _call_batch_hook_helper(self, hook_name, batch, logs):
     """Helper function for `on_*_batch_*` methods."""
@@ -335,7 +360,9 @@ class CallbackList(object):
         hook(batch, numpy_logs)
 
     if self._check_timing:
-      self._timing[hook_name] = time.time() - start_time
+      if hook_name not in self._hook_times:
+        self._hook_times[hook_name] = []
+      self._hook_times[hook_name].append(time.time() - start_time)
 
   def _call_begin_hook(self, mode):
     """Helper function for on_{train|test|predict}_begin methods."""
@@ -409,11 +436,10 @@ class CallbackList(object):
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.train_step`. Typically,
+          the values of the `Model`'s metrics are returned.  Example:
+          `{'loss': 0.2, 'accuracy': 0.7}`.
     """
-    # TODO(b/150629188): Make ProgBarLogger callback not use batch hooks
-    # when verbose != 1
     if self._should_call_train_batch_hooks:
       self._call_batch_hook(ModeKeys.TRAIN, 'begin', batch, logs=logs)
 
@@ -432,8 +458,9 @@ class CallbackList(object):
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.test_step`. Typically,
+          the values of the `Model`'s metrics are returned.  Example:
+          `{'loss': 0.2, 'accuracy': 0.7}`.
     """
     if self._should_call_test_batch_hooks:
       self._call_batch_hook(ModeKeys.TEST, 'begin', batch, logs=logs)
@@ -453,8 +480,9 @@ class CallbackList(object):
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.predict_step`,
+          it typically returns a dict with a key 'outputs' containing
+          the model's outputs.
     """
     if self._should_call_predict_batch_hooks:
       self._call_batch_hook(ModeKeys.PREDICT, 'begin', batch, logs=logs)
@@ -639,7 +667,8 @@ class Callback(object):
         epoch: Integer, index of epoch.
         logs: Dict, metric results for this training epoch, and for the
           validation epoch if validation is performed. Validation result keys
-          are prefixed with `val_`.
+          are prefixed with `val_`. For training epoch, the values of the  
+         `Model`'s metrics are returned. Example : `{'loss': 0.2, 'acc': 0.7}`.
     """
 
   @doc_controls.for_subclass_implementers
@@ -649,10 +678,15 @@ class Callback(object):
 
     Subclasses should override for any actions to run.
 
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
+
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.train_step`. Typically,
+          the values of the `Model`'s metrics are returned.  Example:
+          `{'loss': 0.2, 'accuracy': 0.7}`.
     """
     # For backwards compatibility.
     self.on_batch_begin(batch, logs=logs)
@@ -663,6 +697,10 @@ class Callback(object):
     """Called at the end of a training batch in `fit` methods.
 
     Subclasses should override for any actions to run.
+
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
@@ -681,10 +719,15 @@ class Callback(object):
 
     Subclasses should override for any actions to run.
 
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
+
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.test_step`. Typically,
+          the values of the `Model`'s metrics are returned.  Example:
+          `{'loss': 0.2, 'accuracy': 0.7}`.
     """
 
   @doc_controls.for_subclass_implementers
@@ -696,6 +739,10 @@ class Callback(object):
     methods, if validation data is provided.
 
     Subclasses should override for any actions to run.
+
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
@@ -709,10 +756,15 @@ class Callback(object):
 
     Subclasses should override for any actions to run.
 
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
+
     Arguments:
         batch: Integer, index of batch within the current epoch.
-        logs: Dict. Has keys `batch` and `size` representing the current batch
-          number and the size of the batch.
+        logs: Dict, contains the return value of `model.predict_step`,
+          it typically returns a dict with a key 'outputs' containing
+          the model's outputs.
     """
 
   @doc_controls.for_subclass_implementers
@@ -721,6 +773,10 @@ class Callback(object):
     """Called at the end of a batch in `predict` methods.
 
     Subclasses should override for any actions to run.
+
+    Note that if the `steps_per_execution` argument to `compile` in
+    `tf.keras.Model` is set to `N`, this method will only be called every `N`
+    batches.
 
     Arguments:
         batch: Integer, index of batch within the current epoch.
@@ -867,10 +923,15 @@ class TerminateOnNaN(Callback):
   """Callback that terminates training when a NaN loss is encountered.
   """
 
+  def __init__(self):
+    super(TerminateOnNaN, self).__init__()
+    self._supports_tf_logs = True
+
   def on_batch_end(self, batch, logs=None):
     logs = logs or {}
     loss = logs.get('loss')
     if loss is not None:
+      loss = tf_utils.to_numpy_or_python_type(loss)
       if np.isnan(loss) or np.isinf(loss):
         print('Batch %d: Invalid loss, terminating training' % (batch))
         self.model.stop_training = True
@@ -912,6 +973,9 @@ class ProgbarLogger(Callback):
     self.verbose = 1
     self.epochs = 1
 
+    self._train_step, self._test_step, self._predict_step = None, None, None
+    self._call_batch_hooks = True
+
     self._called_in_fit = False
 
   def set_params(self, params):
@@ -924,6 +988,15 @@ class ProgbarLogger(Callback):
     else:
       self.target = None  # Will be inferred at the end of the first epoch.
 
+    self._call_batch_hooks = self.verbose == 1
+    if self.target is None:
+      try:
+        self._train_step = self.model._train_counter  # pylint: disable=protected-access
+        self._test_step = self.model._test_counter  # pylint: disable=protected-access
+        self._predict_step = self.model._predict_counter  # pylint: disable=protected-access
+      except AttributeError:
+        self._call_batch_hooks = True
+
   def on_train_begin(self, logs=None):
     # When this logger is called inside `fit`, validation is silent.
     self._called_in_fit = True
@@ -931,12 +1004,15 @@ class ProgbarLogger(Callback):
   def on_test_begin(self, logs=None):
     if not self._called_in_fit:
       self._reset_progbar()
+      self._maybe_init_progbar()
 
   def on_predict_begin(self, logs=None):
     self._reset_progbar()
+    self._maybe_init_progbar()
 
   def on_epoch_begin(self, epoch, logs=None):
     self._reset_progbar()
+    self._maybe_init_progbar()
     if self.verbose and self.epochs > 1:
       print('Epoch %d/%d' % (epoch + 1, self.epochs))
 
@@ -952,14 +1028,14 @@ class ProgbarLogger(Callback):
     self._batch_update_progbar(batch, None)
 
   def on_epoch_end(self, epoch, logs=None):
-    self._finalize_progbar(logs)
+    self._finalize_progbar(logs, self._train_step)
 
   def on_test_end(self, logs=None):
     if not self._called_in_fit:
-      self._finalize_progbar(logs)
+      self._finalize_progbar(logs, self._test_step)
 
   def on_predict_end(self, logs=None):
-    self._finalize_progbar(logs)
+    self._finalize_progbar(logs, self._predict_step)
 
   def _reset_progbar(self):
     self.seen = 0
@@ -968,7 +1044,7 @@ class ProgbarLogger(Callback):
   def _maybe_init_progbar(self):
     if self.stateful_metrics is None:
       if self.model:
-        self.stateful_metrics = (set(m.name for m in self.model.metrics))
+        self.stateful_metrics = set(m.name for m in self.model.metrics)
       else:
         self.stateful_metrics = set()
 
@@ -978,6 +1054,15 @@ class ProgbarLogger(Callback):
           verbose=self.verbose,
           stateful_metrics=self.stateful_metrics,
           unit_name='step' if self.use_steps else 'sample')
+
+  def _implements_train_batch_hooks(self):
+    return self._call_batch_hooks
+
+  def _implements_test_batch_hooks(self):
+    return self._call_batch_hooks
+
+  def _implements_predict_batch_hooks(self):
+    return self._call_batch_hooks
 
   def _batch_update_progbar(self, batch, logs=None):
     """Updates the progbar."""
@@ -999,14 +1084,16 @@ class ProgbarLogger(Callback):
       logs = tf_utils.to_numpy_or_python_type(logs)
       self.progbar.update(self.seen, list(logs.items()), finalize=False)
 
-  def _finalize_progbar(self, logs):
-    logs = logs or {}
-    self._maybe_init_progbar()
+  def _finalize_progbar(self, logs, counter):
+    logs = tf_utils.to_numpy_or_python_type(logs or {})
     if self.target is None:
-      self.target = self.seen
-      self.progbar.target = self.seen
-    logs = tf_utils.to_numpy_or_python_type(logs)
-    self.progbar.update(self.seen, list(logs.items()), finalize=True)
+      if counter is not None:
+        counter = counter.numpy()
+        if not self.use_steps:
+          counter *= logs.get('size', 1)
+      self.target = counter or self.seen
+      self.progbar.target = self.target
+    self.progbar.update(self.target, list(logs.items()), finalize=True)
 
 
 @keras_export('keras.callbacks.History')
@@ -1101,11 +1188,14 @@ class ModelCheckpoint(Callback):
       save_freq: `'epoch'` or integer. When using `'epoch'`, the callback saves
         the model after each epoch. When using integer, the callback saves the
         model at end of this many batches. If the `Model` is compiled with
-        `experimental_steps_per_execution=N`, then the saving criteria will be
+        `steps_per_execution=N`, then the saving criteria will be
         checked every Nth batch. Note that if the saving isn't aligned to
         epochs, the monitored metric may potentially be less reliable (it
         could reflect as little as 1 batch, since the metrics get reset every
         epoch). Defaults to `'epoch'`.
+      options: Optional `tf.train.CheckpointOptions` object if
+        `save_weights_only` is true or optional `tf.saved_model.SaveOptions`
+        object if `save_weights_only` is false.
       **kwargs: Additional arguments for backwards compatibility. Possible key
         is `period`.
   """
@@ -1118,6 +1208,7 @@ class ModelCheckpoint(Callback):
                save_weights_only=False,
                mode='auto',
                save_freq='epoch',
+               options=None,
                **kwargs):
     super(ModelCheckpoint, self).__init__()
     self._supports_tf_logs = True
@@ -1130,6 +1221,20 @@ class ModelCheckpoint(Callback):
     self.epochs_since_last_save = 0
     self._batches_seen_since_last_saving = 0
     self._last_batch_seen = 0
+
+    if save_weights_only:
+      if options is None or isinstance(
+          options, checkpoint_options_lib.CheckpointOptions):
+        self._options = options or checkpoint_options_lib.CheckpointOptions()
+      else:
+        raise TypeError('If save_weights_only is True, then `options` must be'
+                        'either None or a tf.train.CheckpointOptions')
+    else:
+      if options is None or isinstance(options, save_options_lib.SaveOptions):
+        self._options = options or save_options_lib.SaveOptions()
+      else:
+        raise TypeError('If save_weights_only is False, then `options` must be'
+                        'either None or a tf.saved_model.SaveOptions')
 
     # Deprecated field `load_weights_on_restart` is for loading the checkpoint
     # file from `filepath` at the start of `model.fit()`
@@ -1186,51 +1291,23 @@ class ModelCheckpoint(Callback):
       self.save_weights_only = True
 
   def on_train_begin(self, logs=None):
-    # pylint: disable=protected-access
-    if self.model._in_multi_worker_mode():
-      # MultiWorkerTrainingState is used to manage the training state needed
-      # for preemption-recovery of a worker in multi-worker training.
-      self.model._training_state = (
-          training_state.MultiWorkerTrainingState(self.model, self.filepath))
-      self._training_state = self.model._training_state
-      if self._training_state.restore():
-        # If the training state needs to be and is successfully restored,
-        # it is recovering from a previous failure (or preemption). In such
-        # case, do not load the weights from user specified file path.
-        return
-
-    # If this is not multi worker training, restoring is not needed, or
-    # restoring failed, check if it should load weights on restart.
     if self.load_weights_on_restart:
-      if (not self.model._in_multi_worker_mode() or
-          multi_worker_util.should_load_checkpoint()):
-        filepath_to_load = (
-            self._get_most_recently_modified_file_matching_pattern(
-                self.filepath))
-        if (filepath_to_load is not None and
-            training_state.checkpoint_exists(filepath_to_load)):
-          try:
-            # `filepath` may contain placeholders such as `{epoch:02d}`, and
-            # thus it attempts to load the most recently modified file with file
-            # name matching the pattern.
-            self.model.load_weights(filepath_to_load)
-          except (IOError, ValueError) as e:
-            raise ValueError('Error loading file from {}. Reason: {}'.format(
-                filepath_to_load, e))
+      filepath_to_load = (
+          self._get_most_recently_modified_file_matching_pattern(self.filepath))
+      if (filepath_to_load is not None and
+          self._checkpoint_exists(filepath_to_load)):
+        try:
+          # `filepath` may contain placeholders such as `{epoch:02d}`, and
+          # thus it attempts to load the most recently modified file with file
+          # name matching the pattern.
+          self.model.load_weights(filepath_to_load)
+        except (IOError, ValueError) as e:
+          raise ValueError('Error loading file from {}. Reason: {}'.format(
+              filepath_to_load, e))
 
-  def on_train_end(self, logs=None):
-    # pylint: disable=protected-access
-    if self.model._in_multi_worker_mode():
-      if self.model.stop_training or getattr(
-          self.model, '_successful_loop_finish', False):
-        # In multi-worker training, on successful exit of training, delete the
-        # training state backup file that was saved for the purpose of worker
-        # recovery.
-        self._training_state.delete_backup()
-        # Restore the training state so the model is ready for next (possible)
-        # multi worker training.
-        del self._training_state
-        self.model._training_state = None
+  def _implements_train_batch_hooks(self):
+    # Only call batch hooks when saving on batch
+    return self.save_freq != 'epoch'
 
   def on_train_batch_end(self, batch, logs=None):
     if self._should_save_on_batch(batch):
@@ -1243,17 +1320,7 @@ class ModelCheckpoint(Callback):
     self.epochs_since_last_save += 1
     # pylint: disable=protected-access
     if self.save_freq == 'epoch':
-      if self.model._in_multi_worker_mode():
-        # Exclude training state variables in user-requested checkpoint file.
-        with self._training_state.untrack_vars():
-          self._save_model(epoch=epoch, logs=logs)
-      else:
-        self._save_model(epoch=epoch, logs=logs)
-    if self.model._in_multi_worker_mode():
-      # For multi-worker training, back up the weights and current training
-      # state for possible future recovery.
-      # TODO(rchao): Call `back_up` at finer period such as N steps.
-      self._training_state.back_up(epoch)
+      self._save_model(epoch=epoch, logs=logs)
 
   def _should_save_on_batch(self, batch):
     """Handles batch-level saving logic, supports steps_per_execution."""
@@ -1302,9 +1369,10 @@ class ModelCheckpoint(Callback):
                                                self.best, current, filepath))
               self.best = current
               if self.save_weights_only:
-                self.model.save_weights(filepath, overwrite=True)
+                self.model.save_weights(
+                    filepath, overwrite=True, options=self._options)
               else:
-                self.model.save(filepath, overwrite=True)
+                self.model.save(filepath, overwrite=True, options=self._options)
             else:
               if self.verbose > 0:
                 print('\nEpoch %05d: %s did not improve from %0.5f' %
@@ -1313,17 +1381,20 @@ class ModelCheckpoint(Callback):
           if self.verbose > 0:
             print('\nEpoch %05d: saving model to %s' % (epoch + 1, filepath))
           if self.save_weights_only:
-            self.model.save_weights(filepath, overwrite=True)
+            self.model.save_weights(
+                filepath, overwrite=True, options=self._options)
           else:
-            self.model.save(filepath, overwrite=True)
+            self.model.save(filepath, overwrite=True, options=self._options)
 
         self._maybe_remove_file()
       except IOError as e:
         # `e.errno` appears to be `None` so checking the content of `e.args[0]`.
-        if 'is a directory' in six.ensure_str(e.args[0]):
+        if 'is a directory' in six.ensure_str(e.args[0]).lower():
           raise IOError('Please specify a non-directory filepath for '
                         'ModelCheckpoint. Filepath used is an existing '
                         'directory: {}'.format(filepath))
+        # Re-throw the error for any other causes.
+        raise e
 
   def _get_file_path(self, epoch, logs):
     """Returns the file path for checkpoint."""
@@ -1346,6 +1417,15 @@ class ModelCheckpoint(Callback):
     # distributed training.
     distributed_file_utils.remove_temp_dir_with_filepath(
         self._write_filepath, self.model.distribute_strategy)
+
+  def _checkpoint_exists(self, filepath):
+    """Returns whether the checkpoint `filepath` refers to exists."""
+    if filepath.endswith('.h5'):
+      return file_io.file_exists_v2(filepath)
+    tf_saved_model_exists = file_io.file_exists_v2(filepath)
+    tf_weights_only_checkpoint_exists = file_io.file_exists_v2(
+        filepath + '.index')
+    return tf_saved_model_exists or tf_weights_only_checkpoint_exists
 
   def _get_most_recently_modified_file_matching_pattern(self, pattern):
     """Returns the most recently modified filepath matching pattern.
@@ -1409,7 +1489,7 @@ class ModelCheckpoint(Callback):
     n_file_with_latest_mod_time = 0
     file_path_with_largest_file_name = None
 
-    if file_io.file_exists(dir_name):
+    if file_io.file_exists_v2(dir_name):
       for file_name in os.listdir(dir_name):
         # Only consider if `file_name` matches the pattern.
         if re.match(base_name_regex, file_name):
@@ -1437,6 +1517,122 @@ class ModelCheckpoint(Callback):
       # If there are more than one file having latest modified time, return
       # the file path with the largest file name.
       return file_path_with_largest_file_name
+
+
+@keras_export('keras.callbacks.experimental.BackupAndRestore', v1=[])
+class BackupAndRestore(Callback):
+  """Callback to back up and restore the training state.
+
+  `BackupAndRestore` callback is intended to recover from interruptions that
+  happened in the middle of a model.fit execution by backing up the
+  training states in a temporary checkpoint file (based on TF CheckpointManager)
+  at the end of each epoch. If training restarted before completion, the
+  training state and model are restored to the most recently saved state at the
+  beginning of a new model.fit() run.
+  Note that user is responsible to bring jobs back up.
+  This callback is important for the backup and restore mechanism for fault
+  tolerance purpose. And the model to be restored from an previous checkpoint is
+  expected to be the same as the one used to back up. If user changes arguments
+  passed to compile or fit, the checkpoint saved for fault tolerance can become
+  invalid.
+
+  Note:
+  1. This callback is not compatible with disabling eager execution.
+  2. A checkpoint is saved at the end of each epoch, when restoring we'll redo
+  any partial work from an unfinished epoch in which the training got restarted
+  (so the work done before a interruption doesn't affect the final model state).
+  3. This works for both single worker and multi-worker mode, only
+  MirroredStrategy and MultiWorkerMirroredStrategy are supported for now.
+
+  Example:
+
+  >>> class InterruptingCallback(tf.keras.callbacks.Callback):
+  ...   def on_epoch_begin(self, epoch, logs=None):
+  ...     if epoch == 4:
+  ...       raise RuntimeError('Interrupting!')
+  >>> callback = tf.keras.callbacks.experimental.BackupAndRestore(
+  ... backup_dir="/tmp")
+  >>> model = tf.keras.models.Sequential([tf.keras.layers.Dense(10)])
+  >>> model.compile(tf.keras.optimizers.SGD(), loss='mse')
+  >>> try:
+  ...   model.fit(np.arange(100).reshape(5, 20), np.zeros(5), epochs=10,
+  ...             batch_size=1, callbacks=[callback, InterruptingCallback()],
+  ...             verbose=0)
+  ... except:
+  ...   pass
+  >>> history = model.fit(np.arange(100).reshape(5, 20), np.zeros(5), epochs=10,
+  ...             batch_size=1, callbacks=[callback], verbose=0)
+  >>> # Only 6 more epochs are run, since first trainning got interrupted at
+  >>> # zero-indexed epoch 4, second training will continue from 4 to 9.
+  >>> len(history.history['loss'])
+  6
+
+  Arguments:
+      backup_dir: String, path to save the model file. This is the directory in
+        which the system stores temporary files to recover the model from jobs
+        terminated unexpectedly. The directory cannot be reused elsewhere to
+        store other checkpoints, e.g. by BackupAndRestore callback of another
+        training, or by another callback (ModelCheckpoint) of the same training.
+  """
+
+  def __init__(self, backup_dir):
+    super(BackupAndRestore, self).__init__()
+    self.backup_dir = backup_dir
+    self._supports_tf_logs = True
+    self._supported_strategies = (
+        distribute_lib._DefaultDistributionStrategy,
+        mirrored_strategy.MirroredStrategy,
+        collective_all_reduce_strategy.CollectiveAllReduceStrategy,
+        tpu_strategy.TPUStrategy, tpu_strategy.TPUStrategyV2)
+
+    if not context.executing_eagerly():
+      if ops.inside_function():
+        raise ValueError('This Callback\'s method contains Python state and '
+                         'should be called outside of `tf.function`s.')
+      else:  # Legacy graph mode:
+        raise ValueError(
+            'BackupAndRestore only supports eager mode. In graph '
+            'mode, consider using ModelCheckpoint to manually save '
+            'and restore weights with `model.load_weights()` and by '
+            'providing `initial_epoch` in `model.fit()` for fault tolerance.')
+
+    # Only the chief worker writes model checkpoints, but all workers
+    # restore checkpoint at on_train_begin().
+    self._chief_worker_only = False
+
+  def set_model(self, model):
+    self.model = model
+
+  def on_train_begin(self, logs=None):
+    # TrainingState is used to manage the training state needed for
+    # failure-recovery of a worker in training.
+    # pylint: disable=protected-access
+
+    if not isinstance(self.model.distribute_strategy,
+                      self._supported_strategies):
+      raise NotImplementedError(
+          '%s is not supported yet. '
+          'Currently BackupAndRestore callback only supports empty strategy, '
+          'MirroredStrategy, MultiWorkerMirroredStrategy and TPUStrategy.' %
+          type(self.model.distribute_strategy).__name__)
+    self.model._training_state = (
+        worker_training_state.WorkerTrainingState(self.model, self.backup_dir))
+    self._training_state = self.model._training_state
+    self._training_state.restore()
+
+  def on_train_end(self, logs=None):
+    # pylint: disable=protected-access
+    # On exit of training, delete the training state backup file that was saved
+    # for the purpose of worker recovery.
+    self._training_state.delete_backup()
+
+    # Clean up the training state.
+    del self._training_state
+    del self.model._training_state
+
+  def on_epoch_end(self, epoch, logs=None):
+    # Back up the model and current epoch for possible future recovery.
+    self._training_state.back_up(epoch)
 
 
 @keras_export('keras.callbacks.EarlyStopping')
@@ -1539,6 +1735,7 @@ class EarlyStopping(Callback):
       self.best = self.baseline
     else:
       self.best = np.Inf if self.monitor_op == np.less else -np.Inf
+    self.best_weights = None
 
   def on_epoch_end(self, epoch, logs=None):
     current = self.get_monitor_value(logs)
@@ -1859,8 +2056,10 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
 
     self._writers = {}  # Resets writers.
 
+    self._should_write_train_graph = False
     if self.write_graph:
-      self._write_keras_model_graph()
+      self._write_keras_model_summary()
+      self._should_write_train_graph = True
     if self.embeddings_freq:
       self._configure_embeddings()
 
@@ -1887,13 +2086,19 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
     distributed_file_utils.remove_temp_dirpath(self.log_dir,
                                                self.model.distribute_strategy)
 
-  def _write_keras_model_graph(self):
-    """Writes Keras graph networks to TensorBoard."""
+  def _write_keras_model_train_graph(self):
+    """Writes Keras model train_function graph to TensorBoard."""
     with self._train_writer.as_default():
       with summary_ops_v2.always_record_summaries():
-        if not self.model.run_eagerly:
-          summary_ops_v2.graph(K.get_graph(), step=0)
+        train_fn = self.model.train_function
+        # If the train_function is a `tf.function`, we can write out a graph
+        if hasattr(train_fn, 'function_spec'):
+          summary_ops_v2.graph(train_fn._concrete_stateful_fn.graph, step=0)  # pylint: disable=protected-access
 
+  def _write_keras_model_summary(self):
+    """Writes Keras graph network summary to TensorBoard."""
+    with self._train_writer.as_default():
+      with summary_ops_v2.always_record_summaries():
         summary_writable = (
             self.model._is_graph_network or  # pylint: disable=protected-access
             self.model.__class__.__name__ == 'Sequential')  # pylint: disable=protected-access
@@ -1911,7 +2116,10 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
     for layer in self.model.layers:
       if isinstance(layer, embeddings.Embedding):
         embedding = config.embeddings.add()
-        embedding.tensor_name = layer.name + '/.ATTRIBUTES/VARIABLE_VALUE'
+        # Embeddings are always the first layer, so this naming should be
+        # consistent in any keras models checkpoints.
+        name = 'layer_with_weights-0/embeddings/.ATTRIBUTES/VARIABLE_VALUE'
+        embedding.tensor_name = name
 
         if self.embeddings_metadata is not None:
           if isinstance(self.embeddings_metadata, str):
@@ -1928,7 +2136,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
 
     config_pbtxt = text_format.MessageToString(config)
     path = os.path.join(self._log_write_dir, 'projector_config.pbtxt')
-    with open(path, 'w') as f:
+    with gfile.Open(path, 'w') as f:
       f.write(config_pbtxt)
 
   def _push_writer(self, writer, step):
@@ -2009,7 +2217,9 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
       raise ValueError(profile_batch_error_message)
 
     if self._start_batch > 0:
-      profiler.warmup()  # Improve the profiling accuracy.
+      # Warm up and improve the profiling accuracy.
+      profiler.start('')
+      profiler.stop(save=False)
     # True when a trace is running.
     self._is_tracing = False
 
@@ -2035,6 +2245,9 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
   def on_test_end(self, logs=None):
     self._pop_writer()
 
+  def _implements_train_batch_hooks(self):
+    return self._should_trace  # Only call batch hooks when tracing is enabled
+
   def on_train_batch_begin(self, batch, logs=None):
     self._global_train_batch += 1
     if not self._should_trace:
@@ -2044,6 +2257,9 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
       self._start_trace()
 
   def on_train_batch_end(self, batch, logs=None):
+    if self._should_write_train_graph:
+      self._write_keras_model_train_graph()
+      self._should_write_train_graph = False
     if not self._should_trace:
       return
 
@@ -2080,6 +2296,12 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
     profiler.stop()
     self._is_tracing = False
 
+  def _collect_learning_rate(self, logs):
+    lr_schedule = getattr(self.model.optimizer, 'lr', None)
+    if isinstance(lr_schedule, learning_rate_schedule.LearningRateSchedule):
+      logs['learning_rate'] = lr_schedule(self.model.optimizer.iterations)
+    return logs
+
   def _log_epoch_metrics(self, epoch, logs):
     """Writes epoch metrics out as scalar summaries.
 
@@ -2092,6 +2314,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
 
     train_logs = {k: v for k, v in logs.items() if not k.startswith('val_')}
     val_logs = {k: v for k, v in logs.items() if k.startswith('val_')}
+    train_logs = self._collect_learning_rate(train_logs)
 
     with summary_ops_v2.always_record_summaries():
       if train_logs:
@@ -2219,7 +2442,7 @@ class ReduceLROnPlateau(Callback):
     """Resets wait counter and cooldown counter.
     """
     if self.mode not in ['auto', 'min', 'max']:
-      logging.warning('Learning Rate Plateau Reducing mode %s is unknown, '
+      logging.warning('Learning rate reduction mode %s is unknown, '
                       'fallback to auto mode.', self.mode)
       self.mode = 'auto'
     if (self.mode == 'min' or
@@ -2240,7 +2463,7 @@ class ReduceLROnPlateau(Callback):
     logs['lr'] = K.get_value(self.model.optimizer.lr)
     current = logs.get(self.monitor)
     if current is None:
-      logging.warning('Reduce LR on plateau conditioned on metric `%s` '
+      logging.warning('Learning rate reduction is conditioned on metric `%s` '
                       'which is not available. Available metrics are: %s',
                       self.monitor, ','.join(list(logs.keys())))
 
@@ -2308,7 +2531,7 @@ class CSVLogger(Callback):
 
   def on_train_begin(self, logs=None):
     if self.append:
-      if file_io.file_exists(self.filename):
+      if file_io.file_exists_v2(self.filename):
         with open(self.filename, 'r' + self.file_flags) as f:
           self.append_header = not bool(len(f.readline()))
       mode = 'a'
@@ -2335,7 +2558,7 @@ class CSVLogger(Callback):
 
     if self.model.stop_training:
       # We set NA so that csv parsers do not fail for this last epoch.
-      logs = dict([(k, logs[k]) if k in logs else (k, 'NA') for k in self.keys])
+      logs = dict((k, logs[k]) if k in logs else (k, 'NA') for k in self.keys)
 
     if not self.writer:
 
@@ -2343,8 +2566,6 @@ class CSVLogger(Callback):
         delimiter = self.sep
 
       fieldnames = ['epoch'] + self.keys
-      if six.PY2:
-        fieldnames = [unicode(x) for x in fieldnames]
 
       self.writer = csv.DictWriter(
           self.csv_file,

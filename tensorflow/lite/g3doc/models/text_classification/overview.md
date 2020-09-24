@@ -1,4 +1,4 @@
-# Text Classification
+# Text classification
 
 Use a pre-trained model to category a paragraph into predefined groups.
 
@@ -16,7 +16,7 @@ If you are using a platform other than Android, or you are already familiar with
 the TensorFlow Lite APIs, you can download our starter text classification
 model.
 
-<a class="button button-primary" href="https://storage.googleapis.com/download.tensorflow.org/models/tflite/text_classification/text_classification.tflite">Download
+<a class="button button-primary" href="https://storage.googleapis.com/download.tensorflow.org/models/tflite/text_classification/text_classification_v2.tflite">Download
 starter model</a>
 
 ## How it works
@@ -44,7 +44,7 @@ Here are the steps to classify a paragraph with the model:
 *   This model was trained on movie reviews dataset so you may experience
     reduced accuracy when classifying text of other domains.
 
-## Performance Benchmarks
+## Performance benchmarks
 
 Performance benchmark numbers are generated with the tool
 [described here](https://www.tensorflow.org/lite/performance/benchmarks).

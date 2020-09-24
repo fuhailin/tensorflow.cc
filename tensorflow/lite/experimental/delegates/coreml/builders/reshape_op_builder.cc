@@ -114,7 +114,11 @@ TfLiteStatus ReshapeOpBuilder::RegisterOutputs(const TfLiteIntArray* outputs,
 }
 
 bool IsReshapeOpSupported(const TfLiteRegistration* registration,
-                          const TfLiteNode* node, TfLiteContext* context) {
+                          const TfLiteNode* node, TfLiteContext* context,
+                          int coreml_version) {
+  if (coreml_version >= 3) {
+    return false;
+  }
   if (node->inputs->size == 1) {
     const auto* params =
         reinterpret_cast<TfLiteReshapeParams*>(node->builtin_data);
@@ -122,7 +126,8 @@ bool IsReshapeOpSupported(const TfLiteRegistration* registration,
   }
 
   const int kShapeTensor = 1;
-  const auto* shape = GetInput(context, node, kShapeTensor);
+  const TfLiteTensor* shape;
+  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShapeTensor, &shape));
   if (shape->allocation_type != kTfLiteMmapRo) {
     TF_LITE_KERNEL_LOG(context, "Reshape has non-const shape.");
     return false;

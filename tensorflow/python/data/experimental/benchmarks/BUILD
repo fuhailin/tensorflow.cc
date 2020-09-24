@@ -7,14 +7,25 @@ package(
 
 exports_files(["LICENSE"])
 
-exports_files(
-    ["autotune_benchmark.py"],
-    visibility = ["//tensorflow:internal"],
+py_binary(
+    name = "autotune_benchmark_binary",
+    srcs = ["autotune_benchmark.py"],
+    main = "autotune_benchmark.py",
+    python_version = "PY3",
+    srcs_version = "PY2AND3",
+    deps = [
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:session",
+        "//tensorflow/python/data/ops:dataset_ops",
+        "//third_party/py/numpy",
+    ],
 )
 
 tf_py_test(
     name = "autotune_benchmark",
     srcs = ["autotune_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:math_ops",
@@ -27,6 +38,7 @@ tf_py_test(
 tf_py_test(
     name = "choose_fastest_benchmark",
     srcs = ["choose_fastest_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_ops",
@@ -40,6 +52,7 @@ tf_py_test(
 tf_py_test(
     name = "choose_fastest_branch_benchmark",
     srcs = ["choose_fastest_branch_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_ops",
@@ -56,6 +69,7 @@ tf_py_test(
     name = "csv_dataset_benchmark",
     srcs = ["csv_dataset_benchmark.py"],
     tags = ["no_pip"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:parsing_ops",
@@ -71,6 +85,7 @@ tf_py_test(
 tf_py_test(
     name = "map_and_batch_benchmark",
     srcs = ["map_and_batch_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python:array_ops",
@@ -89,6 +104,7 @@ tf_py_test(
 tf_py_test(
     name = "map_defun_benchmark",
     srcs = ["map_defun_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -104,6 +120,7 @@ tf_py_test(
 tf_py_test(
     name = "map_vectorization_benchmark",
     srcs = ["map_vectorization_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python:array_ops",
@@ -123,6 +140,7 @@ tf_py_test(
     name = "matching_files_benchmark",
     size = "small",
     srcs = ["matching_files_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -138,6 +156,7 @@ tf_py_test(
 tf_py_test(
     name = "optimize_benchmark",
     srcs = ["optimize_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_ops",
@@ -151,6 +170,7 @@ tf_py_test(
 tf_py_test(
     name = "parallel_interleave_benchmark",
     srcs = ["parallel_interleave_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:math_ops",
@@ -166,6 +186,7 @@ tf_py_test(
     name = "rejection_resample_benchmark",
     srcs = ["rejection_resample_benchmark.py"],
     tags = ["no_pip"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python/data/experimental/ops:resampling",
@@ -178,6 +199,7 @@ tf_py_test(
 tf_py_test(
     name = "snapshot_dataset_benchmark",
     srcs = ["snapshot_dataset_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -196,6 +218,7 @@ tf_py_test(
 tf_py_test(
     name = "unbatch_benchmark",
     srcs = ["unbatch_benchmark.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",

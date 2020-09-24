@@ -432,6 +432,30 @@ void test(const Scope& scope) {
     // LOG(INFO) << "Print: outputs 1: " << outputs[1].DebugString();
     // LOG(INFO) << "Print: outputs 2: " << outputs[2].DebugString();
   }
+
+  {
+    auto input_image = Const(
+        scope, {{{1, 1, 1}, {2, 2, 2}, {3, 3, 3}, {4, 4, 4}},
+                {{11, 11, 11}, {12, 12, 12}, {13, 13, 13}, {14, 14, 14}},
+                {{21, 21, 21}, {22, 22, 22}, {23, 23, 23}, {24, 24, 24}},
+                {{31, 31, 31}, {32, 32, 32}, {33, 33, 33}, {34, 34, 34}}});
+    auto shape = Shape(scope, input_image);
+    
+    Input input = input_image;
+    const Tensor input_tensor = input.tensor();
+    const TensorShape input_shape = input_tensor.shape();
+    LOG(INFO) << "Print: input_shape.dim_size 0: " << input_shape.dim_size(0);
+    LOG(INFO) << "Print: input_shape.dim_size 1: " << input_shape.dim_size(1);
+    LOG(INFO) << "Print: input_shape.dim_size 2: " << input_shape.dim_size(2);
+
+    vector<Tensor> outputs;
+    ClientSession session(scope);
+
+    Status status =
+        session.Run({}, {shape}, {}, &outputs);
+    LOG(INFO) << "Print: outputs 0: " << outputs[0].DebugString();
+  }
+
 }
 
 #endif

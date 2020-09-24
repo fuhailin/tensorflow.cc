@@ -8,6 +8,8 @@
 # 2. Are std:: types
 # 3. Wrap an opaque C type
 
+load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
+
 package(
     # This is intentionally public
     default_visibility = [
@@ -57,7 +59,22 @@ cc_library(
         "tensor.h",
     ],
     deps = [
+        ":status",
         "//tensorflow/c:tf_datatype",
         "//tensorflow/c:tf_tensor",
+    ],
+)
+
+cc_library(
+    name = "tensorhandle",
+    hdrs = [
+        "tensorhandle.h",
+    ],
+    deps = [
+        ":runtime",
+        ":status",
+        ":tensor",
+        "//tensorflow/c/eager:c_api",
+        "//tensorflow/c/eager:c_api_experimental",
     ],
 )

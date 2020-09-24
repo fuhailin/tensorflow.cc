@@ -85,8 +85,9 @@ void DestroyRemoteTensorHandle(EagerContext* ctx, const string& remote_task,
 }  // namespace
 
 RemoteTensorHandleData::RemoteTensorHandleData(int64 op_id, int output_num,
-                                               uint64 context_view_id)
-    : is_ready_(true),
+                                               uint64 context_view_id,
+                                               bool is_ready)
+    : is_ready_(is_ready),
       op_id_(op_id),
       output_num_(output_num),
       context_view_id_(context_view_id),
@@ -173,6 +174,11 @@ Status RemoteTensorHandleData::IsPoisoned() const {
 }
 
 Status RemoteTensorHandleData::SetShape(const TensorShape& shape) {
+  return SetShapeAndRemoteTask(shape, /*remote_task=*/"");
+}
+
+Status RemoteTensorHandleData::SetShapeAndRemoteTask(
+    const TensorShape& shape, const string& remote_task) {
   // If `is_ready_` is set previously due to poisoning, return the original
   // error that poisoned this tensor.
   TF_RETURN_IF_ERROR(IsPoisoned());
@@ -183,6 +189,9 @@ Status RemoteTensorHandleData::SetShape(const TensorShape& shape) {
   }
 
   shape_ = shape;
+  if (!remote_task.empty()) {
+    remote_task_ = remote_task;
+  }
   is_poisoned_ = Status::OK();
   is_ready_ = true;
 
@@ -194,9 +203,12 @@ string RemoteTensorHandleData::DebugString() const {
                          " output_num: ", output_num_);
 }
 
-Status RemoteTensorHandleData::OpIdAndOutputNumUntilReady(
-    int64* op_id, int32* output_num) const {
-  TF_RETURN_IF_ERROR(WaitReady("OpIdAndOutputNumUntilReady"));
+Status RemoteTensorHandleData::OpIdAndOutputNum(const bool wait_util_ready,
+                                                int64* op_id,
+                                                int32* output_num) const {
+  if (wait_util_ready) {
+    TF_RETURN_IF_ERROR(WaitReady("OpIdAndOutputNumUntilReady"));
+  }
   *op_id = op_id_;
   *output_num = output_num_;
   return Status::OK();

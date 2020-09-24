@@ -54,6 +54,12 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 # buildifier: disable=same-origin-load
 load("//tensorflow:tensorflow.bzl", "tf_cc_test_gpu")
 
+# buildifier: disable=same-origin-load
+load("//tensorflow:tensorflow.bzl", "filegroup")
+
+# buildifier: disable=same-origin-load
+load("//tensorflow:tensorflow.bzl", "get_compatible_with_portable")
+
 package(
     default_visibility = ["//tensorflow:__subpackages__"],
     licenses = ["notice"],  # Apache 2.0
@@ -68,6 +74,7 @@ exports_files(
         "cpu_info.cc",
         "cpu_info.h",
         "cuda_libdevice_path.h",
+        "bfloat16.h",
         "demangle.h",
         "env.cc",
         "env.h",
@@ -85,6 +92,10 @@ exports_files(
         "mutex.h",
         "net.h",
         "numa.h",
+        "profile_utils/android_armv7a_cpu_utils_helper.h",
+        "profile_utils/cpu_utils.cc",
+        "profile_utils/cpu_utils.h",
+        "profile_utils/i_cpu_utils_helper.h",
         "ram_file_system.h",
         "resource_loader.h",
         "resource.h",
@@ -120,6 +131,16 @@ cc_library(
 )
 
 cc_library(
+    name = "bfloat16",
+    hdrs = ["bfloat16.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":byte_order",
+        "//third_party/eigen3",
+    ],
+)
+
+cc_library(
     name = "blocking_counter",
     hdrs = ["blocking_counter.h"],
     deps = [
@@ -131,6 +152,7 @@ cc_library(
 cc_library(
     name = "byte_order",
     hdrs = ["byte_order.h"],
+    compatible_with = get_compatible_with_portable(),
 )
 
 cc_library(
@@ -154,6 +176,7 @@ cc_library(
 cc_library(
     name = "cord",
     hdrs = ["cord.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":platform",
     ] + tf_platform_deps("cord"),
@@ -182,6 +205,7 @@ cc_library(
 cc_library(
     name = "cuda",
     hdrs = ["cuda.h"],
+    compatible_with = [],
     deps = [
         ":platform",
         "//tensorflow/stream_executor/cuda:cuda_activation_header",
@@ -357,6 +381,8 @@ filegroup(
 cc_library(
     name = "mutex",
     textual_hdrs = ["mutex.h"],
+    # TODO(b/161569340): Short-term fix. Remove this visibility rule.
+    visibility = ["//tensorflow:__subpackages__"],
     deps = tf_platform_deps("mutex"),
 )
 
@@ -424,6 +450,7 @@ cc_library(
 cc_library(
     name = "platform",
     hdrs = ["platform.h"],
+    compatible_with = get_compatible_with_portable(),
 )
 
 cc_library(
@@ -621,7 +648,7 @@ cc_library(
         ":stringpiece",
         ":stringprintf",
         ":types",
-        "//tensorflow/core:error_codes_proto_impl_cc",
+        "//tensorflow/core/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base",
     ],
 )
@@ -674,6 +701,7 @@ cc_library(
 cc_library(
     name = "strong_hash",
     hdrs = ["strong_hash.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":platform",
         ":types",
@@ -755,17 +783,33 @@ cc_library(
         "ctstring_internal.h",
         "tstring.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":cord",
         "@com_google_absl//absl/strings",
     ],
 )
 
+filegroup(
+    name = "ctstring",
+    srcs = [
+        "ctstring.h",
+        "ctstring_internal.h",
+    ],
+)
+
 cc_library(
     name = "types",
     hdrs = ["types.h"],
+    compatible_with = get_compatible_with_portable(),
+    # TODO(b/161569340): Short-term fix. Remove this visibility rule.
+    visibility = [
+        "//tensorflow:__subpackages__",
+        "//tensorflow_text:__subpackages__",
+    ],
     deps = [
         ":platform",
+        ":bfloat16",
         ":tstring",
     ] + tf_platform_deps("types"),
 )
@@ -935,6 +979,39 @@ cc_library(
         "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "tensor_float_32_utils",
+    srcs = ["tensor_float_32_utils.cc"],
+    hdrs = ["tensor_float_32_utils.h"],
+    copts = tf_copts(),
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "profile_utils_cpu_utils",
+    srcs = [
+        "profile_utils/android_armv7a_cpu_utils_helper.h",
+        "profile_utils/cpu_utils.cc",
+        "profile_utils/i_cpu_utils_helper.h",
+    ],
+    hdrs = [
+        "profile_utils/cpu_utils.h",
+    ],
+    copts = tf_copts(),
+    deps = [
+        ":logging",
+        ":macros",
+        ":types",
+        "@com_google_absl//absl/base",
+    ],
+    alwayslink = 1,
+)
+
+filegroup(
+    name = "tensor_float_32_hdr",
+    srcs = ["tensor_float_32_utils.h"],
 )
 
 tf_cc_tests(
@@ -1269,6 +1346,7 @@ filegroup(
     srcs = [
         "abi.h",
         "base64.h",
+        "bfloat16.h",
         "casts.h",
         "coding.h",
         "context.h",
@@ -1355,6 +1433,7 @@ filegroup(
 filegroup(
     name = "framework_lite_hdrs",
     srcs = [
+        "bfloat16.h",
         "byte_order.h",
         "cpu_info.h",
         "ctstring.h",
@@ -1375,6 +1454,7 @@ filegroup(
 filegroup(
     name = "lib_internal_private_hdrs",
     srcs = [
+        "bfloat16.h",
         "raw_coding.h",
         "scanner.h",
         "str_util.h",
@@ -1420,6 +1500,7 @@ filegroup(
 filegroup(
     name = "tflite_portable_logging_hdrs",
     srcs = [
+        "bfloat16.h",
         "ctstring.h",
         "ctstring_internal.h",
         "logging.h",
@@ -1434,6 +1515,7 @@ filegroup(
 filegroup(
     name = "jpeg_internal_hdrs",
     srcs = [
+        "bfloat16.h",
         "ctstring.h",
         "ctstring_internal.h",
         "dynamic_annotations.h",
@@ -1451,6 +1533,7 @@ filegroup(
 filegroup(
     name = "gif_internal_hdrs",
     srcs = [
+        "bfloat16.h",
         "ctstring.h",
         "ctstring_internal.h",
         "dynamic_annotations.h",
@@ -1470,8 +1553,10 @@ filegroup(
     srcs = [
         "abi.cc",
         "abi.h",
+        "bfloat16.h",
         "blocking_counter.h",
         "byte_order.h",
+        "casts.h",
         "coding.cc",
         "coding.h",
         "context.h",
@@ -1517,6 +1602,7 @@ filegroup(
         "raw_coding.h",
         "refcount.h",
         "resource.h",
+        "regexp.h",
         "scanner.cc",
         "scanner.h",
         "setround.cc",
@@ -1557,7 +1643,6 @@ filegroup(
     srcs = [
         "base64.cc",
         "base64.h",
-        "casts.h",
         "cpu_feature_guard.cc",
         "cpu_feature_guard.h",
         "fingerprint.h",
@@ -1613,7 +1698,6 @@ filegroup(
     srcs = [
         "profile_utils/android_armv7a_cpu_utils_helper.cc",
         "profile_utils/clock_cycle_profiler.cc",
-        "profile_utils/cpu_utils.cc",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )

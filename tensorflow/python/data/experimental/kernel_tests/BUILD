@@ -1,5 +1,5 @@
-load("//tensorflow:tensorflow.bzl", "tf_py_test")
-load("//tensorflow:tensorflow.bzl", "cuda_py_test")
+load("//tensorflow:tensorflow.bzl", "tf_py_test")  # buildifier: disable=same-origin-load
+load("//tensorflow:tensorflow.bzl", "cuda_py_test")  # buildifier: disable=same-origin-load
 
 package(
     default_visibility = ["//tensorflow:internal"],
@@ -77,10 +77,10 @@ tf_py_test(
 )
 
 tf_py_test(
-    name = "cardinality_test",
-    srcs = ["cardinality_test.py"],
+    name = "compression_ops_test",
+    srcs = ["compression_ops_test.py"],
     deps = [
-        "//tensorflow/python/data/experimental/ops:cardinality",
+        "//tensorflow/python/data/experimental/ops:compression_ops",
         "//tensorflow/python/data/kernel_tests:test_base",
         "//tensorflow/python/data/ops:dataset_ops",
         "@absl_py//absl/testing:parameterized",
@@ -92,6 +92,7 @@ cuda_py_test(
     size = "small",
     srcs = ["copy_to_device_test.py"],
     tags = ["no_windows_gpu"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python:client_testlib",
@@ -136,6 +137,56 @@ tf_py_test(
         "//tensorflow/python/data/kernel_tests:test_base",
         "//tensorflow/python/data/ops:readers",
         "//tensorflow/python/eager:context",
+    ],
+)
+
+py_library(
+    name = "data_service_test_base",
+    srcs = ["data_service_test_base.py"],
+    srcs_version = "PY3",
+    deps = [
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python/data/experimental/service:server_lib",
+        "//tensorflow/python/data/kernel_tests:test_base",
+        "//tensorflow/python/data/ops:dataset_ops",
+    ],
+)
+
+tf_py_test(
+    name = "data_service_ops_test",
+    size = "medium",
+    srcs = ["data_service_ops_test.py"],
+    shard_count = 10,
+    srcs_version = "PY3",
+    deps = [
+        ":data_service_test_base",
+        "//tensorflow:tensorflow_py",
+        "//tensorflow/python:errors",
+        "//tensorflow/python:framework",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:platform_test",
+        "//tensorflow/python/data",
+        "//tensorflow/python/data/experimental/ops:testing",
+        "//tensorflow/python/data/experimental/service:server_lib",
+        "//tensorflow/python/data/kernel_tests:test_base",
+    ],
+)
+
+tf_py_test(
+    name = "data_service_ops_ft_test",
+    srcs = ["data_service_ops_ft_test.py"],
+    srcs_version = "PY3",
+    deps = [
+        ":data_service_test_base",
+        "//tensorflow:tensorflow_py",
+        "//tensorflow/python:errors",
+        "//tensorflow/python:framework",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:platform_test",
+        "//tensorflow/python/data",
+        "//tensorflow/python/data/experimental/ops:testing",
+        "//tensorflow/python/data/experimental/service:server_lib",
+        "//tensorflow/python/data/kernel_tests:test_base",
     ],
 )
 
@@ -260,6 +311,18 @@ tf_py_test(
 )
 
 tf_py_test(
+    name = "io_test",
+    srcs = ["io_test.py"],
+    deps = [
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:util",
+        "//tensorflow/python/data/experimental/ops:io",
+        "//tensorflow/python/data/kernel_tests:test_base",
+        "//tensorflow/python/data/ops:dataset_ops",
+    ],
+)
+
+tf_py_test(
     name = "make_batched_features_dataset_test",
     size = "medium",
     srcs = ["make_batched_features_dataset_test.py"],
@@ -317,6 +380,9 @@ tf_py_test(
     name = "map_and_batch_test",
     size = "medium",
     srcs = ["map_and_batch_test.py"],
+    tags = [
+        "nomsan",  # b/168906619
+    ],
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -340,6 +406,7 @@ tf_py_test(
     size = "small",
     srcs = ["map_defun_op_test.py"],
     tags = ["no_pip"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:check_ops",
@@ -511,6 +578,7 @@ cuda_py_test(
     size = "small",
     srcs = ["prefetch_to_device_test.py"],
     tags = ["no_windows_gpu"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python:client_testlib",
@@ -630,20 +698,6 @@ tf_py_test(
     ],
 )
 
-tf_py_test(
-    name = "replicate_cluster_test",
-    srcs = ["replicate_cluster_test.py"],
-    grpc_enabled = True,
-    tags = ["no_oss"],
-    deps = [
-        "//tensorflow/python:client_testlib",
-        "//tensorflow/python:framework_combinations",
-        "//tensorflow/python/data/experimental/ops:distribute",
-        "//tensorflow/python/data/kernel_tests:test_base",
-        "//tensorflow/python/data/ops:dataset_ops",
-    ],
-)
-
 cuda_py_test(
     name = "scan_test",
     size = "small",
@@ -691,6 +745,7 @@ tf_py_test(
 tf_py_test(
     name = "sleep_test",
     srcs = ["sleep_test.py"],
+    tfrt_enabled = True,
     deps = [
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:util",
@@ -742,9 +797,12 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_test_lib",
         "//tensorflow/python:string_ops",
+        "//tensorflow/python/data/experimental/ops:readers",
         "//tensorflow/python/data/experimental/ops:snapshot",
+        "//tensorflow/python/data/kernel_tests:test_base",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:readers",
+        "//tensorflow/python/data/util:nest",
         "@absl_py//absl/testing:parameterized",
     ],
 )
@@ -755,6 +813,7 @@ tf_py_test(
     srcs = ["stats_dataset_ops_test.py"],
     tags = [
         "no_pip",
+        "notap",
     ],
     deps = [
         ":reader_dataset_ops_test_base",

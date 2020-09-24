@@ -1,4 +1,5 @@
 load("//third_party/mlir:tblgen.bzl", "gentbl")
+load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -39,7 +40,7 @@ gentbl(
         "ir/tfjs_ops.td",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:include/mlir/Interfaces/LoopLikeInterface.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/SideEffects.td",
+        "@llvm-project//mlir:include/mlir/Interfaces/SideEffectInterfaces.td",
     ],
 )
 
@@ -56,24 +57,13 @@ cc_library(
     ],
     deps = [
         ":tfjs_inc_gen",
-        "@llvm-project//llvm:support",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SideEffects",
         "@llvm-project//mlir:StandardOps",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
-    name = "tensorflow_js_dialect_registration",
-    srcs = [
-        "ir/dialect_registration.cc",
-    ],
-    deps = [
-        ":tensorflow_js",
     ],
     alwayslink = 1,
 )
@@ -106,9 +96,8 @@ cc_library(
     ],
     deps = [
         ":tensorflow_js",
-        ":tensorflow_js_dialect_registration",
         "//tensorflow/compiler/mlir/tensorflow",
-        "@llvm-project//llvm:support",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
@@ -128,13 +117,124 @@ cc_library(
         ":tfjs_optimize",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:decode_constant_pass",
-        "//tensorflow/compiler/mlir/tensorflow:tensorflow_dialect_registration",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_passes",
         "//tensorflow/compiler/mlir/tensorflow:tf_graph_optimization_pass",
-        "//tensorflow/compiler/mlir/tensorflow:translate_lib",
-        "@llvm-project//mlir:Analysis",
+        "//tensorflow/compiler/mlir/tensorflow:tf_saved_model_passes",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",
+    ],
+)
+
+cc_library(
+    name = "json_translate_lib",
+    srcs = [
+        "translate/json_translate.cc",
+    ],
+    hdrs = [
+        "translate/json_translate.h",
+    ],
+    deps = [
+        ":tensorflow_js",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:convert_graphdef",
+        "//tensorflow/compiler/mlir/tensorflow:export_utils",
+        "//tensorflow/compiler/mlir/tensorflow:mlir_roundtrip_flags",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:graph",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Translation",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "tf_to_tfjs_json",
+    srcs = ["translate/tf_to_tfjs_json.cc"],
+    hdrs = [
+        "translate/tf_to_tfjs_json.h",
+    ],
+    deps = [
+        ":json_translate_lib",
+        ":tfjs_optimize",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:decode_constant_pass",
+        "//tensorflow/compiler/mlir/tensorflow:error_util",
+        "//tensorflow/compiler/mlir/tensorflow:tf_dialect_lib",
+        "//tensorflow/compiler/mlir/tensorflow:tf_dialect_passes",
+        "//tensorflow/compiler/mlir/tensorflow:translate_cl_options",
+        "//tensorflow/compiler/mlir/tensorflow:translate_lib",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/stream_executor/lib",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AllPassesAndDialectsNoRegistration",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+    ],
+    alwayslink = 1,
+)
+
+tf_cc_binary(
+    name = "json_translate",
+    deps = [
+        ":json_translate_lib",
+        "@llvm-project//mlir:MlirTranslateMain",
+    ],
+)
+
+filegroup(
+    name = "tf_tfjs_translate_main",
+    srcs = [
+        "translate/tf_tfjs_translate.cc",
+    ],
+)
+
+tf_cc_binary(
+    name = "tf_tfjs_translate",
+    srcs = [":tf_tfjs_translate_main"],
+    deps = [
+        ":json_translate_lib",
+        ":tensorflow_js_passes",
+        ":tf_to_tfjs_json",
+        ":tfjs_optimize",
+        "//tensorflow/compiler/mlir:init_mlir",
+        "//tensorflow/compiler/mlir/tensorflow:translate_cl_options",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/platform:errors",
+        "//tensorflow/stream_executor/lib",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+tf_cc_binary(
+    name = "tfjs-opt",
+    srcs = [
+        "tfjs_opt.cc",
+    ],
+    deps = [
+        ":tensorflow_js",
+        ":tensorflow_js_passes",
+        "//tensorflow/compiler/mlir:init_mlir",
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_legalize_tf",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "@llvm-project//mlir:AllPassesAndDialectsNoRegistration",
+        "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:StandardOps",
     ],
 )

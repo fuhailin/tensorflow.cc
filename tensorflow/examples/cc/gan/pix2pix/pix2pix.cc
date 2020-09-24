@@ -51,7 +51,7 @@ int main() {
 #ifdef TESTING
   test(scope);
 
-  // return 0;
+  return 0;
 #endif
 
   // FunctionDefLibrary

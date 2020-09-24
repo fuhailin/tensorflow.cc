@@ -50,6 +50,7 @@ from tensorflow.python.eager import test
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
@@ -61,6 +62,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import resource_variable_ops
+from tensorflow.python.util import nest
 from tensorflow.python.util import tf_inspect
 
 
@@ -78,8 +80,8 @@ def c_tfe_py_fastpath_execute(a,
   assert ctx.executing_eagerly(
   ), "The prototype doesn't contain C code for graph construction"
   try:
-    return pywrap_tfe.TFE_Py_FastPathExecute(ctx._handle, ctx.device_name,
-                                             "MatMul", name, ctx.op_callbacks,
+    return pywrap_tfe.TFE_Py_FastPathExecute(ctx,
+                                             "MatMul", name,
                                              a, b, "transpose_a", transpose_a,
                                              "transpose_b", transpose_b)
   except core._NotOkStatusException as e:
@@ -119,6 +121,10 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
 
     self._num_iters_2_by_2 = 30000
     self._num_iters_100_by_784 = 30000
+
+    # used for conv2d benchmarks
+    self._m_8_28_28_3 = random_ops.random_uniform((8, 28, 28, 3))
+    self._m_1_3_3_1 = random_ops.random_uniform((1, 3, 3, 1))
 
   def _get_benchmark_name(self):
     """Mostly copied from benchmark.py _get_name()."""
@@ -180,22 +186,18 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
         func()  # Warmup.
       self._run(func, 3000)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_create_float_constant(self):
     self._benchmark_create_constant(42.0, dtype=None)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_create_float_constant_uncached(self):
     self._benchmark_create_constant(42.0, dtype=None, cached=False)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_create_int32_constant(self):
     if context.num_gpus():
       return  # int32 constants are always allocated on CPU.
 
     self._benchmark_create_constant(42, dtype=dtypes.int32)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_create_int32_constant_uncached(self):
     if context.num_gpus():
       return  # int32 constants are always allocated on CPU.
@@ -211,21 +213,31 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
         func()  # Warmup.
       self._run(func, 30000)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
+  def _benchmark_add_operator_overload(self, a, b):
+    def func():
+      return memoryview(a + b)
+
+    with ops.device("GPU:0" if context.num_gpus() else "CPU:0"):
+      for _ in range(1000):
+        func()  # Warmup.
+      self._run(func, 30000)
+
   def benchmark_add_float_scalars(self):
     self._benchmark_add(42.0, 24.0)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_add_int32_scalars(self):
     self._benchmark_add(42, 24)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
   def benchmark_add_float_scalar_tensor(self):
     tensor_a = constant_op.constant(42.0)
     tensor_b = constant_op.constant(24.0)
     self._benchmark_add(tensor_a, tensor_b)
 
-  @test_util.disable_tfrt("Scalars are not handled correctly")
+  def benchmark_add_float_scalar_tensor_overloaded_operator(self):
+    tensor_a = constant_op.constant(42.0)
+    tensor_b = constant_op.constant(24.0)
+    self._benchmark_add_operator_overload(tensor_a, tensor_b)
+
   def benchmark_add_int32_scalar_tensor(self):
     tensor_a = constant_op.constant(42)
     tensor_b = constant_op.constant(24)
@@ -241,32 +253,26 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     tensor_b = constant_op.constant([[24, 24], [24, 24]])
     self._benchmark_add(tensor_a, tensor_b)
 
-  @test_util.disable_tfrt("convert_to_tensor not handled")
   def benchmark_create_float_tensor_from_list_CPU(self):
     self._benchmark_create_tensor([[3.0]], dtypes.float32.as_datatype_enum, CPU)
 
-  @test_util.disable_tfrt("convert_to_tensor not handled")
   def benchmark_create_float_tensor_from_np_array_CPU(self):
     self._benchmark_create_tensor(
         np.array([[3.0]], dtype=np.float32), dtypes.float32.as_datatype_enum,
         CPU)
 
-  @test_util.disable_tfrt("convert_to_tensor not handled")
   def benchmark_create_int32_tensor_from_list_CPU(self):
     self._benchmark_create_tensor([[3]], dtypes.int32.as_datatype_enum, CPU)
 
-  @test_util.disable_tfrt("convert_to_tensor not handled")
   def benchmark_create_int32_tensor_from_np_array_CPU(self):
     self._benchmark_create_tensor(
         np.array([[3]], dtype=np.int32), dtypes.int32.as_datatype_enum, CPU)
 
-  @test_util.disable_tfrt("no gpu support")
   def benchmark_create_float_tensor_from_list_GPU(self):
     if not context.num_gpus():
       return
     self._benchmark_create_tensor([[3.0]], dtypes.float32.as_datatype_enum, GPU)
 
-  @test_util.disable_tfrt("no gpu support")
   def benchmark_create_float_tensor_from_np_array_GPU(self):
     if not context.num_gpus():
       return
@@ -274,14 +280,12 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
         np.array([[3.0]], dtype=np.float32), dtypes.float32.as_datatype_enum,
         GPU)
 
-  @test_util.disable_tfrt("no gpu support")
   def benchmark_create_int32_tensor_from_list_GPU(self):
     # int32's are kept on host memory even when executing on GPU.
     if not context.num_gpus():
       return
     self._benchmark_create_tensor([[3]], dtypes.int32.as_datatype_enum, GPU)
 
-  @test_util.disable_tfrt("no gpu support")
   def benchmark_create_int32_tensor_from_np_array_GPU(self):
     # int32's are kept on host memory even when executing on GPU.
     if not context.num_gpus():
@@ -289,17 +293,14 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     self._benchmark_create_tensor(
         np.array([[3]], dtype=np.int32), dtypes.int32.as_datatype_enum, GPU)
 
-  @test_util.disable_tfrt("strided slice not supported")
   def benchmark_index_tensor_with_literal(self):
     func = lambda: constant_op.constant([3.0])[0]
     self._run(func, 30000)
 
-  @test_util.disable_tfrt("strided slice not supported")
   def benchmark_index_tensor_with_tensor(self):
     func = lambda idx=constant_op.constant(0): constant_op.constant([3.0])[idx]
     self._run(func, 30000)
 
-  @test_util.disable_tfrt("strided slice not supported")
   def benchmark_index_tensor_with_np_array(self):
     func = lambda idx=np.array(0): constant_op.constant([3.0])[idx]
     self._run(func, 30000)
@@ -311,6 +312,10 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
 
   def _benchmark_tf_multiply(self, m, num_iters):
     func = lambda: m * m
+    self._run(func, num_iters)
+
+  def _benchmark_tf_conv2d(self, m1, m2, num_iters):
+    func = lambda: nn_ops.conv2d(m1, m2, strides=[1, 1, 1, 1], padding="VALID")
     self._run(func, num_iters)
 
   def _benchmark_tf_multiply_op(self, m, num_iters):
@@ -346,6 +351,21 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     with context.device(GPU):
       m = self._m_2.gpu()
       self._benchmark_tf_multiply_op(m, 30000)
+
+  def benchmark_tf_conv2d_CPU(self):
+    with context.device(CPU):
+      m1 = self._m_8_28_28_3.cpu()
+      m2 = self._m_1_3_3_1.cpu()
+      self._benchmark_tf_conv2d(m1, m2, 30000)
+
+  @test_util.disable_tfrt("copy to GPU not supported")
+  def benchmark_tf_conv2d_GPU(self):
+    if not context.num_gpus():
+      return
+    with context.device(GPU):
+      m1 = self._m_8_28_28_3.gpu()
+      m2 = self._m_1_3_3_1.gpu()
+      self._benchmark_tf_conv2d(m1, m2, 30000)
 
   def benchmark_tf_identity(self):
     m = self._m_2
@@ -445,6 +465,42 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     func = lambda: f(m, m, transpose_b=transpose_b)
     self._run(func, num_iters, execution_mode=execution_mode)
 
+  def _benchmark_defun_matmul_with_signature(self,
+                                             m,
+                                             num_iters,
+                                             execution_mode=None):
+
+    @def_function.function(
+        input_signature=[tensor_spec.TensorSpec([2, 2], dtypes.float32)])
+    def defun_matmul(m):
+      return math_ops.matmul(m, m)
+
+    func = lambda: defun_matmul(m)
+    self._run(func, num_iters, execution_mode=execution_mode)
+
+  def _benchmark_defun_matmul_relaxed_shape(self,
+                                            m,
+                                            num_iters,
+                                            execution_mode=None):
+
+    @def_function.function(experimental_relax_shapes=True)
+    def defun_matmul(m):
+      return math_ops.matmul(m, m)
+
+    m_3_by_3 = random_ops.random_uniform((3, 3))
+    defun_matmul(m_3_by_3)
+    func = lambda: defun_matmul(m)
+    self._run(func, num_iters, execution_mode=execution_mode)
+
+  def _benchmark_defun_args_matmul(self, m, num_iters, execution_mode=None):
+
+    @def_function.function
+    def defun_matmul(m):
+      return math_ops.matmul(m, m)
+
+    func = lambda: defun_matmul(m)
+    self._run(func, num_iters, execution_mode=execution_mode)
+
   def _benchmark_nested_defun_matmul(self, m, transpose_b, num_iters):
     inner = function.defun(math_ops.matmul)
 
@@ -463,7 +519,7 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
                                                transpose_b,
                                                num_iters,
                                                execution_mode=None):
-    f = function.defun(math_ops.matmul)
+    f = def_function.function(math_ops.matmul)
 
     def func():
       with backprop.GradientTape() as gt:
@@ -530,12 +586,29 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_tfe_py_execute_matmul(
           m, transpose_b=False, num_iters=self._num_iters_2_by_2)
 
-  @test_util.disable_tfrt("Mutex corrupt: waiting writer with no waiters")
   def benchmark_defun_matmul_2_by_2_CPU(self):
     with context.device(CPU):
       m = self._m_2_by_2.cpu()
       self._benchmark_defun_matmul(
           m, transpose_b=False, num_iters=self._num_iters_2_by_2)
+
+  def benchmark_defun_matmul_2_by_2_with_signature_CPU(self):
+    with context.device(CPU):
+      m = self._m_2_by_2.cpu()
+      self._benchmark_defun_matmul_with_signature(
+          m, num_iters=self._num_iters_2_by_2)
+
+  def benchmark_defun_matmul_2_by_2_relaxed_shape_CPU(self):
+    with context.device(CPU):
+      m = self._m_2_by_2.cpu()
+      self._benchmark_defun_matmul_relaxed_shape(
+          m, num_iters=self._num_iters_2_by_2)
+
+  @test_util.disable_tfrt("Graph is not supported yet. b/156187905")
+  def benchmark_defun_args_matmul_2_by_2_CPU(self):
+    with context.device(CPU):
+      m = self._m_2_by_2.cpu()
+      self._benchmark_defun_args_matmul(m, num_iters=self._num_iters_2_by_2)
 
   @test_util.disable_tfrt("async not supported")
   def benchmark_defun_matmul_2_by_2_CPU_async(self):
@@ -547,15 +620,18 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
           num_iters=self._num_iters_2_by_2,
           execution_mode=context.ASYNC)
 
-  @test_util.disable_tfrt("Mutex corrupt: waiting writer with no waiters")
-  def benchmark_defun_matmul_forward_backward_2_by_2_CPU(self):
+  def _benchmark_matmul_forward_backward_2_by_2_CPU(self, run_eager=False):
+    def_function.run_functions_eagerly(run_eager)
     with context.device(CPU):
       m = self._m_2_by_2.cpu()
       self._benchmark_defun_matmul_forward_backward(
           m, transpose_b=False, num_iters=self._num_iters_2_by_2)
+    def_function.run_functions_eagerly(False)
 
   @test_util.disable_tfrt("async not supported")
-  def benchmark_defun_matmul_forward_backward_2_by_2_CPU_async(self):
+  def _benchmark_matmul_forward_backward_2_by_2_CPU_async(
+      self, run_eager=False):
+    def_function.run_functions_eagerly(run_eager)
     with context.device(CPU):
       m = self._m_2_by_2.cpu()
       self._benchmark_defun_matmul_forward_backward(
@@ -564,7 +640,20 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
           num_iters=self._num_iters_2_by_2,
           execution_mode=context.ASYNC)
 
-  @test_util.disable_tfrt("copy to GPU not supported")
+  def benchmark_defun_matmul_forward_backward_2_by_2_CPU(self):
+    self._benchmark_matmul_forward_backward_2_by_2_CPU(False)
+
+  @test_util.disable_tfrt("async not supported")
+  def benchmark_defun_matmul_forward_backward_2_by_2_CPU_async(self):
+    self._benchmark_matmul_forward_backward_2_by_2_CPU_async(False)
+
+  def benchmark_defun_eager_matmul_forward_backward_2_by_2_CPU(self):
+    self._benchmark_matmul_forward_backward_2_by_2_CPU(True)
+
+  @test_util.disable_tfrt("async not supported")
+  def benchmark_defun_eager_matmul_forward_backward_2_by_2_CPU_async(self):
+    self._benchmark_matmul_forward_backward_2_by_2_CPU_async(True)
+
   def benchmark_tf_matmul_2_by_2_GPU(self):
     if not context.num_gpus():
       return
@@ -603,7 +692,7 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_tfe_py_execute_matmul(
           m, transpose_b=False, num_iters=self._num_iters_2_by_2)
 
-  @test_util.disable_tfrt("defun not supported")
+  @test_util.disable_tfrt("copy to GPU not supported")
   def benchmark_defun_matmul_2_by_2_GPU(self):
     if not context.num_gpus():
       return
@@ -611,6 +700,32 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       m = self._m_2_by_2.gpu()
       self._benchmark_defun_matmul(
           m, transpose_b=False, num_iters=self._num_iters_2_by_2)
+
+  @test_util.disable_tfrt("copy to GPU not supported")
+  def benchmark_defun_matmul_2_by_2_with_signature_GPU(self):
+    if not context.num_gpus():
+      return
+    with context.device(GPU):
+      m = self._m_2_by_2.gpu()
+      self._benchmark_defun_matmul_with_signature(
+          m, num_iters=self._num_iters_2_by_2)
+
+  @test_util.disable_tfrt("copy to GPU not supported")
+  def benchmark_defun_matmul_2_by_2_relaxed_shape_GPU(self):
+    if not context.num_gpus():
+      return
+    with context.device(GPU):
+      m = self._m_2_by_2.gpu()
+      self._benchmark_defun_matmul_relaxed_shape(
+          m, num_iters=self._num_iters_2_by_2)
+
+  @test_util.disable_tfrt("Graph is not supported yet. b/156187905")
+  def benchmark_defun_args_matmul_2_by_2_GPU(self):
+    if not context.num_gpus():
+      return
+    with context.device(GPU):
+      m = self._m_2_by_2.gpu()
+      self._benchmark_defun_args_matmul(m, num_iters=self._num_iters_2_by_2)
 
   @test_util.disable_tfrt("async not supported")
   def benchmark_defun_matmul_2_by_2_GPU_async(self):
@@ -624,7 +739,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
           num_iters=self._num_iters_2_by_2,
           execution_mode=context.ASYNC)
 
-  @test_util.disable_tfrt("function not supported")
   def benchmark_nested_defun_matmul_2_by_2(self):
     m = self._m_2_by_2.cpu()
     self._benchmark_nested_defun_matmul(
@@ -672,7 +786,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_tfe_py_execute_matmul(
           m, transpose_b=True, num_iters=self._num_iters_100_by_784)
 
-  @test_util.disable_tfrt("function not supported")
   def benchmark_defun_matmul_100_by_784_CPU(self):
     with context.device(CPU):
       m = self._m_100_by_784.cpu()
@@ -718,7 +831,7 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_tfe_py_execute_matmul(
           m, transpose_b=True, num_iters=self._num_iters_100_by_784)
 
-  @test_util.disable_tfrt("defun not supported")
+  @test_util.disable_tfrt("copy to GPU not supported")
   def benchmark_defun_matmul_100_by_784_GPU(self):
     if not context.num_gpus():
       return
@@ -727,8 +840,8 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_defun_matmul(
           m, transpose_b=True, num_iters=self._num_iters_100_by_784)
 
-  @test_util.disable_tfrt("defun not supported")
-  def benchmark_nested_defun_matmul_100_by_784(self):
+  @test_util.disable_tfrt("copy to GPU not supported")
+  def benchmark_nested_defun_matmul_100_by_784_GPU(self):
     m = self._m_100_by_784.gpu()
     self._benchmark_nested_defun_matmul(
         m, transpose_b=True, num_iters=self._num_iters_100_by_784)
@@ -800,46 +913,40 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
         func()
       self._run(func, 3000)
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_matmul_256_by_2096_CPU(self):
     self._benchmark_forwardprop_matmul_CPU(shape=(256, 2096))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_in_defun_matmul_256_by_2096_CPU(self):
     self._benchmark_forwardprop_in_defun_matmul_CPU(shape=(256, 2096))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_in_defun_of_defun_matmul_256_by_2096_CPU(self):
     self._benchmark_forwardprop_in_defun_of_defun_matmul_CPU(shape=(256, 2096))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_of_defun_matmul_256_by_2096_CPU(self):
     self._benchmark_forwardprop_of_defun_matmul_CPU(shape=(256, 2096))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_matmul_100_by_784_CPU(self):
     self._benchmark_forwardprop_matmul_CPU(shape=(100, 784))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_in_defun_matmul_100_by_784_CPU(self):
     self._benchmark_forwardprop_in_defun_matmul_CPU(shape=(100, 784))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_in_defun_of_defun_matmul_100_by_784_CPU(self):
     self._benchmark_forwardprop_in_defun_of_defun_matmul_CPU(shape=(100, 784))
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_forwardprop_of_defun_matmul_100_by_784_CPU(self):
     self._benchmark_forwardprop_of_defun_matmul_CPU(shape=(100, 784))
 
   def _benchmark_tf_reduce_logsumexp(self,
                                      device=CPU,
                                      execution_mode=None,
-                                     defunc=False):
+                                     defunc=False,
+                                     xla_compile=False):
     with context.device(device):
       x = constant_op.constant([[1, 0.], [0., 0.]])
       if defunc:
-        reduce_func = def_function.function(math_ops.reduce_logsumexp)
+        reduce_func = def_function.function(
+            math_ops.reduce_logsumexp, experimental_compile=xla_compile)
         func = lambda: reduce_func(x)
       else:
         func = lambda: math_ops.reduce_logsumexp(x)
@@ -879,6 +986,16 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
   def benchmark_tf_reduce_logsumexp_GPU_async_defun(self):
     self._benchmark_tf_reduce_logsumexp(
         device=GPU, execution_mode=context.ASYNC, defunc=True)
+
+  @test_util.disable_tfrt("reduce logsumexp not supported")
+  def benchmark_tf_reduce_logsumexp_GPU_defun_compile(self):
+    self._benchmark_tf_reduce_logsumexp(
+        device=GPU, defunc=True, xla_compile=True)
+
+  @test_util.disable_tfrt("reduce logsumexp not supported")
+  def benchmark_tf_reduce_logsumexp_GPU_async_defun_compile(self):
+    self._benchmark_tf_reduce_logsumexp(
+        device=GPU, execution_mode=context.ASYNC, defunc=True, xla_compile=True)
 
   def _benchmark_tf_tensordot(self, device=CPU, execution_mode=None):
     with context.device(device):
@@ -1058,7 +1175,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     func = lambda: array_ops.transpose(m, perm, conjugate)
     self._run(func, num_iters, execution_mode=execution_mode)
 
-  @test_util.disable_tfrt("ConvertToEagerTensorUncached error")
   def benchmark_tf_transpose_2_by_2_CPU(self):
     with context.device(CPU):
       m = self._m_2_by_2.cpu()
@@ -1070,7 +1186,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       m = self._m_2_by_2.gpu()
       self._benchmark_transpose(m, num_iters=self._num_iters_2_by_2)
 
-  @test_util.disable_tfrt("ConvertToEagerTensorUncached error")
   def benchmark_tf_transpose_variable_2_by_2_CPU(self):
     with context.device(CPU):
       m = resource_variable_ops.ResourceVariable(self._m_2_by_2)
@@ -1082,7 +1197,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       m = resource_variable_ops.ResourceVariable(self._m_2_by_2)
       self._benchmark_transpose(m, num_iters=self._num_iters_2_by_2)
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_defun_without_signature(self):
 
     def func(t1, t2, t3, t4, t5, t6, t7, t8):
@@ -1094,7 +1208,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     cache_computation = lambda: defined(t, t, t, t, t, t, t, t)
     self._run(cache_computation, 30000)
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_defun_without_signature_and_with_kwargs(self):
 
     def func(t1, t2, t3, t4, t5, t6, t7, t8):
@@ -1107,7 +1220,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       return defined(t1=t, t2=t, t3=t, t4=t, t5=t, t6=t, t7=t, t8=t)
     self._run(cache_computation, 30000)
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_defun_with_signature(self):
 
     def func(t1, t2, t3, t4, t5, t6, t7, t8):
@@ -1120,7 +1232,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     signature_computation = lambda: defined(t, t, t, t, t, t, t, t)
     self._run(signature_computation, 30000)
 
-  @test_util.disable_tfrt("defun not supported")
   def benchmark_defun_with_signature_and_kwargs(self):
 
     def func(t1, t2, t3, t4, t5, t6, t7, t8):
@@ -1173,7 +1284,6 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       self._benchmark_read_variable_with_tape(
           m, num_iters=self._num_iters_2_by_2)
 
-  @test_util.disable_tfrt("Scan, loops need fallback")
   def benchmarkScan(self):
     elems = math_ops.range(1600)
 
@@ -1183,7 +1293,8 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
 
     self._run(scan, 100)
 
-  @test_util.disable_tfrt("Scan, loops need fallback")
+  @test_util.disable_tfrt(
+      "tf.While not supported in TF to CoreRT lowing. b/162685874")
   def benchmarkScanDefun(self):
     elems = math_ops.range(1600)
 
@@ -1201,6 +1312,54 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       return gen_math_ops.add(c, 1)
 
     self._run(fn, 10000)
+
+  def benchmark_convert_tensor(self):
+    value = ops.convert_to_tensor(42)
+
+    def fn():
+      return ops.convert_to_tensor(value)
+
+    self._run(fn, 10000)
+
+  def _benchmark_convert_constant(self, value, cached):
+    global GLOBAL_TEST_VALUE
+    GLOBAL_TEST_VALUE = value
+
+    def cached_func():
+      ops.convert_to_tensor(value)
+
+    def uncached_func():
+      global GLOBAL_TEST_VALUE
+      GLOBAL_TEST_VALUE += 1
+      ops.convert_to_tensor(GLOBAL_TEST_VALUE)
+
+    func = cached_func if cached else uncached_func
+
+    self._run(func, 10000)
+
+  def benchmark_convert_python_int(self):
+    self._benchmark_convert_constant(42, cached=True)
+
+  def benchmark_convert_python_int_uncached(self):
+    self._benchmark_convert_constant(42, cached=False)
+
+  def benchmark_convert_python_float(self):
+    self._benchmark_convert_constant(42.0, cached=True)
+
+  def benchmark_convert_python_float_uncached(self):
+    self._benchmark_convert_constant(42.0, cached=False)
+
+  def benchmark_convert_numpy_int(self):
+    self._benchmark_convert_constant(np.array(42), cached=True)
+
+  def benchmark_convert_numpy_int_uncached(self):
+    self._benchmark_convert_constant(np.array(42), cached=False)
+
+  def benchmark_convert_numpy_float(self):
+    self._benchmark_convert_constant(np.array(42.0), cached=True)
+
+  def benchmark_convert_numpy_float_uncached(self):
+    self._benchmark_convert_constant(np.array(42.0), cached=False)
 
   @test_util.disable_tfrt("convert to tensor not supported")
   def benchmark_convert_3x_list_to_tensor(self):
@@ -1239,6 +1398,14 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
       values.append(array_ops.zeros(shape=(1000,)))
     self._run(lambda: np.array([x.numpy() for x in values]), 1000)
 
+  def benchmark_function_trace(self):
+
+    def func(x):
+      return x
+
+    self._run(lambda: (def_function.function(func)(x) for x in range(1000)),
+              30000)
+
   def _benchmarkFunctionWithResourceInputs(self, num_resources, num_iters):
     @def_function.function
     def add_all(*args):
@@ -1250,11 +1417,9 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
         resources.append(resource_variable_ops.ResourceVariable(self._m_2))
       self._run(lambda: add_all(resources), num_iters)
 
-  @test_util.disable_tfrt("funtion not supported")
   def benchmarkFunctionWithFiveResourceInputs(self):
     self._benchmarkFunctionWithResourceInputs(5, 1000)
 
-  @test_util.disable_tfrt("funtion not supported")
   def benchmarkFunctionWithFiveHundredResourceInputs(self):
     self._benchmarkFunctionWithResourceInputs(500, 100)
 
@@ -1289,17 +1454,77 @@ class MicroBenchmarks(benchmarks_test_base.MicroBenchmarksBase):
     with context.device(CPU):
       self._run(benchmark_fn, 10)
 
-  @test_util.disable_tfrt("funtion not supported")
+  @test_util.disable_tfrt("Graph is not supported yet. b/156187905")
   def benchmarkTenThousandResourceReadsInCondInInnerFunc(self):
     self._benchmarkResourceReadsInCondInInnerFunc(10000)
 
-  @test_util.disable_tfrt("funtion not supported")
+  @test_util.disable_tfrt("Graph is not supported yet. b/156187905")
   def benchmarkHundredResourceReadsInCondInInnerFunc(self):
     self._benchmarkResourceReadsInCondInInnerFunc(100)
 
-  @test_util.disable_tfrt("funtion not supported")
+  @test_util.disable_tfrt("Graph is not supported yet. b/156187905")
   def benchmarkTenResourceReadsInCondInInnerFunc(self):
     self._benchmarkResourceReadsInCondInInnerFunc(10)
+
+  def benchmark_tf_name_scope(self):
+
+    def fn():
+      with ops.name_scope_v2("name"):
+        pass
+
+    self._run(fn, 10000)
+
+  def benchmark_tf_nest_map_structure(self):
+    nested = {"a": [1, 2, 3], "b": (4, 5, 6)}
+
+    def fn():
+      nest.map_structure(lambda x: x, nested)
+
+    self._run(fn, 10000)
+
+  def benchmark_tf_nest_pack_sequence_as(self):
+    nested = {"a": [1, 2, 3], "b": (4, 5, 6)}
+    flat = nest.flatten(nested)
+
+    def fn():
+      nest.pack_sequence_as(nested, flat)
+
+    self._run(fn, 10000)
+
+  def benchmark_tf_nest_flatten_none(self):
+    def fn():
+      nest.flatten(None)
+
+    self._run(fn, 100000)
+
+  def benchmark_tf_nest_flatten(self):
+    nested = {"a": [1, 2, 3], "b": (4, 5, 6)}
+    def fn():
+      nest.flatten(nested)
+
+    self._run(fn, 100000)
+
+  def benchmark_tf_nn_convolution_overhead(self):
+    inputs = array_ops.ones((1, 1, 1, 1))
+    filters = array_ops.ones((1, 1, 1, 1))
+
+    def fn():
+      nn_ops.convolution_v2(inputs, filters)
+
+    self._run(fn, 10000)
+
+  def benchmark_tf_tensor_shape_creation_overhead(self):
+    # A `TensorShape` is created the first time `EagerTensor.shape` is
+    # called, which puts `TensorShape.__init__` on the hotpath. The
+    # `TensorShape` is created from `EagerTensor._shape_tuple`.
+
+    x = array_ops.ones((1, 1))
+    shape_tuple = x._shape_tuple()
+
+    def fn():
+      tensor_shape.TensorShape(shape_tuple)
+
+    self._run(fn, 100000)
 
 
 if __name__ == "__main__":

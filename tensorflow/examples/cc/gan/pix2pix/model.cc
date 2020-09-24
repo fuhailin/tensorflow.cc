@@ -26,6 +26,84 @@ limitations under the License.
 namespace tensorflow {
 namespace ops {
 
+Output DownSample(const ::tensorflow::Scope& scope, const Output& inputs, 
+                  const int filter, const int size, 
+                  const bool apply_batchnorm, const bool training) {
+  auto weight = TFVariable(scope.WithOpName("weight"),
+                                   {size, size, NUM_CHANNELS, filter}, DT_FLOAT, true);
+
+  auto rate = Const(scope, {0.02f});
+  auto random_value = RandomNormal(scope, {size, size, NUM_CHANNELS, filter}, DT_FLOAT);
+  TFAssign(scope, weight, Multiply(scope, random_value, rate));
+
+  // Convnet
+  Output conv2d = Conv2D(scope, inputs, weight,
+                         gtl::ArraySlice<int>{1, 2, 2, 1}, "SAME");
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  if(apply_batchnorm) {
+    auto batchnorm_op = TFFusedBatchNorm(scope, {filter});
+    conv2d = batchnorm_op.Build(scope, conv2d, 0.001f, training);
+    LOG(INFO) << "Node building status: " << scope.status();
+  }
+
+  auto relu =
+      internal::LeakyRelu(scope, conv2d,
+                          internal::LeakyRelu::Alpha(0.3f));
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  return relu;
+}
+
+Output UpSample(const ::tensorflow::Scope& scope, 
+                const Input& input, const TensorShape& input_shape, 
+                const int filter, const int size, const int batch_size, 
+                const bool apply_dropout, const bool training) {
+  // filters shape => kernel_shape = self.kernel_size + (self.filters, input_dim)
+  //   self.kernel_size is {size, size}
+  //   self.filters is "const int filter"
+  //   input_dim is inputs_shape[-1]
+  //
+  int input_dim = input_shape.dim_size(3);
+  auto filtersVar = TFVariable(scope.WithOpName("filters"),
+                                   {size, size, filter, input_dim}, DT_FLOAT, true);
+
+  auto rate = Const(scope, {0.02f});
+  auto random_value = RandomNormal(scope, {size, size, filter, input_dim}, DT_FLOAT);
+  TFAssign(scope, filtersVar, Multiply(scope, random_value, rate));
+
+  // input_sizes => output_shape = (batch_size, out_height, out_width, self.filters)
+  //   for "same", out_height = inputs_shape[1] * stride_h, 
+  //               out_width = inputs_shape[2] * stride_h
+  //               self.filters is "const int filter"
+  //
+  const int stride_h = 2;
+  const int stride_w = 2;
+  int out_height = input_shape.dim_size(1) * stride_h;
+  int out_width = input_shape.dim_size(2) * stride_w;
+  auto input_sizes = Const<int>(scope, {batch_size, out_height, out_width, filter});
+
+  // deconv
+  // out_backprop, aka input.
+  auto deconv1 = Conv2DTranspose(scope, input_sizes, filtersVar, input,
+                                 {1, stride_h, stride_w, 1}, "SAME");
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  auto batchnorm_op = TFFusedBatchNorm(scope, {filter});
+  auto batchnorm = batchnorm_op.Build(scope, deconv1, 0.001f, training);
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  if(apply_dropout) {
+    batchnorm = Dropout(scope, batchnorm, 0.5f);
+    LOG(INFO) << "Node building status: " << scope.status();
+  }
+
+  auto relu = Relu(scope, batchnorm);
+  LOG(INFO) << "Node building status: " << scope.status();
+
+  return relu;
+}
+
 // Generator constructor to set variables and assigns
 Generator::Generator(const ::tensorflow::Scope& scope) {
   this->w1 = TFVariable(scope.WithOpName("weight"), {NOISE_DIM, UNITS},

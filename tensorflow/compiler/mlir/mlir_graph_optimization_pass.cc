@@ -21,6 +21,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_os_ostream.h"
+#include "mlir/Dialect/Shape/IR/Shape.h"  // from @llvm-project
 #include "mlir/Dialect/StandardOps/IR/Ops.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
@@ -90,15 +91,14 @@ MlirOptimizationPassRegistry& MlirOptimizationPassRegistry::Global() {
   return *global;
 }
 
-static void RegisterDialects() {
-  static bool init_once = []() {
-    mlir::registerDialect<mlir::StandardOpsDialect>();
-    mlir::registerDialect<mlir::tf_device::TensorFlowDeviceDialect>();
-    mlir::registerDialect<mlir::tf_executor::TensorFlowExecutorDialect>();
-    mlir::registerDialect<mlir::TF::TensorFlowDialect>();
-    return true;
-  }();
-  (void)init_once;
+static void RegisterDialects(mlir::DialectRegistry& registry) {
+  // clang-format off
+  registry.insert<mlir::StandardOpsDialect,
+                  mlir::TF::TensorFlowDialect,
+                  mlir::shape::ShapeDialect,
+                  mlir::tf_device::TensorFlowDeviceDialect,
+                  mlir::tf_executor::TensorFlowExecutorDialect>();
+  // clang-format on
 }
 
 Status MlirFunctionOptimizationPass::Run(
@@ -113,21 +113,29 @@ Status MlirFunctionOptimizationPass::Run(
       });
 
   if (!is_enabled) {
-    VLOG(1) << "None of the MLIR optimization passes are enabled "
-            << "(registered " << registry_->passes().size() << ")";
+    LOG_FIRST_N(INFO, 1)
+        << "None of the MLIR optimization passes are enabled "
+        << "(registered " << registry_->passes().size() << ")";
     return Status::OK();
   }
 
-  VLOG(1) << "Running MLIR Graph Optimization Passes "
-          << "(registered " << registry_->passes().size() << " passes)";
+  LOG_FIRST_N(INFO, 1) << "Running MLIR Graph Optimization Passes "
+                          << "(registered " << registry_->passes().size()
+                          << " passes)";
 
   GraphDebugInfo debug_info;
-  RegisterDialects();
   mlir::MLIRContext context;
+  RegisterDialects(context.getDialectRegistry());
   GraphImportConfig import_config;
   import_config.graph_as_function = true;
   import_config.control_outputs = *control_ret_node_names;
   import_config.upgrade_legacy = true;
+  // Disable shape inference during import as some TensorFlow op fails during
+  // shape inference with dynamic shaped operands. This in turn causes the
+  // import to fail. Shape inference during import is going to be removed and
+  // the shape inference pass is run early in the pass pipeline, shape inference
+  // during import is not necessary.
+  import_config.enable_shape_inference = false;
   TF_ASSIGN_OR_RETURN(auto module_ref,
                       ConvertGraphToMlir(**graph, debug_info, *flib_def,
                                          import_config, &context));
@@ -185,21 +193,24 @@ Status MlirV1CompatGraphOptimizationPass::Run(
       });
 
   if (!is_enabled) {
-    VLOG(1) << "None of the MLIR optimization passes are enabled "
-            << "(registered" << registry_->passes().size() << " passes)";
+    LOG_FIRST_N(INFO, 1)
+        << "None of the MLIR optimization passes are enabled "
+        << "(registered " << registry_->passes().size() << " passes)";
     return Status::OK();
   }
 
-  VLOG(1) << "Running MLIR Graph Optimization V1 Compat Passes "
-          << "(registered" << registry_->passes().size() << " passes)";
+  LOG_FIRST_N(INFO, 1) << "Running MLIR Graph Optimization V1 Compat Passes "
+                          << "(registered " << registry_->passes().size()
+                          << " passes)";
 
   GraphDebugInfo debug_info;
-  RegisterDialects();
   mlir::MLIRContext context;
+  RegisterDialects(context.getDialectRegistry());
   GraphImportConfig import_config;
-  // TODO(b/150959075): Running functionalization before TPU cluster formation
-  // is not semantics preserving and should be disabled for now.
-  import_config.upgrade_legacy = false;
+  import_config.upgrade_legacy = true;
+  // Restrict functionalization to TPU nodes to avoid problems in v1 session
+  // runtime.
+  import_config.restrict_functionalization_to_tpu_nodes = true;
   TF_ASSIGN_OR_RETURN(
       auto module_ref,
       ConvertGraphToMlir(**options.graph, debug_info, *options.flib_def,

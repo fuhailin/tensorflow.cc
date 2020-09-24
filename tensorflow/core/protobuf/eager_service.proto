@@ -11,7 +11,7 @@ import "tensorflow/core/framework/versions.proto";
 import "tensorflow/core/protobuf/remote_tensor_handle.proto";
 import "tensorflow/core/protobuf/tensorflow_server.proto";
 
-option go_package = "github.com/tensorflow/tensorflow/tensorflow/go/core/core_protos_go_proto";
+option go_package = "github.com/tensorflow/tensorflow/tensorflow/go/core/protobuf/for_core_protos_go_proto";
 
 // A proto representation of an eager operation.
 message Operation {
@@ -69,6 +69,7 @@ message QueueItem {
     // enqueued in streaming call. Request with this item type waits for pending
     // nodes to finish on the remote executor and report status.
     SyncRemoteExecutorForStream sync_remote_executor_for_stream = 6;
+    SendPackedHandleOp send_packed_handle = 7;
   }
 }
 
@@ -76,6 +77,8 @@ message QueueResponse {
   // `shape` and `tensor` cannot be set in the same response.
   // Shapes of output tensors for creating remote TensorHandles.
   repeated TensorShapeProto shape = 1;
+  // Optional. If set, represents the output devices of a function.
+  repeated string device = 3;
 
   // Output tensors of a remote function. Set when Operation.id is invalid.
   repeated TensorProto tensor = 2;
@@ -177,6 +180,9 @@ message RunComponentFunctionRequest {
   fixed64 context_id = 1;
 
   Operation operation = 2;
+
+  // The output indices of its parent function.
+  repeated int32 output_num = 3;
 }
 
 message RunComponentFunctionResponse {
@@ -235,6 +241,29 @@ message SendTensorOp {
   repeated TensorProto tensors = 2;
 
   // The device on which the tensors should be resident.
+  string device_name = 3;
+}
+
+// Send a packed TensorHandle to a remote worker.
+message SendPackedHandleOp {
+  // Op id of the remote packed TensorHandle.
+  int64 op_id = 1;
+
+  message LocalTensorHandle {
+    TensorProto tensor = 1;
+    // Device where the tensor is produced.
+    string device = 2;
+  }
+
+  message Handle {
+    oneof item {
+      LocalTensorHandle local_handle = 1;
+      RemoteTensorHandle remote_handle = 2;
+    }
+  }
+
+  repeated Handle handles = 2;
+
   string device_name = 3;
 }
 

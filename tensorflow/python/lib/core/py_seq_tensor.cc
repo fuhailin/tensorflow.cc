@@ -642,7 +642,11 @@ struct ConverterTraits<complex128> {
       *out = complex128(as_complex.real, as_complex.imag);
       return nullptr;
     }
-    return ErrorMixedTypes;
+    double as_double;
+    auto error = ConvertOneFloat<double>(v, &as_double);
+    if (error != nullptr) return error;
+    *out = complex128(as_double, 0.0);
+    return nullptr;
   }
 };
 
@@ -681,9 +685,10 @@ typedef Converter<bool> BoolConverter;
 // The two may share underlying storage so changes to one may reflect in the
 // other.
 TFE_TensorHandle* NumpyToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj) {
-  tensorflow::Tensor tensor;
-  tensorflow::Status status = tensorflow::NdarrayToTensor(obj, &tensor);
-  if (!status.ok()) {
+  Safe_TF_TensorPtr tf_tensor = make_safe(static_cast<TF_Tensor*>(nullptr));
+  Status status = tensorflow::NdarrayToTensor(ctx, obj, &tf_tensor);
+
+  if (TF_PREDICT_FALSE(!status.ok())) {
     PyErr_SetString(PyExc_ValueError,
                     tensorflow::strings::StrCat(
                         "Failed to convert a NumPy array to a Tensor (",
@@ -692,8 +697,8 @@ TFE_TensorHandle* NumpyToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj) {
     return nullptr;
   }
 
-  TensorInterface t(std::move(tensor));
-  return tensorflow::wrap(tensorflow::unwrap(ctx)->CreateLocalHandle(&t));
+  return tensorflow::wrap(
+      tensorflow::unwrap(ctx)->CreateLocalHandle(tf_tensor->tensor));
 }
 
 }  // namespace
@@ -875,10 +880,13 @@ TFE_TensorHandle* PySeqToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj,
 
     case DT_INVALID:  // Only occurs for empty tensors.
     {
-      Tensor tensor(requested_dtype == DT_INVALID ? DT_FLOAT : requested_dtype,
-                    TensorShape(state.inferred_shape));
-      TensorInterface t(std::move(tensor));
-      return tensorflow::wrap(tensorflow::unwrap(ctx)->CreateLocalHandle(&t));
+      AbstractTensorInterface* t = tensorflow::unwrap(ctx)->CreateTensor(
+          requested_dtype == DT_INVALID ? DT_FLOAT : requested_dtype,
+          state.inferred_shape);
+      auto* result =
+          tensorflow::wrap(tensorflow::unwrap(ctx)->CreateLocalHandle(t));
+      t->Release();
+      return result;
     }
 
     default:

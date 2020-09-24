@@ -125,7 +125,7 @@ bool HasMinMax(const TensorT* tensor) {
 }
 
 void SetOperatorCodeVersion(ModelT* model) {
-  for (int subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
+  for (int subgraph_idx = 0, end = model->subgraphs.size(); subgraph_idx < end;
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
     // Iterate backward to avoid messing with index.
@@ -134,8 +134,10 @@ void SetOperatorCodeVersion(ModelT* model) {
       OperatorCodeT* op_code = model->operator_codes[op->opcode_index].get();
       operator_property::OperatorProperty property =
           operator_property::GetOperatorProperty(model, subgraph_idx, op_idx);
-      if (property.quantizable) {
-        // Only update the versions of quantizable operations.
+      if (property.quantizable && op_code->version < property.version) {
+        // Only update the versions of quantizable operations if the original
+        // version is lesser than minimum quantized one mentioned by
+        // OperatorProperty.
         op_code->version = property.version;
       }
     }

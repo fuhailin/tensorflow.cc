@@ -1,4 +1,5 @@
 package(
+    default_visibility = ["//tensorflow:internal"],
     licenses = ["notice"],  # Apache 2.0
 )
 
@@ -15,6 +16,7 @@ py_library(
     deps = [
         ":saving",
         "//tensorflow/python:_pywrap_parallel_device",
+        "//tensorflow/python/distribute:device_util",
     ],
 )
 

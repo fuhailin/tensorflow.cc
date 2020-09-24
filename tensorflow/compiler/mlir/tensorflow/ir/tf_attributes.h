@@ -18,26 +18,16 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TENSORFLOW_IR_TF_ATTRIBUTES_H_
 #define TENSORFLOW_COMPILER_MLIR_TENSORFLOW_IR_TF_ATTRIBUTES_H_
 
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 
 namespace mlir {
 namespace TF {
 
-namespace AttrKind {
-
-// List of supported custom TensorFlow Attributes kinds, necessary for
-// isa/dyn_cast.
-enum Kind {
-  FIRST_USED_TENSORFLOW_ATTR = Attribute::FIRST_TENSORFLOW_ATTR,
-  SHAPE = FIRST_USED_TENSORFLOW_ATTR,
-  LAST_USED_TENSORFLOW_ATTR,
-};
-
-}  // namespace AttrKind
-
 namespace detail {
 
 struct ShapeAttrStorage;
+struct FuncAttrStorage;
 
 }  // namespace detail
 
@@ -67,8 +57,31 @@ class ShapeAttr : public Attribute::AttrBase<ShapeAttr, Attribute,
   // have static shape. If all dimensions have known size (>= 0), it has static
   // shape.
   bool hasStaticShape() const;
+};
 
-  static bool kindof(unsigned kind) { return kind == AttrKind::SHAPE; }
+// Custom attribute to model AttrValue.value.func (NameAttrList type attribute).
+// This attribute holds a SymbolRefAttr, for the NameAttrList.name string and a
+// DictionaryAttr for the NameAttrList.attr map<string, AttrValue>. It is
+// currently printed and parsed for the following format:
+//
+//   #tf.func<@symbol, {attr = "value"}>
+//
+// where the first element is the SymbolRefAttr and the second element is the
+// DictionaryAttr.
+class FuncAttr
+    : public Attribute::AttrBase<FuncAttr, Attribute, detail::FuncAttrStorage> {
+ public:
+  using Base::Base;
+
+  static FuncAttr get(mlir::MLIRContext* context, llvm::StringRef name,
+                      DictionaryAttr attr);
+
+  static FuncAttr get(mlir::MLIRContext* context, SymbolRefAttr symbol,
+                      DictionaryAttr attr);
+
+  SymbolRefAttr GetName() const;
+
+  DictionaryAttr GetAttrs() const;
 };
 
 }  // namespace TF

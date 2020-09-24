@@ -25,6 +25,7 @@ import six
 from tensorflow.python.autograph.core import ag_ctx
 from tensorflow.python.autograph.impl import api as autograph
 from tensorflow.python.distribute import distribution_strategy_context
+from tensorflow.python.eager import context
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import smart_cond
 from tensorflow.python.framework import tensor_util
@@ -37,7 +38,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.ops.losses import losses_impl
-from tensorflow.python.ops.losses import util as tf_losses_util
+from tensorflow.python.util import dispatch
 from tensorflow.python.util.tf_export import keras_export
 from tensorflow.tools.docs import doc_controls
 
@@ -144,8 +145,11 @@ class Loss(object):
     graph_ctx = tf_utils.graph_context_for_symbolic_tensors(
         y_true, y_pred, sample_weight)
     with K.name_scope(self._name_scope), graph_ctx:
-      ag_call = autograph.tf_convert(self.call, ag_ctx.control_status_ctx())
-      losses = ag_call(y_true, y_pred)
+      if context.executing_eagerly():
+        call_fn = self.call
+      else:
+        call_fn = autograph.tf_convert(self.call, ag_ctx.control_status_ctx())
+      losses = call_fn(y_true, y_pred)
       return losses_utils.compute_weighted_loss(
           losses, sample_weight, reduction=self._get_reduction())
 
@@ -246,7 +250,7 @@ class LossFunctionWrapper(Loss):
       Loss values per sample.
     """
     if tensor_util.is_tensor(y_pred) and tensor_util.is_tensor(y_true):
-      y_pred, y_true = tf_losses_util.squeeze_or_expand_dimensions(
+      y_pred, y_true = losses_utils.squeeze_or_expand_dimensions(
           y_pred, y_true)
     ag_fn = autograph.tf_convert(self.fn, ag_ctx.control_status_ctx())
     return ag_fn(y_true, y_pred, **self._fn_kwargs)
@@ -1164,6 +1168,7 @@ class Huber(LossFunctionWrapper):
               'keras.losses.mean_squared_error',
               'keras.losses.mse',
               'keras.losses.MSE')
+@dispatch.add_dispatch_support
 def mean_squared_error(y_true, y_pred):
   """Computes the mean squared error between labels and predictions.
 
@@ -1188,7 +1193,7 @@ def mean_squared_error(y_true, y_pred):
   Returns:
     Mean squared error values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   return K.mean(math_ops.squared_difference(y_pred, y_true), axis=-1)
 
@@ -1199,6 +1204,7 @@ def mean_squared_error(y_true, y_pred):
               'keras.losses.mean_absolute_error',
               'keras.losses.mae',
               'keras.losses.MAE')
+@dispatch.add_dispatch_support
 def mean_absolute_error(y_true, y_pred):
   """Computes the mean absolute error between labels and predictions.
 
@@ -1220,7 +1226,7 @@ def mean_absolute_error(y_true, y_pred):
   Returns:
     Mean absolute error values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   return K.mean(math_ops.abs(y_pred - y_true), axis=-1)
 
@@ -1231,10 +1237,11 @@ def mean_absolute_error(y_true, y_pred):
               'keras.losses.mean_absolute_percentage_error',
               'keras.losses.mape',
               'keras.losses.MAPE')
+@dispatch.add_dispatch_support
 def mean_absolute_percentage_error(y_true, y_pred):
   """Computes the mean absolute percentage error between `y_true` and `y_pred`.
 
-  `loss = 100 * mean(abs(y_true - y_pred) / y_true, axis=-1)`
+  `loss = 100 * mean(abs((y_true - y_pred) / y_true), axis=-1)`
 
   Standalone usage:
 
@@ -1254,7 +1261,7 @@ def mean_absolute_percentage_error(y_true, y_pred):
   Returns:
     Mean absolute percentage error values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   diff = math_ops.abs(
       (y_true - y_pred) / K.maximum(math_ops.abs(y_true), K.epsilon()))
@@ -1267,6 +1274,7 @@ def mean_absolute_percentage_error(y_true, y_pred):
               'keras.losses.mean_squared_logarithmic_error',
               'keras.losses.msle',
               'keras.losses.MSLE')
+@dispatch.add_dispatch_support
 def mean_squared_logarithmic_error(y_true, y_pred):
   """Computes the mean squared logarithmic error between `y_true` and `y_pred`.
 
@@ -1292,7 +1300,7 @@ def mean_squared_logarithmic_error(y_true, y_pred):
   Returns:
     Mean squared logarithmic error values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   first_log = math_ops.log(K.maximum(y_pred, K.epsilon()) + 1.)
   second_log = math_ops.log(K.maximum(y_true, K.epsilon()) + 1.)
@@ -1309,12 +1317,13 @@ def _maybe_convert_labels(y_true):
     # Convert the binary labels to -1 or 1.
     return 2. * y_true - 1.
 
-  updated_y_true = smart_cond.smart_cond(is_binary,
-                                         _convert_binary_labels, lambda: y_true)
+  updated_y_true = smart_cond.smart_cond(is_binary, _convert_binary_labels,
+                                         lambda: y_true)
   return updated_y_true
 
 
 @keras_export('keras.metrics.squared_hinge', 'keras.losses.squared_hinge')
+@dispatch.add_dispatch_support
 def squared_hinge(y_true, y_pred):
   """Computes the squared hinge loss between `y_true` and `y_pred`.
 
@@ -1339,7 +1348,7 @@ def squared_hinge(y_true, y_pred):
   Returns:
      Squared hinge loss values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   y_true = _maybe_convert_labels(y_true)
   return K.mean(
@@ -1347,6 +1356,7 @@ def squared_hinge(y_true, y_pred):
 
 
 @keras_export('keras.metrics.hinge', 'keras.losses.hinge')
+@dispatch.add_dispatch_support
 def hinge(y_true, y_pred):
   """Computes the hinge loss between `y_true` and `y_pred`.
 
@@ -1371,13 +1381,14 @@ def hinge(y_true, y_pred):
   Returns:
     Hinge loss values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   y_true = _maybe_convert_labels(y_true)
   return K.mean(math_ops.maximum(1. - y_true * y_pred, 0.), axis=-1)
 
 
 @keras_export('keras.losses.categorical_hinge')
+@dispatch.add_dispatch_support
 def categorical_hinge(y_true, y_pred):
   """Computes the categorical hinge loss between `y_true` and `y_pred`.
 
@@ -1402,14 +1413,16 @@ def categorical_hinge(y_true, y_pred):
   Returns:
     Categorical hinge loss values.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   pos = math_ops.reduce_sum(y_true * y_pred, axis=-1)
   neg = math_ops.reduce_max((1. - y_true) * y_pred, axis=-1)
-  return math_ops.maximum(0., neg - pos + 1.)
+  zero = math_ops.cast(0., y_pred.dtype)
+  return math_ops.maximum(neg - pos + 1., zero)
 
 
 @keras_export('keras.losses.huber', v1=[])
+@dispatch.add_dispatch_support
 def huber(y_true, y_pred, delta=1.0):
   """Computes Huber loss value.
 
@@ -1435,18 +1448,16 @@ def huber(y_true, y_pred, delta=1.0):
   delta = math_ops.cast(delta, dtype=K.floatx())
   error = math_ops.subtract(y_pred, y_true)
   abs_error = math_ops.abs(error)
-  quadratic = math_ops.minimum(abs_error, delta)
-  linear = math_ops.subtract(abs_error, quadratic)
+  half = ops.convert_to_tensor_v2_with_dispatch(0.5, dtype=abs_error.dtype)
   return K.mean(
-      math_ops.add(
-          math_ops.multiply(
-              ops.convert_to_tensor_v2(0.5, dtype=quadratic.dtype),
-              math_ops.multiply(quadratic, quadratic)),
-          math_ops.multiply(delta, linear)),
+      array_ops.where_v2(
+          abs_error <= delta, half * math_ops.pow(error, 2),
+          half * math_ops.pow(delta, 2) + delta * (abs_error - delta)),
       axis=-1)
 
 
 @keras_export('keras.losses.log_cosh', 'keras.losses.logcosh')
+@dispatch.add_dispatch_support
 def log_cosh(y_true, y_pred):
   """Logarithm of the hyperbolic cosine of the prediction error.
 
@@ -1474,7 +1485,7 @@ def log_cosh(y_true, y_pred):
   Returns:
     Logcosh error values. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
 
   def _logcosh(x):
@@ -1485,6 +1496,7 @@ def log_cosh(y_true, y_pred):
 
 @keras_export('keras.metrics.categorical_crossentropy',
               'keras.losses.categorical_crossentropy')
+@dispatch.add_dispatch_support
 def categorical_crossentropy(y_true,
                              y_pred,
                              from_logits=False,
@@ -1510,21 +1522,23 @@ def categorical_crossentropy(y_true,
   Returns:
     Categorical crossentropy loss value.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
-  label_smoothing = ops.convert_to_tensor_v2(label_smoothing, dtype=K.floatx())
+  label_smoothing = ops.convert_to_tensor_v2_with_dispatch(
+      label_smoothing, dtype=K.floatx())
 
   def _smooth_labels():
-    num_classes = math_ops.cast(array_ops.shape(y_true)[1], y_pred.dtype)
+    num_classes = math_ops.cast(array_ops.shape(y_true)[-1], y_pred.dtype)
     return y_true * (1.0 - label_smoothing) + (label_smoothing / num_classes)
 
-  y_true = smart_cond.smart_cond(label_smoothing,
-                                 _smooth_labels, lambda: y_true)
+  y_true = smart_cond.smart_cond(label_smoothing, _smooth_labels,
+                                 lambda: y_true)
   return K.categorical_crossentropy(y_true, y_pred, from_logits=from_logits)
 
 
 @keras_export('keras.metrics.sparse_categorical_crossentropy',
               'keras.losses.sparse_categorical_crossentropy')
+@dispatch.add_dispatch_support
 def sparse_categorical_crossentropy(y_true, y_pred, from_logits=False, axis=-1):
   """Computes the sparse categorical crossentropy loss.
 
@@ -1548,7 +1562,7 @@ def sparse_categorical_crossentropy(y_true, y_pred, from_logits=False, axis=-1):
   Returns:
     Sparse categorical crossentropy loss value.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   return K.sparse_categorical_crossentropy(
       y_true, y_pred, from_logits=from_logits, axis=axis)
@@ -1556,6 +1570,7 @@ def sparse_categorical_crossentropy(y_true, y_pred, from_logits=False, axis=-1):
 
 @keras_export('keras.metrics.binary_crossentropy',
               'keras.losses.binary_crossentropy')
+@dispatch.add_dispatch_support
 def binary_crossentropy(y_true, y_pred, from_logits=False, label_smoothing=0):
   """Computes the binary crossentropy loss.
 
@@ -1578,15 +1593,16 @@ def binary_crossentropy(y_true, y_pred, from_logits=False, label_smoothing=0):
   Returns:
     Binary crossentropy loss value. shape = `[batch_size, d0, .. dN-1]`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
-  label_smoothing = ops.convert_to_tensor_v2(label_smoothing, dtype=K.floatx())
+  label_smoothing = ops.convert_to_tensor_v2_with_dispatch(
+      label_smoothing, dtype=K.floatx())
 
   def _smooth_labels():
     return y_true * (1.0 - label_smoothing) + 0.5 * label_smoothing
 
-  y_true = smart_cond.smart_cond(label_smoothing,
-                                 _smooth_labels, lambda: y_true)
+  y_true = smart_cond.smart_cond(label_smoothing, _smooth_labels,
+                                 lambda: y_true)
   return K.mean(
       K.binary_crossentropy(y_true, y_pred, from_logits=from_logits), axis=-1)
 
@@ -1599,6 +1615,7 @@ def binary_crossentropy(y_true, y_pred, from_logits=False, label_smoothing=0):
               'keras.losses.kullback_leibler_divergence',
               'keras.losses.kld',
               'keras.losses.KLD')
+@dispatch.add_dispatch_support
 def kl_divergence(y_true, y_pred):
   """Computes Kullback-Leibler divergence loss between `y_true` and `y_pred`.
 
@@ -1627,7 +1644,7 @@ def kl_divergence(y_true, y_pred):
   Raises:
     TypeError: If `y_true` cannot be cast to the `y_pred.dtype`.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   y_true = K.clip(y_true, K.epsilon(), 1)
   y_pred = K.clip(y_pred, K.epsilon(), 1)
@@ -1635,6 +1652,7 @@ def kl_divergence(y_true, y_pred):
 
 
 @keras_export('keras.metrics.poisson', 'keras.losses.poisson')
+@dispatch.add_dispatch_support
 def poisson(y_true, y_pred):
   """Computes the Poisson loss between y_true and y_pred.
 
@@ -1662,7 +1680,7 @@ def poisson(y_true, y_pred):
   Raises:
     InvalidArgumentError: If `y_true` and `y_pred` have incompatible shapes.
   """
-  y_pred = ops.convert_to_tensor_v2(y_pred)
+  y_pred = ops.convert_to_tensor_v2_with_dispatch(y_pred)
   y_true = math_ops.cast(y_true, y_pred.dtype)
   return K.mean(y_pred - y_true * math_ops.log(y_pred + K.epsilon()), axis=-1)
 
@@ -1676,6 +1694,7 @@ def poisson(y_true, y_pred):
         'keras.losses.cosine',
         'keras.losses.cosine_similarity',
     ])
+@dispatch.add_dispatch_support
 def cosine_similarity(y_true, y_pred, axis=-1):
   """Computes the cosine similarity between labels and predictions.
 
@@ -1715,12 +1734,13 @@ def cosine_similarity(y_true, y_pred, axis=-1):
 class CosineSimilarity(LossFunctionWrapper):
   """Computes the cosine similarity between labels and predictions.
 
-  Note that it is a negative quantity between -1 and 0, where 0 indicates
-  orthogonality and values closer to -1 indicate greater similarity. This makes
-  it usable as a loss function in a setting where you try to maximize the
-  proximity between predictions and targets. If either `y_true` or `y_pred`
-  is a zero vector, cosine similarity will be 0 regardless of the proximity
-  between predictions and targets.
+  Note that it is a number between -1 and 1. When it is a negative number
+  between -1 and 0, 0 indicates orthogonality and values closer to -1
+  indicate greater similarity. The values closer to 1 indicate greater
+  dissimilarity. This makes it usable as a loss function in a setting
+  where you try to maximize the proximity between predictions and targets.
+  If either `y_true` or `y_pred` is a zero vector, cosine similarity will be 0
+  regardless of the proximity between predictions and targets.
 
   `loss = -sum(l2_norm(y_true) * l2_norm(y_pred))`
 
